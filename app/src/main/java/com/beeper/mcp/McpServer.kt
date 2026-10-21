@@ -142,16 +142,13 @@ class McpServer(private val context: Context) {
                             Log.d(TAG, "Response length: ${sessions.toString().length} bytes")
                         }
                         
-                        // Main MCP SSE endpoint
-                        sse("/sse") {
-                            Log.i(TAG, "=== SSE CONNECTION ===")
-                            Log.i(TAG, "New SSE connection established")
-                            Log.i(TAG, "Remote address: ${call.request.local.remoteHost}")
-                            Log.i(TAG, "User agent: ${call.request.headers["User-Agent"] ?: "unknown"}")
-                            handleMcpSession(this)
+                        // Use the Kotlin MCP SDK transport on the advertised SSE URL.
+                        // The previous hand-written SSE handler only emitted sample
+                        // events and did not provide a JSON-RPC message endpoint.
+                        mcp("/sse") {
+                            createMcpServer()
                         }
-                        
-                        // Alternative MCP endpoint for compatibility
+                        // Keep the alternate SDK transport route for compatibility.
                         mcp("/mcp") {
                             createMcpServer()
                         }
