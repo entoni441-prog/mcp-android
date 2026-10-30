@@ -14,9 +14,11 @@ The runner starts the officially documented `agy --remote-control` CLI mode insi
 - `python3 .devcontainer/agy-remote.py stop` stops it.
 - Check actual connectivity at https://antigravity.google.com/ while the Codespace is running.
 
-## Important unverified behavior
+## Verified live behavior (2026-10-31)
 
-Test in Codespaces itself before relying on this launcher. The standalone runner was syntax-tested and smoke-tested with a mock CLI; actual interactive CLI operation under a pseudoterminal and after a Codespaces restart has not yet been verified.
+On test Codespace `haunted-shadow`, branch `experiment/agy-codespaces-autostart-20261030`, the runner worked with CLI 1.4.12 after one-time manual install and Google OAuth. The instance appeared Online in Antigravity Remote Control. After stopping and restarting the **same** Codespace, Remote Control became Online again (`codespaces-d015bd-roving-zenith`) with no manual CLI invocation, and web UI connected. See `CODESPACES-ANTIGRAVITY-CHECKPOINT-2026-10-30.md` for the evidence and limits.
+
+**Not zero-touch for a new Codespace:** `agy` was not installed on initial creation, so the first `postStartCommand` skipped the launch. This config intentionally does **not** install CLI or perform OAuth. A new Codespace needs those setup steps once. Reconnect may show a browser-side security notice.
 
 Adding or changing devcontainer settings requires a new Codespace or a container rebuild. **Rebuilding can remove user-installed binaries and credentials from locations outside /workspaces**. Do not rebuild the currently working Codespace without backing up essential state and preparing reauthorization.
 
