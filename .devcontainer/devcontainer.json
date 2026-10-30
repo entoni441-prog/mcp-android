@@ -1,0 +1,4 @@
+{
+  "name": "mcp-android — Antigravity Remote Control (experiment)",
+  "postStartCommand": "python3 .devcontainer/agy-remote.py start"
+}
