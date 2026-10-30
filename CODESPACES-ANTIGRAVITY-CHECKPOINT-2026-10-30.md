@@ -41,3 +41,15 @@ The ChatGPT GitHub connector can read/write repository files and branches, but c
 - Executed a mock `agy --remote-control` binary under the runner: `start`, `status`, capture of console output, and `stop` succeeded.
 - This test **does not** confirm real Antigravity Remote Control in an actual fresh Codespace, survival across stop/start, nor availability of credentials there.
 - Next: create a **separate** Codespace from this experiment branch; never rebuild the already-working `main` Codespace for this test.
+
+## VERIFIED — actual Codespaces stop/start, 2026-10-31 (Europe/Rome)
+
+- **Test Codespace:** `haunted-shadow`, repository `entoni441-prog/mcp-android`, branch `experiment/agy-codespaces-autostart-20261030`. Existing `main` Codespace left unchanged.
+- Initial creation: `postStartCommand` was present, but `agy` was missing; runner reported `runner not running`. The script's graceful skip when CLI is absent worked as designed. **Fresh Codespace is NOT yet zero-touch.**
+- Installed official Antigravity CLI **1.4.12** manually within the test Codespace and completed one-time Google OAuth interactively. No tokens or OAuth codes committed.
+- Manually invoked `python3 .devcontainer/agy-remote.py start` and confirmed the process was alive; Antigravity Remote Control appeared **Online** as `codespaces-d015bd-turbo-drift`. Remote Control web UI connected successfully.
+- Stopped the test Codespace from GitHub Codespaces UI (GitHub displayed confirmation). Reopened it in the browser, thereby restarting the same Codespace; **no manual runner or CLI command was run after restart**.
+- On https://antigravity.google.com/, new instance `codespaces-d015bd-roving-zenith` appeared **Online**, old `turbo-drift` was Offline. Connected to `roving-zenith` and reached the interactive Remote Control UI. A browser-side **Security Notice & Data Use** acceptance was requested on reconnection; accepted with optional usage-data checkbox clear. Final interactive UI displayed ready state.
+- **Conclusion:** `postStartCommand` + PTY runner restores Antigravity Remote Control automatically across a real stop/start of the *already-installed and authenticated* Codespace, without `systemd` or `tmux`. This is verified by user screenshots, not an API-side VM inspection.
+- **Remaining limitation:** Creating a completely fresh Codespace still requires CLI installation and one-time OAuth. Automatic CLI install is not implemented; do not confuse recovery of existing Codespace with initial provisioning. Codespaces auto-stop still applies, and GitHub compute/storage quota remains enforced.
+- **Next phase:** Before expanding to a ChatGPT-Antigravity MCP bridge, decide whether automated CLI provisioning of new Codespaces is necessary. Keep `main` unchanged and avoid storing Google credentials in Git.
