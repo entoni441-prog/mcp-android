@@ -3,12 +3,20 @@
 const json = (obj, code = 200) => new Response(JSON.stringify(obj), {
   status: code, headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-content-type-options":"nosniff"}
 });
-function authorized(req, env) {
+async function authorized(req, env) {
   const configured = env.AGY_BRIDGE_AGENT_TOKEN;
   const supplied = req.headers.get("authorization") || "";
-  if (!configured || configured.length < 32 || !supplied.startsWith("Bearer ")) return false;
-  // Compare SHA-256 digests rather than early-terminating prefix comparison.
-  return supplied.slice(7) === configured;
+  if (!configured || configured.length < 32 || supplied.length > 300 || !supplied.startsWith("Bearer ")) return false;
+  // Compare fixed-size SHA-256 digests without early termination.
+  const encode = new TextEncoder();
+  const [wanted, received] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encode.encode(configured)),
+    crypto.subtle.digest("SHA-256", encode.encode(supplied.slice(7))),
+  ]);
+  const a = new Uint8Array(wanted), b = new Uint8Array(received);
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
 }
 export default {
   async fetch(request, env) {
@@ -16,7 +24,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/health") {
       return json({service:"agy-bridge",version:"0.1.0",status:env.DB && env.AGY_BRIDGE_AGENT_TOKEN ? "configured" : "unconfigured"});
     }
-    if (!authorized(request, env)) return json({error:"unauthorized"},401);
+    if (!await authorized(request, env)) return json({error:"unauthorized"},401);
     if (!env.DB) return json({error:"database_unbound"},503);
     try {
       if (request.method === "POST" && url.pathname === "/v1/agent/claim") {
