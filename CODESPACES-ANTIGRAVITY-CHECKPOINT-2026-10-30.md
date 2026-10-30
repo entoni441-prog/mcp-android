@@ -34,3 +34,10 @@
 
 ## Known GitHub limitation
 The ChatGPT GitHub connector can read/write repository files and branches, but cannot access Codespaces VM processes, user home directories or authentication files. This document preserves the technical checkpoint; it is **not a full image or backup of the running container**.
+
+## Offline preflight on 2026-10-30
+- Reviewed `.devcontainer/devcontainer.json` and runner against current GitHub Codespaces documentation. GitHub falls back to its default Linux image if the devcontainer config does not specify an image.
+- Independently validated the runner's Python syntax in a disposable Linux environment.
+- Executed a mock `agy --remote-control` binary under the runner: `start`, `status`, capture of console output, and `stop` succeeded.
+- This test **does not** confirm real Antigravity Remote Control in an actual fresh Codespace, survival across stop/start, nor availability of credentials there.
+- Next: create a **separate** Codespace from this experiment branch; never rebuild the already-working `main` Codespace for this test.
