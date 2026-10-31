@@ -10,7 +10,9 @@ const MAX_TEXT=8192;
 const isObject=x=>x!==null && typeof x==='object' && !Array.isArray(x);
 const keys=(x,required,optional=[])=>isObject(x)&&required.every(k=>Object.hasOwn(x,k))&&Object.keys(x).every(k=>[...required,...optional].includes(k));
 const sha=x=>crypto.createHash('sha256').update(x).digest('hex');
-const safePath=s=>typeof s==='string'&&s.length<=240&&!s.includes('\0')&&!s.includes(':')&&!path.isAbsolute(s)&&!s.startsWith('\\')&&!s.startsWith('/')&&!s.includes('\\')&&s.split('/').length<=9&&s.split('/').every(t=>t!=='.'&&t!=='..'&&t!==''&& !/[<>|?*"\x00-\x1f]/.test(t) && !/[. ]$/.test(t));
+// Windows device aliases are not ordinary filenames, even with an extension.
+const RESERVED_WINDOWS_NAME=/^(?:con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\..*)?$/i;
+const safePath=s=>typeof s==='string'&&s.length<=240&&!s.includes('\0')&&!s.includes(':')&&!path.isAbsolute(s)&&!s.startsWith('\\')&&!s.startsWith('/')&&!s.includes('\\')&&s.split('/').length<=9&&s.split('/').every(t=>t!=='.'&&t!=='..'&&t!==''&& !RESERVED_WINDOWS_NAME.test(t) && !/[<>|?*"\x00-\x1f]/.test(t) && !/[. ]$/.test(t));
 function requireRoot(root){
   if(typeof root!=='string'||!path.isAbsolute(root))throw Error('invalid_root');
   fs.mkdirSync(root,{recursive:true});
@@ -94,6 +96,11 @@ export async function executeJob(action,args,{workspace,platform=process.platfor
       if(platform!=='win32')throw Error('windows_only');
       const exe=args.app==='notepad'?'notepad.exe':'calc.exe';
       const proc=launcher(exe,[],{detached:true,stdio:'ignore',windowsHide:false});
+      // spawn() may fail asynchronously (ENOENT, permissions). Never report success first.
+      await new Promise((resolve,reject)=>{
+        proc.once('error',()=>reject(Error('app_launch_failed')));
+        proc.once('spawn',resolve);
+      });
       proc.unref?.();return {started:true,app:args.app};
     }
   }
