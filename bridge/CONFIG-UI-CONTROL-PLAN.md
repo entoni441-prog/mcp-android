@@ -39,3 +39,14 @@ The initial allowlist deliberately covers cosmetics only: verbosity, colorScheme
 
 ## Invariants
 No user secrets in Git, D1, logs or chat. Do not loosen permission presets to force GUI control. No remote shell exposure. No automatic bypass of Codespaces idle timeout or usage limits. Existing v0.2 Bridge and Remote Control must remain running and unaffected.
+
+## Implementation checkpoint — v0.3 read-only inspect
+
+- Added isolated D1 table `config_jobs` with queued/running/success/error states and agent-specific lease; existing proven `jobs` table is **unchanged**.
+- Uploaded `agy-bridge-mvp` Worker v0.3 (PUT accepted 200), preserving signed Ed25519 auth for all agent endpoints. Added authenticated claim/finish routes exclusively for `config.inspect`. Incoming reports are strictly schema validated on the Worker, then filtered down to four allowlisted preferences and SHA-256 digest. No public job submission endpoint.
+- Extended `bridge/agent.py` to request only fixed `probe` and `config.inspect` job types; the config command runs a fixed local `config_control.py inspect` subprocess without GitHub or OAuth secrets in environment.
+- Hardened `config_control.py inspect`: unsupported or unexpected values always become `null`; no raw JSON or account details returned. No settings changes, tools, or UI automation triggered.
+- Copied the new agent and inspector to the existing *experimental Codespace branch* `experiment/agy-codespaces-autostart-20261030`; neither `main` nor `.devcontainer/devcontainer.json` were changed.
+- Cloudflare settings check: D1 binding present, `config_jobs` exists and was initially empty; old test jobs remain. New agent changes are NOT live inside `haunted-shadow` until that Codespace pulls its branch.
+- Before claiming live success: check existing `BRIDGE_OK` probe after Worker deploy; synchronize test Codespace via `git pull --ff-only`; submit precisely one `config.inspect` and verify D1 result contains only allowed settings. If the Codespace auto-stopped, restart manually (no idle-timeout override).
+- Future: `config.plan` and `config.apply` only with explicit per-setting authorization, CAS digest, backup and readback; real graphical UI control still separate and unproven.
