@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {parseLocalCommand,launchOnce} from './launch-once.mjs';
 
 const winEnv={
@@ -63,7 +64,7 @@ test('a failed launch cannot be reported as success',async()=>{
 
 test('direct invocation without approval fails closed, with no actual launch',()=>{
   const output=spawnSync(process.execPath,[
-    new URL('./launch-once.mjs',import.meta.url).pathname,'--app=notepad'
+    fileURLToPath(new URL('./launch-once.mjs',import.meta.url)),'--app=notepad'
   ],{encoding:'utf8',timeout:10000});
   assert.equal(output.status,2);
   const obj=JSON.parse(output.stdout.trim());
