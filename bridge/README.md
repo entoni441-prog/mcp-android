@@ -51,3 +51,14 @@
 - Created one fixed, harmless probe D1 job `probe-20261031-0820-bridge-v02`; initial status `queued`. Not yet executed.
 - Next: On the already authorized test Codespace, use existing downloaded `/tmp/agy-bridge-agent.py` with `AGY_BRIDGE_URL=https://agy-bridge-mvp.entoni441.workers.dev python3 /tmp/agy-bridge-agent.py --once`, inspect signed claim and completion and separately confirm D1 job status/result.
 - Do not issue additional jobs or approve another agent before observing first signed end-to-end result.
+
+
+## CONFIRMED first signed end-to-end probe — 2026-10-31 08:24 Europe/Rome
+
+- **Verified** one full request/result path: ChatGPT inserted fixed `probe` job in isolated Cloudflare D1 -> test Codespace agent `--once` claimed job with Ed25519 signature -> local Antigravity `agy -p` returned `BRIDGE_OK` -> agent posted signed result -> Worker updated D1 -> ChatGPT independently read result via Cloudflare connector.
+- Screenshot terminal displayed `Probe: success accepted: True`. GitHub Codespace UI branch at time of test: `experiment/agy-codespaces-autostart-20261030` in test instance `haunted-shadow`.
+- D1 query by exact id `probe-20261031-0820-bridge-v02` verified `status='success'`, `response='BRIDGE_OK'`, `error=''`. Agent identity matched the approved public-key fingerprint `8fce8450fc2aa472`.
+- Confirmed registration closed (`bridge_config.enroll_until=0`) and only the explicitly approved agent present in D1.
+- No secrets copied, no arbitrary commands executed, no code changed in working Codespace or `main`, and no existing Cloudflare production resources modified.
+- **Scope limitation:** This proves **one-shot** execution initiated by a terminal command, not continuous hands-free polling, auto-start of the Bridge poller or ability to send arbitrary natural-language tasks. `Antigravity Remote Control` auto-resume is an already verified but separate subsystem.
+- **Next safe milestone:** create a bounded, idempotent background polling service for the *existing* approved test agent, verify one more fixed probe without manual Codespaces terminal invocation, then test its stop/start recovery. Keep fixed-probe-only allowlist until separately authorizing scoped tasks; do not touch billing or idle timeout.
