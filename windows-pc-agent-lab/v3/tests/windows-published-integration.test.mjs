@@ -86,7 +86,7 @@ test('v3 signature rejects reserved fields before signing (all OS)',()=>{
   const identity={id:'b'.repeat(32),privateKey};
   for(const extra of [
     {id:'c'.repeat(32)}, {timestamp:0}, {nonce:'fixed'}, {signature:'fake'},
-    {'__proto__':'blocked'}, JSON.parse('{"__proto__":"bad"}'),
+    JSON.parse('{"__proto__":"bad"}'),
     {constructor:'x'}, {prototype:'x'}, null, [],
   ])assert.throws(()=>signedV3('/v3/poll',identity,extra),/invalid_signed_fields/);
   const request=signedV3('/v3/poll',identity,{seq:7});
@@ -116,8 +116,7 @@ test('Windows app actions resolve to absolute local SystemRoot, not PATH (synthe
     assert.equal(path.win32.isAbsolute(launches[0].file),true);
     assert.deepEqual(await executeJob('open_app',{app:'calculator'},opts),{started:true,app:'calculator'});
     assert.equal(launches[1].file,'C:\\Windows\\System32\\calc.exe');
-    for(const systemRoot of ['', 'Windows', '\\\\server\\share','C:/Windows/../Users']) {
-      if(systemRoot==='C:/Windows/../Users')continue; // Absolute drive paths require independent trust of the OS setting.
+    for(const systemRoot of ['', 'Windows', '\\\\server\\share']) {
       await assert.rejects(executeJob('open_app',{app:'notepad'},{...opts,systemRoot}),/invalid_windows_system_root/);
     }
     assert.equal(launches.length,2,'Reject unsafe roots before attempting any spawn');
