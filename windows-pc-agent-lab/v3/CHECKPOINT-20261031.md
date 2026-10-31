@@ -20,3 +20,11 @@
 - Updated offline source archive (13 files including test + checkpoint): `windows-pc-agent-v3-hardened-20261031.zip`, SHA-256 `dca35042e93a2c4e9f18a1d3c761d61ef8238f4120f3a6bf87af6e0fafaea55a`. This is not a deployment.
 - **Unresolved:** full v3 client/server/schema publication remains blocked by prior tool safety rejection; do not bypass. Combined v1+v2+v3 integrated Windows CI cannot be claimed until permitted publication and testing.
 - No changes to main, production, active v2 Worker or user's Windows installation. No new v3 grant or job issued.
+
+## Offline integration hardening — follow-up after 50860ad
+- Inspected and verified earlier 13-file hardened archive: SHA-256 `dca35042e93a2c4e9f18a1d3c761d61ef8238f4120f3a6bf87af6e0fafaea55a`.
+- Unpublished v3 Worker now has bounded **streaming** POST body reader (18 KB). Tests reject oversized Content-Length, chunked overflow, malformed JSON, invalid UTF-8 and invalid Content-Type before touching D1.
+- Additional offline E2E test uses a synthetic ECDSA key and mock D1 for four queued operations: scoped create, read, optimistic-hash update, and traversal rejection; verifies eight audit events and signed claim/result receipts.
+- Local Node.js 22 test summary: **12 passed, 0 failed, 1 skipped** (Windows-only DPAPI); v3 server and client syntax checks passed.
+- Offline archive: `windows-pc-agent-v3-offline-integration-20261031.zip`, SHA-256 `b3783e3f20cc06dadbe4b20f24d3523e640c9f78bf0539e1fc48ce265d15be70`, verified ZIP integrity.
+- **Not a complete Windows CI or live test.** No change to main, production, existing Cloudflare Worker/v2, active Windows installation; no new grant, remote task or deployment. Earlier block on publishing remaining executable v3 server/client/schema still applies, and was not bypassed.
