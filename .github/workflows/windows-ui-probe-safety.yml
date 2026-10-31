@@ -53,6 +53,7 @@ jobs:
           }
           if ($obj.metadata -ne $null) { throw 'Non-consensual metadata leaked.' }
           Write-Host 'Consent-gate negative test passed.'
+          $global:LASTEXITCODE = 0
       - name: Negative test — arbitrary app rejected at argument boundary
         shell: powershell
         run: |
@@ -60,3 +61,4 @@ jobs:
           if ($LASTEXITCODE -eq 0) { throw 'Unallowlisted app was accepted.' }
           if (($raw -join [Environment]::NewLine) -notmatch 'ValidateSet') { throw 'App deny did not trigger ValidateSet.' }
           Write-Host 'Application allowlist rejected non-approved application.'
+          $global:LASTEXITCODE = 0
