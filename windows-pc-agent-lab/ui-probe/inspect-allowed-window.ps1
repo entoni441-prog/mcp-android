@@ -53,42 +53,41 @@ try {
         'calculator' { @('CalculatorApp') }
     }
 
-    # Microsoft recommends Children, NEVER Descendants, at desktop root.
-    $desktop = [System.Windows.Automation.AutomationElement]::RootElement
-    $windows = $desktop.FindAll(
-        [System.Windows.Automation.TreeScope]::Children,
-        [System.Windows.Automation.Condition]::TrueCondition
-    )
-
-    $matches = [System.Collections.ArrayList]::new()
-    foreach ($window in $windows) {
-        try {
-            $current = $window.Current
-            if ($current.ControlType -ne [System.Windows.Automation.ControlType]::Window) {
-                continue
-            }
-            $targetProcessId = [int]$current.ProcessId
-            if ($targetProcessId -le 0) {
-                continue
-            }
-            $proc = Get-Process -Id $targetProcessId -ErrorAction Stop
-            if ($allowed -contains $proc.ProcessName) {
-                [void]$matches.Add($window)
-            }
-        } catch {
-            # Other applications are never queried for control names or values.
-            continue
-        }
+    # Read ONLY the foreground window selected by the local user.
+    # No enumeration or inspection of unrelated desktop windows.
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class LocalForegroundWindow {
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+}
+'@ -ErrorAction Stop
+    $hwnd = [LocalForegroundWindow]::GetForegroundWindow()
+    if ($hwnd -eq [IntPtr]::Zero) {
+        Write-Result 'blocked' 'no_foreground_window' $null
+        exit 2
     }
-
-    if ($matches.Count -ne 1) {
-        Write-Result 'blocked' 'target_window_not_unique_or_not_found' ([ordered]@{
-            targetCount = $matches.Count
-        })
+    $target = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+    if ($null -eq $target) {
+        Write-Result 'blocked' 'foreground_uia_unavailable' $null
+        exit 2
+    }
+    $targetProcessId = [int]$target.Current.ProcessId
+    if ($targetProcessId -le 0) {
+        Write-Result 'blocked' 'foreground_identity_unknown' $null
+        exit 2
+    }
+    $targetProcess = Get-Process -Id $targetProcessId -ErrorAction Stop
+    if ($allowed -notcontains $targetProcess.ProcessName) {
+        Write-Result 'blocked' 'foreground_app_not_allowlisted' $null
+        exit 2
+    }
+    if ($target.Current.ControlType -ne [System.Windows.Automation.ControlType]::Window) {
+        Write-Result 'blocked' 'foreground_element_is_not_window' $null
         exit 2
     }
 
-    $target = $matches[0]
     $items = [System.Collections.ArrayList]::new()
     $controls = $target.FindAll(
         [System.Windows.Automation.TreeScope]::Children,
