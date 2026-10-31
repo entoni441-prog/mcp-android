@@ -92,6 +92,26 @@
       },
       "problemMatcher": [],
       "group": "test"
+    },
+    {
+      "label": "Antigravity TEST — сохранить консультацию v3 в GitHub (однократно)",
+      "type": "process",
+      "command": "python3",
+      "args": [
+        "bridge/capture_agy_consultation.py"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false,
+        "echo": false,
+        "clear": true
+      },
+      "problemMatcher": [],
+      "group": "test"
     }
   ]
 }
