@@ -69,3 +69,5 @@
 - Follow-up audit record: `windows-pc-agent-lab/v3/AUDIT-20261031-INDEPENDENT.md`, updated in commit `30ba8d9`.
 - Remaining concerns explicitly unresolved: filesystem TOCTOU/reparse races and multiactor SHA conflict; private file contents in Cloudflare D1; missing executable worker, Windows poller, SQL schema and full integration tests. Full v3 CI is still **BLOCKED intentionally**, not PASS.
 - No v3 deployment, access grant, real Windows task, Cloudflare D1 mutation, production/main/working v2 changes, paid resources or restriction bypass.
+
+- Follow-up historical documentation clarification: v2 README corrected in commit `0056786d7c1dd1ad169cf92133a55c630e5f5342`; audit updated at `641a4edd1d2b58518a896f9060fd1e09eb14d31b`. No v2 code or deployment changed.
