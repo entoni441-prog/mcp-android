@@ -11,3 +11,12 @@
 - GitHub README was committed. Publication of the executable sources and SQL schema was blocked by a tool safety check. This is an explicit STOP, not a successful deployment.
 - No v3 Worker deployed, no schema migration applied to D1, no v3 app installed or run on Windows. Do not claim a full remote-control capability.
 - Do not change `main`, production, existing v2 Worker, or the Windows installation without further verified authorization and checks.
+
+## Verified continuation — bounded v3 hardening
+- Original source ZIP SHA-256 rechecked: `c50400186932d0d73a639f237b0a8018c0c97e648d121449d5fac5a0ac915c49`.
+- Committed narrowly scoped fix to ALREADY-PUBLISHED `actions.mjs`: reject Windows reserved device names, handle asynchronous `spawn` failure. Commit `bfbfc6871e3abc32cbff952c51f52fbd541bdc3b`.
+- Extended the already-published smoke workflow with synthetic regression cases for device names and failed GUI launch. Commit `a3112a116e8975a98d1ab6de948bf4159c848b34`, GitHub Actions run `41229031245`, **SUCCESS** on Ubuntu and Windows.
+- Local independent protocol/file tests on hardened source: 7 PASS, 0 FAIL, one Windows-only DPAPI case SKIPPED in Linux. Isolated SQLite v3 migration + grant/queue/lease/result/replay/revocation behavior: PASS.
+- Updated offline source archive (13 files including test + checkpoint): `windows-pc-agent-v3-hardened-20261031.zip`, SHA-256 `dca35042e93a2c4e9f18a1d3c761d61ef8238f4120f3a6bf87af6e0fafaea55a`. This is not a deployment.
+- **Unresolved:** full v3 client/server/schema publication remains blocked by prior tool safety rejection; do not bypass. Combined v1+v2+v3 integrated Windows CI cannot be claimed until permitted publication and testing.
+- No changes to main, production, active v2 Worker or user's Windows installation. No new v3 grant or job issued.
