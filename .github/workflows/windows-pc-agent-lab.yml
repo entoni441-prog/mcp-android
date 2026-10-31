@@ -1,0 +1,27 @@
+name: Windows PC Agent Lab — guarded checks
+on:
+  push:
+    branches:
+      - experiment/windows-pc-agent-readonly-20261031
+    paths:
+      - windows-pc-agent-lab/**
+      - .github/workflows/windows-pc-agent-lab.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Static syntax checks
+        run: |
+          node --check windows-pc-agent-lab/worker.mjs
+          node --check windows-pc-agent-lab/windows-agent.mjs
+          node --check windows-pc-agent-lab/tests/worker.test.mjs
+      - name: Security and protocol tests (no real Windows, no cloud deployment)
+        run: node --test windows-pc-agent-lab/tests/worker.test.mjs
