@@ -65,3 +65,11 @@ jobs:
           if ($LASTEXITCODE -eq 0) { throw 'Unallowlisted app was accepted.' }
           Write-Host 'Application allowlist rejected non-approved application.'
           $global:LASTEXITCODE = 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Strict offline UIA result schema regression tests
+        shell: powershell
+        run: |
+          node --check windows-pc-agent-lab/ui-probe/validate-report.mjs
+          node --test windows-pc-agent-lab/ui-probe/tests/validate-report.test.mjs
