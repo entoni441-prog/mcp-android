@@ -72,3 +72,14 @@ The ChatGPT GitHub connector can read/write repository files and branches, but c
 - Installer invokes existing .devcontainer/agy-remote.py start and checks background supervisor status. There is no devcontainer config change, no rebuild, no Google reauthorization, no secret export, no main or Cloudflare production changes.
 - Activation command on already existing TEST Codespace: git pull --ff-only origin experiment/agy-codespaces-autostart-20261030 && python3 bridge/install.py
 - **Still pending:** first run of this installer in the actual Codespace, probe processed without any manual CLI run, and Codespace stop/start recovery test. Offline mock tests do not imply runtime success.
+
+## CONFIRMED: unattended Bridge polling, 2026-10-31 08:37 Europe/Rome
+
+- User ran only initial activation in test Codespace haunted-shadow: git pull --ff-only origin experiment/agy-codespaces-autostart-20261030 && python3 bridge/install.py. Terminal confirmed 'Verified supervisor source installed (no credentials copied)', 'Bridge poller started', and 'Antigravity Remote Control runner is already active'. Supervisor status showed 'Bridge poller: running'.
+- VS Code showed an optional container rebuild prompt. No rebuild performed or required. devcontainer.json unchanged; original Remote Control remained running.
+- ChatGPT inserted **one** test job (probe-20261031-background-autopoll-01) into the isolated D1 queue, at Unix time 1793432263. NO manual agent command was given.
+- Cloudflare D1 independently confirmed the already approved Ed25519 agent 8fce8450fc2aa472 autonomously CLAIMED the job at 1793432268 (5 seconds after queueing). Status progressed queued -> running.
+- D1 independently confirmed completion at 1793432273: status=success, response=BRIDGE_OK, error empty, lease cleared. End-to-end unattended processing proved.
+- Existing main, production, Codespaces billing/idle timer, and unrelated Cloudflare Workers/D1 remained unchanged. Enrollment still closed and first prototype only processes fixed harmless probes.
+- **Not yet verified:** stop/restart of test Codespace and corresponding auto-resume of the Bridge poller; Remote Control auto-resume was separately verified previously. Agent runs while Codespace is active; it cannot wake a stopped Codespace or keep one alive beyond provider limits.
+- Next step: stop test Codespace haunted-shadow from GitHub UI, start it again normally without terminal commands, then ChatGPT queues a fresh fixed probe and verifies unattended completion. Do not rebuild the container or operate on golden-meteor.
