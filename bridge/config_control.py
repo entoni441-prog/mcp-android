@@ -146,17 +146,23 @@ def rollback(expected):
         data = journal()
         if not data or data.get("state") != "active":
             raise RuntimeError("no_rollback_available")
-        obj, _, digest = read()
-        if digest != expected or expected != data.get("after_sha256"):
+        _settings, _, digest = read()
+        if expected != data.get("after_sha256"):
             raise RuntimeError("settings_changed_since_apply")
         original = base64.b64decode(data["original_b64"], validate=True)
         before = "missing" if data.get("original_absent") else hashlib.sha256(original).hexdigest()
         if before != data.get("before_sha256"):
             raise RuntimeError("backup_hash_mismatch")
-        if data.get("original_absent"):
-            CONFIG.unlink()
-        else:
-            atomic_write(CONFIG, original)
+        # Crash-safe recovery: if interrupted after journaling but before replacing
+        # the settings file, it already matches the backup. Close the journal.
+        recovered = digest == before
+        if not recovered:
+            if digest != expected:
+                raise RuntimeError("settings_changed_since_apply")
+            if data.get("original_absent"):
+                CONFIG.unlink()
+            else:
+                atomic_write(CONFIG, original)
         _, _, verified = read()
         if verified != before:
             raise RuntimeError("rollback_readback_failed")
@@ -164,6 +170,7 @@ def rollback(expected):
         data["original_b64"] = ""
         atomic_write(JOURNAL, json.dumps(data, separators=(",", ":")).encode())
         emit({"status": "rolled_back", "key": data["key"], "sha256": verified,
+              "recovered_incomplete_apply": recovered,
               "runtime_reload_may_be_required": True})
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
