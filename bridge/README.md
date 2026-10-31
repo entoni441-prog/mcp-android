@@ -71,3 +71,11 @@
 - Local integration test in a disposable filesystem and process namespace passed: startup, second start idempotence, repeated simulated probe polling and stop. No live background process was launched in the user's Codespace by the GitHub connector.
 - Next verification: operator synchronizes existing test Codespace, downloads pinned supervisor to its persistent workspace, starts launcher once; after that ChatGPT queues a single harmless probe, verifies D1 success without the operator invoking the agent, then checks supervisor recovery after an ordinary Codespace stop/start. Do not queue probes until the supervisor is confirmed running.
 - This does not make GitHub Codespaces always-on or wake it when stopped. Default idle timeout and billing limits remain in force.
+
+## Confirmed live unattended fixed-probe execution — 2026-10-31
+
+On the previously paired and authorized test Codespace haunted-shadow, bridge/install.py started the background supervisor. ChatGPT inserted the fixed test job probe-20261031-background-autopoll-01 into isolated Cloudflare D1. Without any terminal invocation, the agent claimed it within 5 seconds and finished 5 seconds later. D1 independently returned success, BRIDGE_OK, empty error, and the same approved agent ID. This establishes live hands-free processing **while Codespace is running**.
+
+This does not yet demonstrate Bridge recovery after stopping and restarting Codespace. A separate stop/start test must be performed. Existing Remote Control autostart remains independently verified. The background poller does not keep Codespace awake or bypass provider timeout, and only probe tasks are supported. The main repository branch, production Workers, original Codespace, and billing limits have not been changed.
+
+Corresponding technical checkpoint: experimental autostart branch CODESPACES-ANTIGRAVITY-CHECKPOINT-2026-10-30.md, commit 9d2f88d3336b18fa9ad32b9bc075168f68402c26.
