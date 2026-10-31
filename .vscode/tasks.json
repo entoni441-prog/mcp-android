@@ -20,6 +20,51 @@
       },
       "problemMatcher": [],
       "group": "test"
+    },
+    {
+      "label": "Antigravity TEST — проверка условий аварийного теста (только чтение)",
+      "type": "process",
+      "command": "python3",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false,
+        "echo": false,
+        "clear": true
+      },
+      "problemMatcher": [],
+      "group": "test",
+      "args": [
+        "bridge/test_remote_crash.py",
+        "check"
+      ]
+    },
+    {
+      "label": "Antigravity TEST — имитация сбоя CLI и проверка восстановления (однократно)",
+      "type": "process",
+      "command": "python3",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "AGY_TEST_CRASH_APPROVED": "1"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false,
+        "echo": false,
+        "clear": true
+      },
+      "problemMatcher": [],
+      "group": "test",
+      "args": [
+        "bridge/test_remote_crash.py",
+        "inject"
+      ]
     }
   ]
 }
