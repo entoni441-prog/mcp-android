@@ -65,3 +65,10 @@ The ChatGPT GitHub connector can read/write repository files and branches, but c
 - Live activation still requires syncing the test branch in the existing test Codespace, copying the pinned supervisor into its persistent workspace, and starting the optional hook once. No direct Codespace shell-execution tool is available in this session.
 - Must verify one queued probe completes WITHOUT a manual agent invocation and then test stop/start. Do not claim verified before these observations.
 - Cost controls unchanged: background poll never writes terminal output or tries to defeat GitHub Codespaces idle timeout. Stopped Codespaces cannot run tasks or wake themselves.
+
+### One-command activation installer (additional checkpoint, 2026-10-31)
+- Added bridge/install.py in the test branch (commit 78276c4563d9b9e1da8b0981d908443be80e283b).
+- Installer checks current test branch; fetches supervisor from separate experiment branch at pinned commit 570a82a8dfa6dce348a59a919d0b0096047548b9; validates exact Git blob SHA 8699bb514092d9fea230a0f752a2affc42a4c867, compiles it and refuses conflicting local-file replacement.
+- Installer invokes existing .devcontainer/agy-remote.py start and checks background supervisor status. There is no devcontainer config change, no rebuild, no Google reauthorization, no secret export, no main or Cloudflare production changes.
+- Activation command on already existing TEST Codespace: git pull --ff-only origin experiment/agy-codespaces-autostart-20261030 && python3 bridge/install.py
+- **Still pending:** first run of this installer in the actual Codespace, probe processed without any manual CLI run, and Codespace stop/start recovery test. Offline mock tests do not imply runtime success.
