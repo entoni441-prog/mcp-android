@@ -160,3 +160,15 @@ The ChatGPT GitHub connector can read/write repository files and branches, but c
 - **Not yet verified:** end-to-end remote signed `config.plan`, `config.apply`, and `config.rollback` through Cloudflare. An earlier read-only queue insertion was blocked by connector safety; do not claim the remote write bridge is proven or work around blocked operations. Native GUI/button control also remains unimplemented.
 - `main`, original working Codespace, production Cloudflare resources and payment/idle limits were not changed by this local test.
 - **Next:** independently review CLI config report sanitation and remote approval gating, then test signed remote plan/apply/rollback through an authorized path if permitted. For native GUI UI settings, use a supported authenticated browser/computer control channel; do not substitute CLI JSON editing for actual button clicks.
+
+
+## Config control security hardening & GUI route — 2026-10-31
+
+- Existing user screenshot-proven local plan/apply/rollback completed successfully; original SHA-256 settings restored. **Remote queue apply/rollback NOT tested**.
+- Source-only improvement: `bridge/config_control.py` rollback now closes an interrupted apply journal if current config already equals original prewrite SHA; mirrored from isolated experiment branch to test branch at commit `e7c9b1fbb559b9a7433d752a21bf6a36483a4d87`. It has NOT been pulled into the running Codespace or executed there.
+- In config experiment branch `experiment/agy-config-control-20261031` added 9 hermetic Python tests and 14 hermetic Node policy tests. In-process JS test of Worker functions executed: 14/14 passed. The saved test files have not yet been executed by Codespaces or Actions.
+- Read-only Cloudflare D1 still shows one successful config.inspect, one superseded failed config.plan, no real config.apply or config.rollback job, one approved agent, and enrollment closed.
+- Earlier Cloudflare connector mutation was blocked by a safety layer. **Do not bypass or retry the blocked operation via an alternate route**. Current working live Worker remains v0.4, with no new deployment made during this hardening step.
+- Official Google Antigravity docs confirm `/browser` supports Chrome automation in interactive CLI, but this does not imply browser-based control of native Antigravity IDE or its own CLI settings overlay. A separate authenticated browser/computer control capability is required for actual clicks.
+- Current ChatGPT session has GitHub/Cloudflare but NO native browser/computer tool. First safe pilot when available: open Remote Control dashboard, inventory actual controls, perform a single reversible cosmetic click with verified readback. Do not claim GUI control exists until verified.
+- Extended technical plan: `bridge/CONFIG-UI-CONTROL-PLAN.md` in config experiment branch, commit `a2bf6b7033cffba447a0b8a5c3780c054110dee6`.
