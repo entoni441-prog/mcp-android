@@ -72,3 +72,13 @@ Applied [ASTRA-STOP-RULES.md](ASTRA-STOP-RULES.md) at checkpoint `cb4c84f`. The 
 - **Recovery prerequisite:** restored Work browser control, demonstrated by a successful read of the authenticated Antigravity tab in a repaired or replacement Work session. No account or Codespace action is requested from the operator.
 - **Resume:** only after that recovery, refresh the instance list once and correlate an online row with haunted-shadow before opening it. Until then, current GUI status, model selection and cosmetic preferences remain unverified.
 - **Safe state:** only this experimental report was updated. No changes to main, production, working Codespaces, security or billing. No cosmetic change awaits rollback.
+
+
+### Independent non-browser diagnosis prepared after STOP
+
+- STOP checkpoint `f00ea2d` remains authoritative: Work Cloud Browser `getTab` and `js_reset` each timed out after 300 seconds; no retry attempted.
+- Official Google docs say `agy --remote-control` is an **interactive** tunnel tied to its CLI process and each new session gets a new session ID/hostname. The current test runner launches precisely this mode from `.devcontainer/agy-remote.py`; multiple historical Offline entries alone do not establish the present agent's state or identify the current row.
+- Added **read-only** `bridge/diagnose_remote.py` in Codespace experiment branch `experiment/agy-codespaces-autostart-20261030`, commit `d09e4516cd1bfa6bb2a80a0ecf0d90378ab4f900`. It inspects the existing runner PID, its CLI child, and a small local log tail. It prints **only a strictly limited status dictionary**, never raw log text, authentication URLs or credentials. It never launches/restarts/kills processes or changes settings.
+- This diagnostic script is in GitHub, **not yet synced or executed inside haunted-shadow**. No live process status can be inferred from source-only inspection. To use it, on the existing test Codespace run one bounded command: `git pull --ff-only origin experiment/agy-codespaces-autostart-20261030 && python3 bridge/diagnose_remote.py`.
+- After obtaining output: if the CLI child is present and log indicates a remote link, focus on Work browser access rather than reinstallation; if the CLI child is absent or authentication needed, stop with one targeted remediation only after seeing evidence. Do not auto-recreate identities or repeat Work Cloud Browser timeouts.
+- Google reference: https://antigravity.google/docs/remote-control?tab=cli
