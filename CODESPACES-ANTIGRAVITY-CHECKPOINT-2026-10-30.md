@@ -241,3 +241,26 @@ The prior consent screen in the new test CLI Remote Control session exactly matc
 **Current state:** Test Codespace was restarted, tested bounded-recovery source verified locally, fresh Remote Control instance connected successfully, safe cosmetic state back to Default. Persistent recovery on crash has NOT been deliberately failure-injected or tested; Code was syntax/7-unit-tests validated in GitHub Actions, and one fresh startup observed. No claim that runner survives Codespaces idle shutdown or that GUI control is globally available across instances/accounts.
 
 **Scope:** Working main/production/«Ужасная летучая мышь», financial/privacy/permission settings unchanged. Avoid revealing authentication/session URLs in public reports. If additional autonomous work is needed, continue from this validated milestone rather than repeating login, setup, trust, pull, or UI pilot.
+
+
+## LIVE guarded SIGKILL recovery validation — PASS (2026-10-31)
+
+**User request:** perform the real TEST Remote Control crash-resilience check autonomously. Only `«Призрачная тень»` (`haunted-shadow-6vwp64vgwxjgc6jg`) and experimental branch `experiment/agy-codespaces-autostart-20261030` were in scope. Existing `bridge/test_remote_crash.py`, `.vscode/tasks.json` and `bridge/tests/test_agy_crash_guard.py` were already present in newer source commits discovered on GitHub (13:13–13:14 UTC). Do not repeat their development or authorization.
+
+**Verified preparation:**
+- Existing CI for guarded crash tests was successful: [GitHub Actions run 41204691628](https://github.com/entoni441-prog/mcp-android/actions/runs/41204691628). This verifies isolated code tests, not live runtime.
+- [TinyFish read-only preflight f05ba19b](https://agent.tinyfish.ai/runs/f05ba19b-c896-4eb1-bbba-f70c3fae68ae) opened ONLY the TEST VS Code task `Antigravity TEST — проверка условий аварийного теста (только чтение)` and read actual sanitized terminal JSON: `{"status":"pass","detail":"ready_for_test","runner_running":true,"cli_child_running":true,"pidfd_supported":true}`.
+- One subsequently attempted `Tasks: Run Task` via VS Code command palette did not find the exact task; **no process was signalled** ([run 98fa2e41](https://agent.tinyfish.ai/runs/98fa2e41-2448-4fa1-a7a9-3ea22d70a796)). Switching to the independent `Terminal → Run Task` menu resolved the GUI difficulty.
+
+**ACTUAL ONE-SHOT LIVE CRASH TEST: PASS**
+- [TinyFish run a6537bac](https://agent.tinyfish.ai/runs/a6537bac-022e-4758-935e-1e2009ef4661): autonomously selected EXACT task `Antigravity TEST — имитация сбоя CLI и проверка восстановления (однократно)` via `Terminal → Run Task`. The guarded script checked test Codespace hostname, exact experimental branch, live runner, exactly one CLI child, and used pidfd to send **SIGKILL to only that CLI child**. It waited for automatic CLI process replacement.
+- **Exact terminal JSON:** `{"cli_recovered":true,"detail":"cli_recovered_after_sigkill","new_child_detected":true,"runner_survived":true,"status":"pass"}`.
+- Main runner survived; a new CLI process was detected. No parent, other process, working Codespace, main, production, account settings, permissions or secrets changed.
+
+**INDEPENDENT GOOGLE REMOTE CONTROL VERIFICATION: PASS**
+- [TinyFish run 7e6b3f98](https://agent.tinyfish.ai/runs/7e6b3f98-a7d6-47f6-8ae8-ec5343339fda) independently reopened signed-in `https://antigravity.google.com` dashboard. A **new** instance `codespaces-d015bd-cosmic-flux` showed **Online — Opened just now**; older test instance `codespaces-d015bd-bright-plume` was **Offline**. Working `codespaces-5e31df-golden-meteor` untouched.
+- Combined local process proof + new concurrent Online Remote Control session establish successful **automatic live recovery after one controlled CLI crash** within this TEST Codespace. Host-to-Remote-Control identity correlation relies on temporal/prefix evidence; no cryptographic mapping was retrieved.
+
+**Boundary / next:** This proves recovery from a single CLI child SIGKILL while the TEST Codespace remains active. It does NOT prove recovery from Codespaces shutdown, host crash, network outage, loss of auth, or restart-budget exhaustion. Do not generalize beyond that. No need to repeat GUI authorization, trust approval, existing integrations, or emergency injection to continue development.
+
+**Source hygiene:** A redundant additional hermetic test `bridge/tests/test_agy_remote_crash.py` was briefly committed and subsequently deleted in `f785f299a5f6e8ee8a18045c1c45ade43916504a`, because the branch already contained `bridge/tests/test_agy_crash_recovery.py` and guard tests. Existing approved tests remain intact.
