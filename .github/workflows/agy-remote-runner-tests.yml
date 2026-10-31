@@ -1,0 +1,25 @@
+name: Experimental Antigravity Remote Runner Tests
+
+on:
+  push:
+    branches:
+      - experiment/agy-codespaces-autostart-20261030
+    paths:
+      - .devcontainer/agy-remote.py
+      - bridge/tests/test_agy_remote.py
+      - .github/workflows/agy-remote-runner-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout experimental branch
+        uses: actions/checkout@v4
+      - name: Check Python syntax
+        run: python3 -m py_compile .devcontainer/agy-remote.py
+      - name: Run isolated lifecycle unit tests
+        run: python3 -m unittest discover -v -s bridge/tests -p 'test_agy_remote.py'
