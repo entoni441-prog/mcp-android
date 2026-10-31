@@ -38,6 +38,12 @@ class RemoteRunnerTests(unittest.TestCase):
         with patch.object(runner, "is_runner", return_value=True):
             self.assertEqual(runner.running_pid(), 22222)
 
+    def test_runner_pid_requires_real_nul_separated_cmdline(self):
+        raw = b"/usr/bin/python3\\x00/workspaces/mcp-android/.devcontainer/agy-remote.py\\x00serve\\x00"
+        with patch("os.kill"), patch.object(Path, "read_bytes", return_value=raw), \
+             patch.object(Path, "read_text", return_value="42 (python3) S 1 2 3"):
+            self.assertTrue(runner.is_runner(42))
+
     def test_invalid_pid_is_ignored(self):
         runner.PID_FILE.write_text("invalid")
         self.assertIsNone(runner.running_pid())
