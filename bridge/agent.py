@@ -51,18 +51,54 @@ def signature(message):
         return subprocess.run(["openssl","pkeyutl","-sign","-rawin","-inkey",str(PRIVATE_FILE),"-in",str(file)],
                               check=True,capture_output=True,timeout=15).stdout
 
+class BridgeHTTPError(Exception):
+    def __init__(self, status, code):
+        self.status = status
+        self.code = code
+        super().__init__(code)
+
 def request_json(endpoint,path,data,agent_id=None):
+    """Use curl transport: the prior urllib client received a non-JSON 403.
+    Never put keys, tokens or request bodies on the command line."""
     body=json.dumps(data,separators=(",",":"),ensure_ascii=True).encode()
-    headers={"Content-Type":"application/json"}
+    headers={"Content-Type":"application/json","Accept":"application/json"}
     if agent_id:
         ts=str(int(time.time()))
         nonce=b64u(secrets.token_bytes(18))
         canonical="\n".join(["POST",path,ts,nonce,hashlib.sha256(body).hexdigest()]).encode()
         headers.update({"X-AGY-Agent-ID":agent_id,"X-AGY-Timestamp":ts,"X-AGY-Nonce":nonce,
                         "X-AGY-Signature":b64u(signature(canonical))})
-    req=urllib.request.Request(endpoint+path,data=body,headers=headers,method="POST")
-    with urllib.request.urlopen(req,timeout=20) as response:
-        return json.load(response)
+    command=["curl","--silent","--show-error","--max-time","20",
+             "--connect-timeout","8","--proto","=https","--request","POST"]
+    for k,v in headers.items():
+        command.extend(["--header",k+": "+v])
+    command.extend(["--data-binary","@-","--write-out","\n%{http_code}","--url",endpoint+path])
+    proc=subprocess.run(command,input=body,capture_output=True,timeout=25)
+    if proc.returncode!=0:
+        raise RuntimeError("curl_transport_failed")
+    try:
+        raw,code=proc.stdout.rsplit(b"\n",1)
+        code=int(code)
+    except (ValueError, TypeError):
+        raise RuntimeError("invalid_http_response")
+    if len(raw)>16384:
+        raise RuntimeError("oversized_http_response")
+    if code<200 or code>=300:
+        identifier="non_json_http_error"
+        try:
+            error=json.loads(raw).get("error","")
+            if isinstance(error,str) and re.fullmatch(r"[a-z_]{1,50}",error):
+                identifier=error
+        except (ValueError,AttributeError):
+            pass
+        raise BridgeHTTPError(code,identifier)
+    try:
+        response=json.loads(raw)
+    except ValueError:
+        raise RuntimeError("invalid_json_response")
+    if not isinstance(response,dict):
+        raise RuntimeError("invalid_json_object")
+    return response
 
 def execute_probe():
     cli = os.path.expanduser("~/.local/bin/agy")
@@ -122,17 +158,8 @@ def main():
                 raise RuntimeError("Unexpected job type")
             if not args.loop: return 0
             time.sleep(20)
-    except urllib.error.HTTPError as exc:
-        # Worker emits only fixed, low-sensitivity error identifiers.
-        code = "http_error"
-        try:
-            response = json.loads(exc.read(256))
-            identifier = response.get("error", "")
-            if isinstance(identifier, str) and re.fullmatch(r"[a-z_]{1,50}", identifier):
-                code = identifier
-        except (ValueError, OSError):
-            pass
-        print(f"Bridge HTTP {exc.code}: {code}", file=sys.stderr)
+    except BridgeHTTPError as exc:
+        print(f"Bridge HTTP {exc.status}: {exc.code}",file=sys.stderr)
         return 1
     except subprocess.CalledProcessError:
         print("Local OpenSSL key operation failed", file=sys.stderr)
