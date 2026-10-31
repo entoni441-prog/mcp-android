@@ -1,0 +1,57 @@
+name: Windows PC Agent v3 — published modules smoke
+
+on:
+  push:
+    branches:
+      - experiment/windows-pc-agent-v3-control-20261031
+    paths:
+      - windows-pc-agent-lab/v3/actions.mjs
+      - windows-pc-agent-lab/v3/identity-v3.mjs
+      - .github/workflows/windows-pc-agent-v3-published-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  modules:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax of already published v3 modules
+        shell: bash
+        run: |
+          node --check windows-pc-agent-lab/v3/actions.mjs
+          node --check windows-pc-agent-lab/v3/identity-v3.mjs
+      - name: Safe import, allowlist and synthetic signature checks (no network or device)
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {generateKeyPairSync,verify} from 'node:crypto';
+          import {ACTIONS,validateJob} from './windows-pc-agent-lab/v3/actions.mjs';
+          import {signedV3} from './windows-pc-agent-lab/v3/identity-v3.mjs';
+          assert.equal(ACTIONS.length,6);
+          assert.equal(validateJob('get_status',{}),true);
+          for(const [op,args] of [
+            ['shell',{command:'whoami'}],
+            ['read_text',{path:'../secret.txt'}],
+            ['write_text',{path:'../out.txt',content:'hello',expectedSha256:null}],
+            ['open_app',{app:'powershell'}]
+          ])assert.throws(()=>validateJob(op,args));
+          const {privateKey,publicKey}=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
+          const identity={id:'a'.repeat(32),privateKey};
+          const message=signedV3('/v3/poll',identity);
+          const {signature,...body}=message;
+          const canonical=['pc-agent-v3','POST','/v3/poll',JSON.stringify(body)].join('\n');
+          assert.equal(verify('sha256',Buffer.from(canonical),{key:publicKey,dsaEncoding:'ieee-p1363'},Buffer.from(signature,'base64url')),true);
+          console.log('Published module checks passed, no deployment or Windows access');
+          NODE
