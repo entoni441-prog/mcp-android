@@ -1,38 +1,34 @@
-# Antigravity Bridge — isolated MVP v0.1 (provisioned; agent not paired)
+# Antigravity Bridge — isolated MVP v0.2 (pairing pending)
 
-## Target
-ChatGPT (existing Cloudflare connector) -> isolated D1 queue -> `agy-bridge-mvp` Worker -> Codespaces agent -> `agy -p` -> D1 response -> ChatGPT.
+## Verified at 2026-10-31
+- Antigravity `agy -p` returned JSON `status: SUCCESS` and `response: BRIDGE_OK` from test Codespace; this confirms local headless CLI mode, not end-to-end connectivity.
+- Isolated Cloudflare D1 `agy-bridge-mvp` in EU jurisdiction exists and has `jobs`, `agents`, `bridge_config` and `nonces` tables. Existing project databases untouched.
+- Separate Cloudflare Worker `agy-bridge-mvp` uploaded successfully with D1 binding `DB`, and its workers.dev subdomain was explicitly enabled. Preview URLs disabled.
+- Worker supports only fixed read-only probe jobs. No remote shell, arbitrary prompts, write operations or access to existing project deployments.
+- Enrollment default closed: `SELECT enroll_until FROM bridge_config WHERE id=1` was 0; agent list empty. No user key or credential has been registered.
+- Ed25519 signing: agent creates a 0600 private key in its own Codespace home; Cloudflare stores its public key. Request signatures include method, path, timestamp, random nonce and SHA-256(body). D1 prevents nonce reuse.
+- Official docs: Cloudflare Workers WebCrypto implements Ed25519 SPKI import and signature verification. OpenSSL Ed25519 one-shot signature uses `pkeyutl -sign -rawin -in file`.
+- Syntax: Worker upload passed Cloudflare validation; local Python/OpenSSL prototype signing verification passed. **Actual end-to-end signed auth is not yet tested**.
 
-This first MVP deliberately avoids arbitrary commands, GitHub write operations, deployment or a new ChatGPT plugin.
+## Pairing protocol (explicit approval)
+1. Operator opens a short enrollment window via this **isolated** D1 only:
+   `UPDATE bridge_config SET enroll_until=unixepoch()+600 WHERE id=1`.
+2. On the existing **test** Codespace `haunted-shadow`, load `bridge/agent.py` from the *experiment branch*, without checking out that branch into the working Codespace. Set `AGY_BRIDGE_URL=https://agy-bridge-mvp.entoni441.workers.dev`. Run agent with `--enroll`. Never place a private key, secret or OAuth code in the chat.
+3. Agent prints only the public-key fingerprint. The owner supplies the fingerprint for independent verification; ChatGPT may inspect pending enrollment via authorized Cloudflare connector.
+4. After matching fingerprint, approve exact agent ID in D1: `UPDATE agents SET status='approved', approved_at=unixepoch() WHERE id=? AND status='pending'`. Immediately close window: `UPDATE bridge_config SET enroll_until=0 WHERE id=1`.
+5. Insert a single fixed `probe` job into isolated D1. From test Codespace run agent with `--once`, then check D1 result through Cloudflare connector.
+6. Only after a successful signed end-to-end probe consider background polling and narrowly scoped task types.
 
-## VERIFIED: 2026-10-31, Europe/Rome
+## Security invariants
+- Private key stays in Codespace `~/.config/agy-bridge/identity.pem` and is never committed, copied or pasted.
+- Public key alone cannot execute jobs until owner approves it.
+- Enrollment endpoint is time-limited and caps concurrent pending requests; approved endpoints require signed requests.
+- No anonymous submission, no wildcard CORS; usage of `agy --sandbox` is defense-in-depth, not a guarantee of read-only enforcement.
+- Do not touch `main`, original Codespace, other Workers, other D1 databases, billing limits or production.
+- Worker currently has a public URL, but cannot execute a job without an approved agent. External health endpoint still needs live HTTP verification before claiming it works.
 
-1. Google Antigravity CLI 1.4.12 in existing experiment Codespace `haunted-shadow` successfully executed:
-   `agy -p "Reply with exactly BRIDGE_OK. Do not use tools or modify files." --output-format json --sandbox --print-timeout 1m`
-   Screenshot confirmed JSON fields `"status":"SUCCESS"` and `"response":"BRIDGE_OK\\n"` (the final newline is expected; the probe agent strips whitespace).
-2. ChatGPT Cloudflare connector verified to have access to Workers and D1.
-3. Created isolated **EU-jurisdiction D1 database** `agy-bridge-mvp`, UUID `3e60a1b1-c01c-4854-b0b3-5149faa4ffc0`, disabled replicas, initialized only `jobs` and `idx_jobs_queue`. SQL verification passed. Zero queued jobs at creation.
-4. Uploaded **new independent Worker script** `agy-bridge-mvp` bound to this D1 as `DB` using compatibility date `2026-10-29`. Worker appeared in Cloudflare's script listing.
-5. Checked Worker secrets: **no secrets configured**. As designed, agent claim and finish endpoints return HTTP 401 until `AGY_BRIDGE_AGENT_TOKEN` is configured.
-6. No existing Worker, D1, production pipeline, `main`, Android code, quotas or billing settings were changed.
-
-## Explicitly not yet done
-- Agent pairing/authentication. **Never copy tokens, API keys, OAuth codes or credential files into GitHub, this conversation or logs.**
-- Encrypted Worker secret `AGY_BRIDGE_AGENT_TOKEN` and matching secure Codespaces secret.
-- Verifying the Worker's public URL, binding and health endpoint from a running Codespace.
-- Running `bridge/agent.py --once` against the Worker, and end-to-end D1 job submission/result.
-- Automatic agent execution after stop/start (Remote Control autostart is a separate verified mechanism).
-
-## Security envelope and next step
-The Worker currently uses a bearer token but it has NOT been provisioned, so job-polling endpoints are intentionally locked. Before any live agent call, design a secure pairing/secret distribution route that does not expose credentials in chat or Git. Prefer short-lived pairing with user-side approval and a persistent private credential stored only as a Codespaces secret and Cloudflare Worker secret. Keep first test strictly limited to fixed, harmless `probe` job kind. Do not enable arbitrary prompts, tools, files, or network-wide shell commands.
-
-`--sandbox` is a defense-in-depth setting, not proof of absolute read-only isolation. The Worker must not enable anonymous execution or skip auth to simplify testing.
-
-## Files
-- `schema.sql`: isolated D1 schema.
-- `worker.js`: authenticated fixed-probe job claim/result API.
-- `agent.py`: codespace poller that runs a fixed, read-only probe.
-- `README.md`: status and restrictions.
-
-## Resumption
-Continue from the last verified state. **Do not recreate the D1 database or Worker**, and do not repeat the Antigravity CLI check unless the installed CLI or environment changes. Existing remote-control Codespace and branch `experiment/agy-codespaces-autostart-20261030` remain independent.
+## Next verified checkpoint needed
+- Confirm public `/health` responds from the **test Codespace** and exact URL resolves.
+- Open 10-minute enrollment window only when user is ready.
+- Verify matching public fingerprint and approve.
+- Run fixed probe end-to-end.
