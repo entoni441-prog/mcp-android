@@ -106,3 +106,10 @@
 - Documentation: `windows-pc-agent-lab/ui-probe/README.md`, updated commit `548bae3813bf4f3dbe1a135bbd01f3371c9c060b`.
 - **NOT VERIFIED / blocked:** real user's interactive Windows UIA readback, approved persistent local Windows process, authenticated transport between ordinary chat and Windows, and remote GUI actions. The existing v2 approved device is limited to outgoing diagnostic heartbeats. Previously denied publication of v3 executable Windows client/Worker/SQL must NOT be routed around via a renamed component, other connector or archive.
 - **No** Work, paid TinyFish, production/main/v2, test Cloudflare D1 mutations or Windows device changes. Status `OFFLINE_CONTRACT_PASS / LIVE_WINDOWS_NOT_CONNECTED / V3_RELEASE_STOP`.
+
+## One-shot local Windows executor — 31 October 2026
+- Developed executable `windows-pc-agent-lab/local-executor/launch-once.mjs` reusing the already-tested `v3/actions.mjs` allowlisted `open_app`, and one-click visible `OPEN-NOTEPAD-LOCAL.cmd`. No remote task channel, networking, auto-start, shell, persistence or other app/file privileges.
+- Local explicit approval `--approve-once` required; `notepad` or `calculator` only; absolute Windows system binary path (from original approved actions), no caller-supplied command.
+- GitHub Actions run `41244621378` at commit `15cf5425844d2c03003e747b4864bac78c3c6342`: **Windows SUCCESS, Linux SUCCESS**, 5/5 unit tests on both. **Real Notepad OS-process creation** verified on isolated Windows GitHub runner. This verifies spawn, **not** GUI visibility or user's own PC.
+- Upload artifact `windows-local-notepad-once` ID `13059145705`: https://github.com/entoni441-prog/mcp-android/actions/runs/41244621378/artifacts/13059145705 . SHA-256 of uploaded artifact ZIP `95451d6bcac8c851d324b1e47d4aaac905453b9e5223edad8e4a59671d2ef8a1`, expires 2026-11-03 21:40 UTC.
+- **Status:** working local one-shot action proved on disposable Windows; user's local PC has not run/installed artifact; ChatGPT-to-local transport still absent and full v3 server/client/schema publication remains stopped, not circumvented. No main/production/v2/cloud database/user device changes or Work/TinyFish costs.
