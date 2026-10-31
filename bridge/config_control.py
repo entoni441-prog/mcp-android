@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Bounded AGY CLI settings inspector/editor. Experimental; not wired into Bridge.
-
-Never displays unrecognized keys, account tokens, MCP credentials or full JSON.
-A persistent CLI setting is NOT necessarily a currently active runtime override.
+"""AGY CLI cosmetic settings with redacted read, CAS writes and a private rollback journal.
+Test Codespace only. No arbitrary keys, shell, permissions or credential output.
 """
 import argparse
+import base64
 import fcntl
 import hashlib
 import json
@@ -14,153 +13,191 @@ import subprocess
 import sys
 import tempfile
 
-EXPECTED_BRANCH = "experiment/agy-codespaces-autostart-20261030"
-WORKSPACE = Path("/workspaces/mcp-android")
+BRANCH = "experiment/agy-codespaces-autostart-20261030"
+ROOT = Path("/workspaces/mcp-android")
 CONFIG = Path.home() / ".gemini" / "antigravity-cli" / "settings.json"
+JOURNAL = CONFIG.parent / ".agy-bridge-rollback.json"
+LOCK = CONFIG.parent / ".agy-config-control.lock"
 MAX_BYTES = 1024 * 1024
 ALLOWED = {
-    # Deliberately *only* non-privilege-escalating options in MVP.
     "verbosity": ("low", "medium", "high"),
-    "colorScheme": (
-        "terminal", "light", "solarized light", "colorblind-friendly light",
-        "dark", "solarized dark", "colorblind-friendly dark", "tokyo night"
-    ),
+    "colorScheme": ("terminal", "light", "solarized light", "colorblind-friendly light",
+                    "dark", "solarized dark", "colorblind-friendly dark", "tokyo night"),
     "altScreenMode": ("default", "always", "never"),
     "runningLightSpeed": ("fast", "medium", "slow", "off"),
 }
-# Explicitly not supported: toolPermission, agentMode, sandbox,
-# non-workspace access, telemetry, plugins, hooks, MCP and account settings.
+DIGEST = __import__("re").compile(r"(?:[0-9a-f]{64}|missing)\Z")
 
+def emit(value):
+    print(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 
-def emit(data):
-    print(json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+def safe_value(key, value):
+    return value if isinstance(value, str) and value in ALLOWED[key] else None
 
+def branch_guard():
+    result = subprocess.run(["git", "branch", "--show-current"], cwd=ROOT,
+                            capture_output=True, text=True, timeout=5, check=False)
+    if result.returncode != 0 or result.stdout.strip() != BRANCH:
+        raise RuntimeError("test_codespace_only")
 
-def branch_ok():
-    result = subprocess.run(["git", "branch", "--show-current"],
-                            cwd=WORKSPACE, check=False, capture_output=True,
-                            text=True, timeout=5)
-    return result.returncode == 0 and result.stdout.strip() == EXPECTED_BRANCH
-
-
-def read_config():
+def read():
     if CONFIG.is_symlink():
         raise RuntimeError("symlink_refused")
-    if not CONFIG.is_file():
+    if not CONFIG.exists():
         return {}, None, "missing"
-    if CONFIG.stat().st_size > MAX_BYTES:
-        raise RuntimeError("oversized_settings")
-    with CONFIG.open("rb") as handle:
-        raw = handle.read(MAX_BYTES + 1)
+    if not CONFIG.is_file() or CONFIG.stat().st_size > MAX_BYTES:
+        raise RuntimeError("invalid_settings_file")
+    raw = CONFIG.read_bytes()
     if len(raw) > MAX_BYTES:
         raise RuntimeError("oversized_settings")
     obj = json.loads(raw.decode("utf-8"))
     if not isinstance(obj, dict):
-        raise RuntimeError("invalid_object")
+        raise RuntimeError("invalid_settings_object")
     return obj, raw, hashlib.sha256(raw).hexdigest()
 
+def lock_config():
+    CONFIG.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if CONFIG.parent.is_symlink():
+        raise RuntimeError("directory_symlink_refused")
+    fd = os.open(LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+def atomic_write(path, content):
+    fd, name = tempfile.mkstemp(prefix=".agy-safe-", dir=str(path.parent))
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as out:
+            out.write(content)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+def journal():
+    if JOURNAL.is_symlink():
+        raise RuntimeError("journal_symlink_refused")
+    if not JOURNAL.exists():
+        return None
+    if not JOURNAL.is_file() or JOURNAL.stat().st_size > 1500000:
+        raise RuntimeError("invalid_journal")
+    data = json.loads(JOURNAL.read_text("utf-8"))
+    if not isinstance(data, dict) or data.get("version") != 1:
+        raise RuntimeError("invalid_journal")
+    return data
 
 def inspect():
-    if not branch_ok():
-        raise RuntimeError("test_codespace_only")
-    settings, _raw, digest = read_config()
-    # Only disclose allowlisted preference values, not any other settings.
-    # Do not disclose unknown values, even when the key name itself is allowlisted.
-    allowed = {key: (settings[key] if isinstance(settings.get(key), str)
-                      and settings[key] in ALLOWED[key] else None) for key in ALLOWED}
-    emit({"status": "ok", "sha256": digest, "preferences": allowed})
-
+    obj, _, digest = read()
+    emit({"status": "ok", "sha256": digest,
+          "preferences": {k: safe_value(k, obj.get(k)) for k in ALLOWED}})
 
 def plan(key, value):
-    if not branch_ok():
-        raise RuntimeError("test_codespace_only")
     if key not in ALLOWED or value not in ALLOWED[key]:
         raise RuntimeError("setting_not_allowlisted")
-    settings, _raw, digest = read_config()
-    emit({"status": "dry_run", "key": key, "from": settings.get(key),
-          "to": value, "expected_sha256": digest})
-
+    obj, _, digest = read()
+    emit({"status": "dry_run", "key": key, "from": safe_value(key, obj.get(key)),
+          "to": value, "expected_sha256": digest, "changed": obj.get(key) != value})
 
 def apply(key, value, expected):
-    if not branch_ok():
-        raise RuntimeError("test_codespace_only")
-    if key not in ALLOWED or value not in ALLOWED[key]:
+    if key not in ALLOWED or value not in ALLOWED[key] or not DIGEST.fullmatch(expected):
         raise RuntimeError("setting_not_allowlisted")
-    CONFIG.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    lock_file = CONFIG.parent / ".agy-config-control.lock"
-    lock_fd = os.open(lock_file, os.O_CREAT | os.O_RDWR, 0o600)
+    fd = lock_config()
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        settings, old_bytes, digest = read_config()
-        if expected != digest:
+        obj, original, digest = read()
+        if digest != expected:
             raise RuntimeError("settings_changed_since_plan")
-        previous = settings.get(key)
-        if previous == value:
-            emit({"status": "unchanged", "key": key, "value": value})
+        if obj.get(key) == value:
+            emit({"status": "unchanged", "key": key, "value": value, "sha256": digest})
             return
-        updated = dict(settings)
-        updated[key] = value
-        blob = (json.dumps(updated, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-        if len(blob) > MAX_BYTES:
+        previous = safe_value(key, obj.get(key))
+        changed = dict(obj)
+        changed[key] = value
+        new = (json.dumps(changed, ensure_ascii=False, indent=2) + "\n").encode()
+        if len(new) > MAX_BYTES:
             raise RuntimeError("oversized_settings")
-        # Keep a single private, pre-write backup in the same directory.
-        backup = CONFIG.parent / "settings.json.agy-bridge-backup"
-        if old_bytes is not None:
-            if backup.is_symlink():
-                raise RuntimeError("backup_symlink_refused")
-            bfd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-            with os.fdopen(bfd, "wb") as target:
-                target.write(old_bytes)
-                target.flush()
-                os.fsync(target.fileno())
-        fd, temporary = tempfile.mkstemp(prefix=".agy-settings-", dir=CONFIG.parent)
-        try:
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, "wb") as target:
-                target.write(blob)
-                target.flush()
-                os.fsync(target.fileno())
-            os.replace(temporary, CONFIG)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
-        # Read-back confirmation, not proof the currently running CLI reloaded it.
-        verified, _raw, _sha = read_config()
-        if verified.get(key) != value:
+        next_digest = hashlib.sha256(new).hexdigest()
+        previous_journal = journal()
+        if previous_journal and previous_journal.get("state") == "active":
+            raise RuntimeError("previous_rollback_pending")
+        info = {"version": 1, "state": "active", "key": key, "value": value,
+                "before_sha256": digest, "after_sha256": next_digest,
+                "original_absent": original is None,
+                "original_b64": base64.b64encode(original).decode() if original is not None else ""}
+        # Journal contains potentially sensitive original settings: never emit it.
+        atomic_write(JOURNAL, json.dumps(info, separators=(",", ":")).encode())
+        atomic_write(CONFIG, new)
+        readback, _, confirmation = read()
+        if confirmation != next_digest or readback.get(key) != value:
             raise RuntimeError("readback_failed")
-        emit({"status": "updated", "key": key, "from": previous,
-              "to": value, "saved": True, "runtime_restart_may_be_required": True})
+        emit({"status": "updated", "key": key, "from": previous, "to": value,
+              "before_sha256": digest, "sha256": next_digest, "rollback_available": True,
+              "runtime_reload_may_be_required": True})
     finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        os.close(lock_fd)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
+def rollback(expected):
+    if not DIGEST.fullmatch(expected):
+        raise RuntimeError("invalid_digest")
+    fd = lock_config()
+    try:
+        data = journal()
+        if not data or data.get("state") != "active":
+            raise RuntimeError("no_rollback_available")
+        obj, _, digest = read()
+        if digest != expected or expected != data.get("after_sha256"):
+            raise RuntimeError("settings_changed_since_apply")
+        original = base64.b64decode(data["original_b64"], validate=True)
+        before = "missing" if data.get("original_absent") else hashlib.sha256(original).hexdigest()
+        if before != data.get("before_sha256"):
+            raise RuntimeError("backup_hash_mismatch")
+        if data.get("original_absent"):
+            CONFIG.unlink()
+        else:
+            atomic_write(CONFIG, original)
+        _, _, verified = read()
+        if verified != before:
+            raise RuntimeError("rollback_readback_failed")
+        data["state"] = "rolled_back"
+        data["original_b64"] = ""
+        atomic_write(JOURNAL, json.dumps(data, separators=(",", ":")).encode())
+        emit({"status": "rolled_back", "key": data["key"], "sha256": verified,
+              "runtime_reload_may_be_required": True})
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 def main():
-    parser = argparse.ArgumentParser()
-    sub = parser.add_subparsers(dest="action", required=True)
+    p = argparse.ArgumentParser()
+    sub = p.add_subparsers(dest="action", required=True)
     sub.add_parser("inspect")
-    p = sub.add_parser("plan")
-    p.add_argument("key")
-    p.add_argument("value")
+    a = sub.add_parser("plan")
+    a.add_argument("key")
+    a.add_argument("value")
     a = sub.add_parser("apply")
     a.add_argument("key")
     a.add_argument("value")
     a.add_argument("--expected-sha256", required=True)
-    args = parser.parse_args()
+    a = sub.add_parser("rollback")
+    a.add_argument("--expected-sha256", required=True)
+    args = p.parse_args()
     try:
+        branch_guard()
         if args.action == "inspect":
             inspect()
         elif args.action == "plan":
             plan(args.key, args.value)
-        else:
+        elif args.action == "apply":
             apply(args.key, args.value, args.expected_sha256)
+        else:
+            rollback(args.expected_sha256)
         return 0
-    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as ex:
-        # Never print paths, arbitrary configuration content or traceback.
-        tag = str(ex) if isinstance(ex, RuntimeError) else type(ex).__name__
-        emit({"status": "error", "error": tag[:60]})
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+        ident = str(error) if isinstance(error, RuntimeError) else type(error).__name__
+        emit({"status": "error", "error": ident[:64]})
         return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())
