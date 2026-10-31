@@ -32,3 +32,11 @@
 - Open 10-minute enrollment window only when user is ready.
 - Verify matching public fingerprint and approve.
 - Run fixed probe end-to-end.
+
+## Pairing diagnosis — 2026-10-31 08:18 Europe/Rome
+- Test Codespace GET `/health` returned `status: ready`.
+- `urllib.request` enrollment with locally generated key failed HTTP 403, returning non-JSON body (`http_error`).
+- Same Codespace's `curl` POST `/v1/agent/enroll` with deliberately invalid `{"public_key":"test"}` returned HTTP 400 and JSON `{"error":"invalid_key"}`. This proves direct curl reaches the correct Worker and active registration endpoint.
+- D1 inspection confirmed 0 agents, registration window open; `403` likely from HTTP-client-specific protection, not the pairing logic, but root cause remains unproven.
+- Modified `bridge/agent.py` to use `curl` transport with request body over stdin, not CLI arguments, preserving Ed25519 headers, JSON response parsing and sanitized errors. Commit `5667f167536a0c4481f9962cb18a3d13e4011191`. Still needs a live enroll test. No secret values sent in chat.
+- Refreshed short registration window. Next action: fetch agent pinned to `5667f167...`, syntax-check it and rerun `--enroll` on test Codespace. Do not re-create DB, Worker or keys.
