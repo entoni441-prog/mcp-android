@@ -65,9 +65,10 @@ def inspect():
         raise RuntimeError("test_codespace_only")
     settings, _raw, digest = read_config()
     # Only disclose allowlisted preference values, not any other settings.
-    allowed = {key: settings.get(key, None) for key in ALLOWED}
-    emit({"status": "ok", "sha256": digest, "preferences": allowed,
-          "note": "null means default/not explicitly set; runtime overrides excluded"})
+    # Do not disclose unknown values, even when the key name itself is allowlisted.
+    allowed = {key: (settings[key] if isinstance(settings.get(key), str)
+                      and settings[key] in ALLOWED[key] else None) for key in ALLOWED}
+    emit({"status": "ok", "sha256": digest, "preferences": allowed})
 
 
 def plan(key, value):
