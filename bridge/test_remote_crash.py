@@ -46,7 +46,8 @@ def remote_child(pid):
     args = commands(pid)
     if len(args) < 2 or args[-1] != "--remote-control":
         return False
-    return Path(args[0]).name == "agy"
+    # Native binary or script launched via a trusted interpreter (node/python).
+    return Path(args[0]).name == "agy" or (len(args) >= 3 and Path(args[-2]).name == "agy")
 
 def test_guard():
     name = os.environ.get("CODESPACE_NAME", "")
