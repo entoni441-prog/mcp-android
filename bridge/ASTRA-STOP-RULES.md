@@ -1,8 +1,8 @@
-# ASTRA / Work — Stop Rules and Cost-Control Protocol
+# ASTRA WORK ONLY — Stop Rules and Cost-Control Protocol
 Status: experimental project operating rule, recorded 2026-10-31
 
 ## Purpose
-Avoid consuming Work/Claude/agent credits through repeated identical investigations, authentication loops or stalled browser operations. Apply these rules to every task dispatched by ChatGPT in the Antigravity GUI and Bridge projects. They do not grant new tool permissions.
+Avoid consuming **Astra Work's limited usage budget** through repeated identical investigations, authentication loops or stalled browser operations. This strict one-attempt/one-diagnostic STOP policy **applies to Astra Work specifically**. It does NOT limit ChatGPT in its ordinary chat session, where ChatGPT may continue useful independent investigation and implementation as permitted by its actual tools. Other agents receive this strict budget rule only if explicitly requested. Neither mode grants new tool permissions or permits bypassing a safety refusal.
 
 ## Hard limits
 1. Inspect the latest confirmed checkpoint before beginning; do not redo completed steps.
