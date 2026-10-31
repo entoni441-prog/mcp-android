@@ -95,3 +95,15 @@ The ChatGPT GitHub connector can read/write repository files and branches, but c
 - Conclusion: the experimental Codespace lifecycle configuration restored the Bridge background poller, whose Ed25519 authenticated polling and Antigravity CLI execution remained functional after a real stop/start. This confirms recovery of the *existing* authenticated Codespace only.
 - **Boundary:** a stopped/idle Codespace cannot receive tasks until it starts again. This does not prove wake-on-demand or 24/7 connectivity. No billing/idle settings changed; no changes to main, working Codespace, unrelated Cloudflare Workers/D1 or production. Queue remains fixed read-only probe only.
 - Next separate milestone: design scoped task types and authorization policy before enabling real software-development instructions; do not turn on arbitrary remote shell.
+
+## Config.inspect bridge extension — 2026-10-31 (initial job pending)
+
+- Separate `experiment/agy-config-control-20261031` branch contains the source and design for read-only CLI settings inspection.
+- Created isolated D1 `config_jobs` table. Deployed Worker `agy-bridge-mvp` v0.3 with Ed25519 signed `config/claim` and `config/finish` routes and report field allowlist.
+- Preserved the original `jobs` table and `probe` endpoints. Post-deploy compatibility verified: `probe-20261031-worker-v03-compat` returned `success` and `BRIDGE_OK` autonomously.
+- Changed only experimental branch files `bridge/agent.py` and `bridge/config_control.py`. Existing Remote Control, supervised polling and devcontainer lifecycle scripts remain unchanged.
+- Config inspect returns four cosmetic CLI settings (`verbosity`, `colorScheme`, `altScreenMode`, `runningLightSpeed`) and SHA-256 version; unexpected values become null, raw JSON/secrets are never returned. NO remote write/control enabled.
+- Queued precisely one read-only job in D1: `config-20261031-readonly-initial-01`, currently `queued` pending Codespace source refresh.
+- Required human-side action on already running **test** Codespace: `git pull --ff-only origin experiment/agy-codespaces-autostart-20261030`. The background supervisor reads updated files on its next 30-second cycle automatically; no CLI restart, rebuild or token setup needed.
+- After user sync, ChatGPT verifies exact job result in D1. Do not claim config inspection is complete until the result is observed.
+- **Not implemented:** config.plan/apply job types, or graphical UI button control. CLI settings and Antigravity IDE UI require distinct mechanisms.
