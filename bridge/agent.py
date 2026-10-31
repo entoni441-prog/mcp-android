@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Minimal Codespaces bridge worker. Runs fixed read-only probe only; no arbitrary prompts."""
+"""Ed25519-signed, fixed-probe Codespaces agent. Private key never leaves Codespaces."""
 import argparse
+import base64
+import hashlib
+import secrets
+import tempfile
+from pathlib import Path
 import json
 import os
 import re
@@ -17,17 +22,47 @@ PROMPT = "Reply with exactly BRIDGE_OK. Do not use tools or modify files."
 PROBE_SECONDS = 80
 
 
-def request_json(endpoint, path, token, data):
-    body = json.dumps(data, separators=(",", ":")).encode()
-    req = urllib.request.Request(
-        endpoint + path,
-        data=body,
-        method="POST",
-        headers={"Content-Type": "application/json", "Authorization": "Bearer " + token},
-    )
-    with urllib.request.urlopen(req, timeout=15) as response:
-        return json.load(response)
+PRIVATE_DIR=Path.home()/".config"/"agy-bridge"
+PRIVATE_FILE=PRIVATE_DIR/"identity.pem"
 
+def b64u(b):
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
+
+def keypair():
+    if not PRIVATE_FILE.exists():
+        PRIVATE_DIR.mkdir(mode=0o700,parents=True,exist_ok=True)
+        os.chmod(PRIVATE_DIR,0o700)
+        fd,tmp=tempfile.mkstemp(dir=PRIVATE_DIR,prefix=".identity-")
+        os.close(fd)
+        try:
+            subprocess.run(["openssl","genpkey","-algorithm","Ed25519","-out",tmp],check=True,capture_output=True,timeout=15)
+            os.chmod(tmp,0o600)
+            os.replace(tmp,PRIVATE_FILE)
+        finally:
+            if os.path.exists(tmp): os.unlink(tmp)
+    os.chmod(PRIVATE_FILE,0o600)
+    p=subprocess.run(["openssl","pkey","-in",str(PRIVATE_FILE),"-pubout","-outform","DER"],check=True,capture_output=True,timeout=15).stdout
+    return p,hashlib.sha256(p).hexdigest()
+
+def signature(message):
+    with tempfile.TemporaryDirectory() as d:
+        file=Path(d)/"msg"
+        file.write_bytes(message)
+        return subprocess.run(["openssl","pkeyutl","-sign","-rawin","-inkey",str(PRIVATE_FILE),"-in",str(file)],
+                              check=True,capture_output=True,timeout=15).stdout
+
+def request_json(endpoint,path,data,agent_id=None):
+    body=json.dumps(data,separators=(",",":"),ensure_ascii=True).encode()
+    headers={"Content-Type":"application/json"}
+    if agent_id:
+        ts=str(int(time.time()))
+        nonce=b64u(secrets.token_bytes(18))
+        canonical="\n".join(["POST",path,ts,nonce,hashlib.sha256(body).hexdigest()]).encode()
+        headers.update({"X-AGY-Agent-ID":agent_id,"X-AGY-Timestamp":ts,"X-AGY-Nonce":nonce,
+                        "X-AGY-Signature":b64u(signature(canonical))})
+    req=urllib.request.Request(endpoint+path,data=body,headers=headers,method="POST")
+    with urllib.request.urlopen(req,timeout=20) as response:
+        return json.load(response)
 
 def execute_probe():
     cli = os.path.expanduser("~/.local/bin/agy")
@@ -58,39 +93,38 @@ def execute_probe():
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--once", action="store_true", help="check queue once and exit (safe default)")
-    parser.add_argument("--loop", action="store_true", help="poll repeatedly (only after validation)")
-    args = parser.parse_args()
-    if not args.once and not args.loop:
-        parser.error("Specify --once or --loop")
-    endpoint = os.environ.get("AGY_BRIDGE_URL", "").rstrip("/")
-    token = os.environ.get("AGY_BRIDGE_AGENT_TOKEN", "")
-    if not endpoint.startswith("https://") or not token or len(token) < 32:
-        print("bridge endpoint/agent secret not configured", file=sys.stderr)
+    parser=argparse.ArgumentParser()
+    grp=parser.add_mutually_exclusive_group(required=True)
+    grp.add_argument("--enroll",action="store_true")
+    grp.add_argument("--once",action="store_true")
+    grp.add_argument("--loop",action="store_true")
+    args=parser.parse_args()
+    endpoint=os.environ.get("AGY_BRIDGE_URL","").strip().rstrip("/")
+    if not re.fullmatch(r"https://[a-zA-Z0-9.-]+",endpoint):
+        print("AGY_BRIDGE_URL requires a valid HTTPS hostname",file=sys.stderr)
         return 2
-    agent_id = re.sub(r"[^a-zA-Z0-9_.-]", "-", socket.gethostname())[:64]
-    while True:
-        try:
-            job = request_json(endpoint, "/v1/agent/claim", token, {"agent_id": agent_id}).get("job")
-            if job:
-                if job.get("kind") != "probe":
-                    print("Unexpected job type rejected", file=sys.stderr)
-                    return 1
-                result = execute_probe()
-                payload = {"agent_id": agent_id, **result}
-                reply = request_json(endpoint, "/v1/agent/jobs/" + job["id"] + "/finish", token, payload)
-                print("job " + job["id"] + ": " + result["status"] + " accepted=" + str(reply.get("accepted")))
-            else:
-                print("No queued probe jobs.")
-        except (urllib.error.URLError, ValueError, TimeoutError, KeyError) as error:
-            print("Bridge connection error (no credentials shown)", file=sys.stderr)
-            if args.once:
-                return 1
-        if args.once:
+    try:
+        pub,agent_id=keypair()
+        if args.enroll:
+            response=request_json(endpoint,"/v1/agent/enroll",{"public_key":b64u(pub)})
+            if response.get("agent_id")!=agent_id: raise RuntimeError("Identity mismatch")
+            print("Registration:",response.get("status"))
+            print("Public fingerprint:",agent_id[:16])
             return 0
-        time.sleep(20)
+        while True:
+            job=request_json(endpoint,"/v1/agent/claim",{},agent_id).get("job")
+            if not job: print("No queued probe jobs.")
+            elif job.get("kind")=="probe" and re.fullmatch(r"[a-zA-Z0-9_-]{8,80}",job.get("id","")):
+                result=execute_probe()
+                ack=request_json(endpoint,"/v1/agent/jobs/"+job["id"]+"/finish",result,agent_id)
+                print("Probe:",result["status"],"accepted:",ack.get("accepted"))
+            else:
+                raise RuntimeError("Unexpected job type")
+            if not args.loop: return 0
+            time.sleep(20)
+    except (OSError,ValueError,RuntimeError,subprocess.CalledProcessError,urllib.error.URLError):
+        print("Bridge unavailable or not approved; secrets not printed",file=sys.stderr)
+        return 1
 
-
-if __name__ == "__main__":
+if __name__=="__main__":
     sys.exit(main())
