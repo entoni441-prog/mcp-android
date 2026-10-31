@@ -172,3 +172,27 @@ The ChatGPT GitHub connector can read/write repository files and branches, but c
 - Official Google Antigravity docs confirm `/browser` supports Chrome automation in interactive CLI, but this does not imply browser-based control of native Antigravity IDE or its own CLI settings overlay. A separate authenticated browser/computer control capability is required for actual clicks.
 - Current ChatGPT session has GitHub/Cloudflare but NO native browser/computer tool. First safe pilot when available: open Remote Control dashboard, inventory actual controls, perform a single reversible cosmetic click with verified readback. Do not claim GUI control exists until verified.
 - Extended technical plan: `bridge/CONFIG-UI-CONTROL-PLAN.md` in config experiment branch, commit `a2bf6b7033cffba447a0b8a5c3780c054110dee6`.
+
+
+## Remote Control bounded recovery — development checkpoint, 2026-10-31
+
+**Operator priority**: ChatGPT itself performs development and autonomous GUI work. Strict one-attempt + one-diagnostic STOP budget is for Astra Work, not ordinary ChatGPT. No account, billing, production, main, or working Codespace changes.
+
+### Findings
+- Google Antigravity CLI docs distinguish interactive `agy --remote-control`, whose tunnel exists only during that process, from OS-service daemon `agy remote-control start` that can restart after crashes. The existing experimental Codespace uses the interactive PTY wrapper; there is no proof that the native Linux systemd daemon is available inside this Codespace. Official reference: https://antigravity.google/docs/remote-control?tab=cli.
+- GitHub devcontainer postStartCommand runs on container startup. The original `.devcontainer/agy-remote.py` launched a single interactive `agy --remote-control` process and did not retry if that CLI exited. Its PID check could accept any reused process ID. This is a concrete source deficiency, NOT a demonstrated root cause of the presently Offline Remote Control.
+- Authenticated TinyFish verified test Codespace «Призрачная тень» Active and can open its VS Code Web IDE. Antigravity web dashboard last showed all instances Offline. TinyFish cannot reliably focus VS Code integrated Bash terminal, even with keyboard shortcuts. No live runner/child/log diagnostic has been run after the last startup.
+
+### Source changes in this branch
+- `.devcontainer/agy-remote.py` now validates the runner PID against `/proc/<pid>/cmdline` and avoids acting on stale/reused PIDs, serializes concurrent starts with a local flock, detects immediate launch failure and retries unexpected CLI exit only **two times**, after 5s and 20s, before returning to a stopped state.
+- Preserves SIGTERM handling, private log permissions, existing terminal PTY workflow, and `postStartCommand`. Does NOT disable Codespaces idle shutdown or force background paid usage.
+- Specific commits: implementation `8367277`, NUL byte fix `e5d3063`, test suite `5dc343e` and test update `28a705e`.
+- Added `bridge/tests/test_agy_remote.py` covering runner PID detection, stale PID, limited retries, clean stop and redacted status. A matching local candidate passed seven offline Python tests. **The newly committed GitHub test file and modified runner have NOT been executed inside the user's Codespace or CI; runtime success is not yet established.**
+
+### Deployment blocker
+- Attempted one safe UI-only `Git: Pull` through TinyFish: https://agent.tinyfish.ai/runs/34f5a9d1-a8b1-4cb6-a31d-89dd336407e3
+- It opened ONLY the test IDE but reported VS Code **Restricted Mode**, preventing verifiable branch/Source Control access; thus Git Pull was **not performed**. The runtime workspace may have local changes; do not discard, force, stash or rebase them.
+- Source is committed to the REMOTE experimental branch ONLY, **not synced into the live «Призрачная тень» Codespace**. The already-running PTY wrapper retains old logic until the new file is safely synced and the runner intentionally restarted. The current daemon/CLI status remains unknown.
+
+### Next authorized engineering step
+Identify a safe way to verify the local Codespace branch and sync the remote experimental commit without changing workspace trust/security or losing local changes. When verified, perform an idempotent branch-only pull, then test a controlled test-only restart and compare the Remote Control online status. Alternatively, request the operator's explicit trust/permission approval if a security prompt is genuinely blocking all automation. Do not invoke a container rebuild or alter the working Codespace as a workaround.
