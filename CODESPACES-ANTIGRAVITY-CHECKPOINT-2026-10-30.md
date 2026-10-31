@@ -223,3 +223,21 @@ Identify a safe way to verify the local Codespace branch and sync the remote exp
 **Cost:** TinyFish is metered; meter balance confirmed USD 7.896 at the end of these runs, auto reload unconfigured (tool result, 2026-10-31).
 
 **Operational next:** upon user authorizing this specific notice, dismiss it with data-collection checkbox **unchecked**, visually inspect model menu and any accessible reversible cosmetic settings, then perform **explicitly authorized** safe test changes with readback and rollback. Continue outside the limited Astra STOP policy; respect third-party wallet and tool safety rules.
+
+
+### Autonomous settings read, write, verification and rollback — PASS (2026-10-31)
+
+The prior consent screen in the new test CLI Remote Control session exactly matched the user's earlier accepted notice. TinyFish [run dd4ecb19](https://agent.tinyfish.ai/runs/dd4ecb19-1369-4903-a321-0b9e9a1ffb78) autonomously clicked 'Accept and continue' with OPTIONAL interaction-data collection box UNCHECKED, no additional permission. The authenticated TEST UI opened; the model selector was independently opened read-only. Selected: Gemini 3.8 Flash High; shown: Claude Sonnet 4.6 (Thinking) [Notice], Claude Opus 4.6 (Thinking) [Notice], GPT-OSS 120B (Medium) [Notice], Gemini 4 Argon [Unavailable]. A model appearing in the menu does not prove entitlement or ability to use it.
+
+[TinyFish read-only inventory 622f8464](https://agent.tinyfish.ai/runs/622f8464-e24e-4c53-b84a-027368ecb3ba) verified test instance `codespaces-d015bd-bright-plume` Online and accessed **Settings gear → Appearance**. Visible reversible Contrast options: Default / Strong; current Default. Theme/System/Light/Dark and font/color controls also visible. Settings scope *appeared* test-instance-specific but was not independently established; do not assume account-wide scope absent.
+
+**FIRST CONFIRMED AUTONOMOUS UI SETTING WRITE AND ROLLBACK:**
+[TinyFish run 75f666ce](https://agent.tinyfish.ai/runs/75f666ce-3274-46a4-a3be-ffa664f7b806) on only Online TEST instance, with no interaction with working Codespace, model choice, permissions, billing/security, network, files or prompts:
+1. Read initial `Settings → Appearance → Contrast = Default`.
+2. Set `Contrast → Strong`; GUI readback confirmed `Strong`.
+3. Set `Contrast → Default`; GUI readback confirmed `Default`.
+4. Roundtrip **PASS**, original appearance restored, no other settings changed. Run finished 19 steps, 122 s. This is **verified autonomous ChatGPT → TinyFish → Antigravity GUI read/write/readback/rollback**; user did no manual UI work.
+
+**Current state:** Test Codespace was restarted, tested bounded-recovery source verified locally, fresh Remote Control instance connected successfully, safe cosmetic state back to Default. Persistent recovery on crash has NOT been deliberately failure-injected or tested; Code was syntax/7-unit-tests validated in GitHub Actions, and one fresh startup observed. No claim that runner survives Codespaces idle shutdown or that GUI control is globally available across instances/accounts.
+
+**Scope:** Working main/production/«Ужасная летучая мышь», financial/privacy/permission settings unchanged. Avoid revealing authentication/session URLs in public reports. If additional autonomous work is needed, continue from this validated milestone rather than repeating login, setup, trust, pull, or UI pilot.
