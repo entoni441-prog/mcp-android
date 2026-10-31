@@ -78,3 +78,11 @@
 - **Not yet verified:** user Windows PC is connected to ChatGPT Work Local; Computer Use available and approved; mobile remote continuation works. This session lacks a connected local Windows host tool, so these steps require approved local desktop-app access.
 - Alternative Antigravity Remote Control only accesses whichever computer hosts Antigravity CLI: tested Linux Codespace is not the local Windows host. Do not present it as Windows desktop control.
 - Existing v3 publication STOP unchanged; no new worker/client/schema publishing, no test D1 mutation, no production/main/working v2 modification and no paid resources.
+
+## Regular ChatGPT → own Windows 11 UI channel, without Astra Work quota — 2026-10-31
+- User explicitly rejected Work as the operational execution route because it uses a separate limited quota. Ordinary chat and current Cloudflare Entoni MCP are the intended control interface.
+- Public technical research: OpenAI Computer Use uses connected host + secure relay + per-app permissions and foreground Windows; Windows UI Automation and consent-based Windows.Graphics.Capture are suitable public OS-level building blocks. OpenAI proprietary Work implementation was NOT retrieved or copied.
+- Architecture decision `windows-pc-agent-lab/v3/CHAT-DIRECT-WINDOWS-DESIGN-20261031.md`, commit `ed3802285dfbeb0af558187dcf259dada67a5f72`; prior Work-first route explicitly superseded in commit `e82c7c90f7a32d37f269a13e8629fa1058a25cfc`.
+- Live D1 read-only inspection: v2 device remains approved, last heartbeat `1793468912` (2026-10-31 17:48:32 UTC), last sequence 5. This verifies previous telemetry, NOT an active Windows GUI control process. Existing v2 client supports only outgoing heartbeat, no command polling.
+- **Critical missing component:** approved local Windows UI executor, running under logged-in user with explicit app-level consent, plus supported deployment and review. Full executable v3 worker/client/schema remains blocked from publication, no alternate connector, encoding or backdoor.
+- No new Windows enrollment, Cloudflare D1 write, third-party spend, Work use, production/main/v2 modification, or Windows-side installation. Current state: DESIGN READY / CLOUD READ PASS / LOCAL UI UNAVAILABLE / RELEASE STOP.
