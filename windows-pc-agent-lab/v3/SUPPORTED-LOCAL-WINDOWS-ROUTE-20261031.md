@@ -1,3 +1,9 @@
+# Historical route — superseded by the user's explicit choice (31.10.2026)
+
+The Work Local route below was a former suggestion only. **It is not the selected implementation path.** User requires regular GPT-6 Chat without consuming limited Astra Work quota. The current decision is [CHAT-DIRECT-WINDOWS-DESIGN-20261031.md](CHAT-DIRECT-WINDOWS-DESIGN-20261031.md): existing ChatGPT Cloudflare MCP + own Windows local consent-based UI executor. No local executor yet; publication of blocked v3 runtime remains prohibited.
+
+---
+
 # Windows 11 — разрешённый маршрут к практическому управлению (31.10.2026)
 
 ## Решение
