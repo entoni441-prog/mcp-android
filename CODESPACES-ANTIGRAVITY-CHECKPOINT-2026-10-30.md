@@ -83,3 +83,15 @@ The ChatGPT GitHub connector can read/write repository files and branches, but c
 - Existing main, production, Codespaces billing/idle timer, and unrelated Cloudflare Workers/D1 remained unchanged. Enrollment still closed and first prototype only processes fixed harmless probes.
 - **Not yet verified:** stop/restart of test Codespace and corresponding auto-resume of the Bridge poller; Remote Control auto-resume was separately verified previously. Agent runs while Codespace is active; it cannot wake a stopped Codespace or keep one alive beyond provider limits.
 - Next step: stop test Codespace haunted-shadow from GitHub UI, start it again normally without terminal commands, then ChatGPT queues a fresh fixed probe and verifies unattended completion. Do not rebuild the container or operate on golden-meteor.
+
+## CONFIRMED: Bridge poller auto-resume after Codespace STOP/START — 2026-10-31 08:43 Europe/Rome
+
+- Test Codespace haunted-shadow was explicitly stopped through GitHub UI, which displayed the successful stop notification. The user then opened the same Codespace normally; VS Code reappeared with an idle shell prompt. **No terminal commands were run after restarting it.**
+- ChatGPT verified Cloudflare D1 had two prior successful jobs, the sole Ed25519 agent still approved (fingerprint 8fce8450fc2aa472), and enrollment closed (enroll_until=0).
+- ChatGPT created a new uniquely identified fixed probe: probe-20261031-after-restart-0843, initially status=queued with created_at=1793432618.
+- Without any agent startup/manual command, Cloudflare D1 showed it claimed at 1793432636 and completed at 1793432641.
+- Final verified values: status=success, response=BRIDGE_OK, error='', same approved agent_id, lease cleared.
+- Time from enqueue to claim = 18 seconds; from claim to result = 5 seconds.
+- Conclusion: the experimental Codespace lifecycle configuration restored the Bridge background poller, whose Ed25519 authenticated polling and Antigravity CLI execution remained functional after a real stop/start. This confirms recovery of the *existing* authenticated Codespace only.
+- **Boundary:** a stopped/idle Codespace cannot receive tasks until it starts again. This does not prove wake-on-demand or 24/7 connectivity. No billing/idle settings changed; no changes to main, working Codespace, unrelated Cloudflare Workers/D1 or production. Queue remains fixed read-only probe only.
+- Next separate milestone: design scoped task types and authorization policy before enabling real software-development instructions; do not turn on arbitrary remote shell.
