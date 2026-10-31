@@ -122,8 +122,23 @@ def main():
                 raise RuntimeError("Unexpected job type")
             if not args.loop: return 0
             time.sleep(20)
-    except (OSError,ValueError,RuntimeError,subprocess.CalledProcessError,urllib.error.URLError):
-        print("Bridge unavailable or not approved; secrets not printed",file=sys.stderr)
+    except urllib.error.HTTPError as exc:
+        # Worker emits only fixed, low-sensitivity error identifiers.
+        code = "http_error"
+        try:
+            response = json.loads(exc.read(256))
+            identifier = response.get("error", "")
+            if isinstance(identifier, str) and re.fullmatch(r"[a-z_]{1,50}", identifier):
+                code = identifier
+        except (ValueError, OSError):
+            pass
+        print(f"Bridge HTTP {exc.code}: {code}", file=sys.stderr)
+        return 1
+    except subprocess.CalledProcessError:
+        print("Local OpenSSL key operation failed", file=sys.stderr)
+        return 1
+    except (OSError, ValueError, RuntimeError, urllib.error.URLError) as exc:
+        print(f"Bridge failure: {type(exc).__name__} (no secrets printed)", file=sys.stderr)
         return 1
 
 if __name__=="__main__":
