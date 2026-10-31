@@ -128,25 +128,48 @@ def execute_probe():
         return {"status": "error", "error": "invalid_cli_response"}
 
 
-def inspect_config():
-    """Read only the strictly allowlisted CLI preferences; never return raw settings."""
-    script = Path(__file__).resolve().parent / "config_control.py"
-    if not script.is_file():
-        return {"status": "error"}
-    safe_env = {k: os.environ[k] for k in ("HOME", "PATH", "LANG", "LC_ALL", "XDG_CONFIG_HOME")
-                if k in os.environ}
+# Explicit, non-privileged remote configuration actions only.
+CONFIG_ALLOWED = {
+    "verbosity": ("low","medium","high"),
+    "colorScheme": ("terminal","light","solarized light","colorblind-friendly light",
+                    "dark","solarized dark","colorblind-friendly dark","tokyo night"),
+    "altScreenMode": ("default","always","never"),
+    "runningLightSpeed": ("fast","medium","slow","off"),
+}
+def config_action(job):
+    path = Path(__file__).resolve().parent / "config_control.py"
+    kind = job.get("kind")
+    key = job.get("key")
+    val = job.get("value")
+    sha = job.get("expected_sha256")
+    if not path.is_file() or kind not in ("config.inspect","config.plan","config.apply","config.rollback"):
+        return {"status":"error"}
+    args=[sys.executable,str(path)]
+    if kind=="config.inspect":
+        args+=["inspect"]
+    elif kind in ("config.plan","config.apply"):
+        if key not in CONFIG_ALLOWED or val not in CONFIG_ALLOWED[key]:
+            return {"status":"error"}
+        args += ["plan" if kind=="config.plan" else "apply",key,val]
+        if kind=="config.apply":
+            if not isinstance(sha,str) or not re.fullmatch(r"(?:[0-9a-f]{64}|missing)",sha):
+                return {"status":"error"}
+            args += ["--expected-sha256",sha]
+    else:
+        if key not in CONFIG_ALLOWED or not isinstance(sha,str) or not re.fullmatch(r"(?:[0-9a-f]{64}|missing)",sha):
+            return {"status":"error"}
+        args += ["rollback","--expected-sha256",sha]
+    clean={k:os.environ[k] for k in ("HOME","PATH","LANG","LC_ALL","XDG_CONFIG_HOME") if k in os.environ}
     try:
-        proc = subprocess.run([sys.executable, str(script), "inspect"],
-                              cwd="/workspaces/mcp-android", env=safe_env,
-                              capture_output=True, text=True, timeout=12)
-        if proc.returncode != 0 or len(proc.stdout) > 3000:
-            return {"status": "error"}
-        report = json.loads(proc.stdout)
-        if not isinstance(report, dict) or report.get("status") != "ok":
-            return {"status": "error"}
-        return {"status": "success", "report": report}
-    except (ValueError, OSError, subprocess.TimeoutExpired):
-        return {"status": "error"}
+        p=subprocess.run(args,cwd="/workspaces/mcp-android",env=clean,capture_output=True,text=True,timeout=16)
+        if p.returncode!=0 or len(p.stdout)>3000:
+            return {"status":"error"}
+        report=json.loads(p.stdout)
+        if not isinstance(report,dict) or report.get("status")=="error":
+            return {"status":"error"}
+        return {"status":"success","report":report}
+    except (OSError,ValueError,subprocess.TimeoutExpired):
+        return {"status":"error"}
 
 
 def main():
@@ -178,9 +201,9 @@ def main():
                 print("Probe:",result["status"],"accepted:",ack.get("accepted"))
             config_job=request_json(endpoint,"/v1/agent/config/claim",{},agent_id).get("job")
             if config_job:
-                if config_job.get("kind")!="config.inspect" or not re.fullmatch(r"[a-zA-Z0-9_-]{8,80}",config_job.get("id","")):
+                if config_job.get("kind") not in ("config.inspect","config.plan","config.apply","config.rollback") or not re.fullmatch(r"[a-zA-Z0-9_-]{8,80}",config_job.get("id","")):
                     raise RuntimeError("Unexpected config kind")
-                result=inspect_config()
+                result=config_action(config_job)
                 ack=request_json(endpoint,"/v1/agent/config/"+config_job["id"]+"/finish",result,agent_id)
                 print("Config inspect:",result["status"],"accepted:",ack.get("accepted"))
             if not job and not config_job:
