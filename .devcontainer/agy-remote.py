@@ -30,7 +30,7 @@ def is_runner(pid):
     try:
         os.kill(pid, 0)
         command = [part.decode("utf-8", "replace") for part in
-                   Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\\0") if part]
+                   Path(f"/proc/{pid}/cmdline").read_bytes().split(bytes([0])) if part]
         status = Path(f"/proc/{pid}/stat").read_text().split()
         return (len(command) >= 3 and command[-1] == "serve" and
                 Path(command[-2]).name == "agy-remote.py" and
