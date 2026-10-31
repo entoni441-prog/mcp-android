@@ -107,3 +107,14 @@ The ChatGPT GitHub connector can read/write repository files and branches, but c
 - Required human-side action on already running **test** Codespace: `git pull --ff-only origin experiment/agy-codespaces-autostart-20261030`. The background supervisor reads updated files on its next 30-second cycle automatically; no CLI restart, rebuild or token setup needed.
 - After user sync, ChatGPT verifies exact job result in D1. Do not claim config inspection is complete until the result is observed.
 - **Not implemented:** config.plan/apply job types, or graphical UI button control. CLI settings and Antigravity IDE UI require distinct mechanisms.
+
+## VERIFIED remote CLI settings inspection — 2026-10-31 09:21 Europe/Rome
+
+- User fast-forward pulled experiment/agy-codespaces-autostart-20261030 inside existing test Codespace haunted-shadow. Screenshot showed updated bridge/agent.py, new bridge/config_control.py, and no merge conflicts.
+- The already running Bridge supervisor (without any manual restart) automatically claimed and completed the pre-queued config job config-20261031-readonly-initial-01.
+- Cloudflare D1 independently verified status=success, approved Ed25519 agent fingerprint=8fce8450fc2aa472, error empty, claimed_at=1793434906.
+- Validated schema-reduced JSON returned SHA-256 f99423432ba6528ee62cbff006e620984be606ba0a6cd0f1d8fc81b0582a1f29 and all four allowed CLI preferences null: verbosity, colorScheme, altScreenMode, runningLightSpeed. Null indicates not explicitly configured with a recognized value; it is not evidence of current effective runtime overrides or Antigravity IDE/global UI settings.
+- Official Google CLI reference confirms defaults for absent keys: verbosity medium, colorScheme terminal, altScreenMode default, runningLightSpeed medium, subject to launch/runtime overrides.
+- No configuration was changed. No sensitive values, complete config JSON, account tokens, or key material returned.
+- Worker v0.3 config.inspect endpoint works; original probe endpoint remained compatible, confirmed by successful probe-20261031-worker-v03-compat.
+- **Next:** add tightly scoped remote config.plan/config.apply with compare-and-swap, snapshot/read-back/rollback and independent verification. GUI button control remains separate and unimplemented; do not misrepresent configuration-file editing as mouse click control.
