@@ -31,6 +31,7 @@ No direct Cloud Browser or computer-use tool is exposed to the ordinary chat ses
 | --- | --- |
 | Opened the official Antigravity site in Work Cloud Browser | The welcome screen showed “Welcome to Antigravity” and a “Sign in” button. |
 | Clicked “Sign in” | Google Accounts opened with “Use your Google Account”, an “Email or phone” field and a “Next” button. |
-| Continued through the secure account form and selected “Try another way” | Google displayed its sign-in method chooser. Authentication is pending at this checkpoint. |
+| Continued through the secure account form and selected “Try another way” | Google displayed its sign-in method chooser. Options included password, passkey and “Try another way”. |
+| Selected the alternate route in the chooser | Google opened Account recovery and requested a previously used password. Returned to the normal sign-in page without submitting recovery information. Authentication remains pending. |
 
 The click and navigation are verified. The welcome screen did not expose Settings/Preferences, instances, approvals, model selection or permissions. Availability of these controls inside the signed-in app remains unknown. No cosmetic setting was changed or reverted. Next verification starts after Google sign-in: identify the test instance if visible, inventory the controls, then change and restore one cosmetic preference only if available.
