@@ -23,5 +23,6 @@ jobs:
           node --check windows-pc-agent-lab/worker.mjs
           node --check windows-pc-agent-lab/windows-agent.mjs
           node --check windows-pc-agent-lab/tests/worker.test.mjs
-      - name: Security and protocol tests (no real Windows, no cloud deployment)
-        run: node --test windows-pc-agent-lab/tests/worker.test.mjs
+          node --check windows-pc-agent-lab/tests/e2e.test.mjs
+      - name: Security and end-to-end protocol tests (mock D1, no Windows or cloud deployment)
+        run: node --test windows-pc-agent-lab/tests/worker.test.mjs windows-pc-agent-lab/tests/e2e.test.mjs
