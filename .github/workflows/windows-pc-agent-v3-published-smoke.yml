@@ -37,7 +37,11 @@ jobs:
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           import {generateKeyPairSync,verify} from 'node:crypto';
-          import {ACTIONS,validateJob} from './windows-pc-agent-lab/v3/actions.mjs';
+          import {EventEmitter} from 'node:events';
+          import fs from 'node:fs';
+          import os from 'node:os';
+          import path from 'node:path';
+          import {ACTIONS,validateJob,executeJob} from './windows-pc-agent-lab/v3/actions.mjs';
           import {signedV3} from './windows-pc-agent-lab/v3/identity-v3.mjs';
           assert.equal(ACTIONS.length,6);
           assert.equal(validateJob('get_status',{}),true);
@@ -47,6 +51,22 @@ jobs:
             ['write_text',{path:'../out.txt',content:'hello',expectedSha256:null}],
             ['open_app',{app:'powershell'}]
           ])assert.throws(()=>validateJob(op,args));
+          for(const filename of ['CON','nul.txt','COM1','lpt9.json','AUX.config','docs/PRN.txt','COM¹','LPT².txt']){
+            assert.throws(()=>validateJob('read_text',{path:filename}),filename);
+          }
+          const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'pc-v3-ci-'));
+          try {
+            const failure=()=>{
+              const child=new EventEmitter();
+              child.unref=()=>{};
+              queueMicrotask(()=>child.emit('error',new Error('synthetic-launch-failure')));
+              return child;
+            };
+            await assert.rejects(
+              executeJob('open_app',{app:'notepad'},{workspace:path.join(tmp,'workspace'),platform:'win32',launcher:failure}),
+              /app_launch_failed/
+            );
+          } finally {fs.rmSync(tmp,{recursive:true,force:true});}
           const {privateKey,publicKey}=generateKeyPairSync('ec',{namedCurve:'prime256v1'});
           const identity={id:'a'.repeat(32),privateKey};
           const message=signedV3('/v3/poll',identity);
