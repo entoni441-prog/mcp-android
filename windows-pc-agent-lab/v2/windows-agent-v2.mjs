@@ -20,6 +20,7 @@ function dpapi(mode,plaintextOrCiphertext){
   // No secret in shell command-line arguments; stdin carries base64, no temp plaintext files.
   const script=`$ErrorActionPreference='Stop';
   $value=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()));
+  Add-Type -AssemblyName System.Security -ErrorAction Stop;
   $scope=[System.Security.Cryptography.DataProtectionScope]::CurrentUser;
   if('${mode}' -eq 'protect') {$out=[System.Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($value),$null,$scope)}
   else {$out=[System.Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($value),$null,$scope)};
