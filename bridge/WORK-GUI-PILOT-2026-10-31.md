@@ -62,3 +62,13 @@ Repository reads and report writes work through the GitHub connector. Its expose
 The operator reported starting haunted-shadow and opening VS Code. A read-only query on the isolated bridge found the approved test agent's latest signed request at 10:02:33 UTC (13 seconds before the query). This confirms recent bridge activity after the reported resume. It does not identify the current Remote Control instance or establish its Online state.
 
 Binding to the existing authenticated Antigravity tab timed out after 300 seconds. Resetting the browser-control runtime also timed out after 300 seconds. No new instance list was obtained and Refresh was not clicked in this run. The earlier six Offline rows predate the manual resume. No current instance, menu, model selector or reversible cosmetic change was verified. Resume at the Antigravity instance list once browser control responds. No GitHub sign-in attempt or Codespace operation was performed.
+
+### STOP — browser control unavailable (2026-10-31)
+
+Applied [ASTRA-STOP-RULES.md](ASTRA-STOP-RULES.md) at checkpoint `cb4c84f`. The operator started haunted-shadow and the approved Bridge agent sent a signed request at 10:02:33 UTC. The last GUI list predates that start.
+
+- **Blocked operation:** binding the existing Antigravity tab (`getTab`) and the single recovery diagnostic (`js_reset`) each returned `timed out awaiting tools/call after 300s`. No fresh UI state was returned. The underlying cause is unknown.
+- **Independent diagnostic availability:** the current tool inventory exposes no separate Work browser-runtime health or log endpoint. The repository and Bridge cannot diagnose this timeout. No new browser, sign-in or agent checks were issued.
+- **Recovery prerequisite:** restored Work browser control, demonstrated by a successful read of the authenticated Antigravity tab in a repaired or replacement Work session. No account or Codespace action is requested from the operator.
+- **Resume:** only after that recovery, refresh the instance list once and correlate an online row with haunted-shadow before opening it. Until then, current GUI status, model selection and cosmetic preferences remain unverified.
+- **Safe state:** only this experimental report was updated. No changes to main, production, working Codespaces, security or billing. No cosmetic change awaits rollback.
