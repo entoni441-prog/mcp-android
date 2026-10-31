@@ -26,6 +26,11 @@ export function loadIdentityV2(localAppData){
   return {id:identity.id,privateKey:key};
 }
 export function signedV3(route,identity,extra={}){
+  // Never permit caller-supplied fields to replace authenticated device identity,
+  // freshness, nonce or the signature field itself.
+  const reserved=new Set(['id','timestamp','nonce','signature','__proto__','constructor','prototype']);
+  if(!extra||typeof extra!=='object'||Array.isArray(extra)||
+     Object.keys(extra).some(key=>reserved.has(key)))throw Error('invalid_signed_fields');
   const payload={id:identity.id,timestamp:Math.floor(Date.now()/1000),nonce:newNonce(),...extra};
   const canonical=['pc-agent-v3','POST',route,JSON.stringify(payload)].join('\n');
   const signature=sign('sha256',Buffer.from(canonical),{key:identity.privateKey,dsaEncoding:'ieee-p1363'}).toString('base64url');
