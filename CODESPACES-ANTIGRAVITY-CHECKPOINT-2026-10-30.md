@@ -149,3 +149,14 @@ The ChatGPT GitHub connector can read/write repository files and branches, but c
 - `config.apply` and `config.rollback` source, Worker route and schema were added earlier but **no live plan/apply/rollback was performed**. No configuration change or local rollback snapshot should be assumed.
 - Next available low-risk test: run `python3 bridge/config_control.py plan verbosity low` only inside test Codespace; this does not write files. Do not enqueue a live mutation until there is explicit verified plan result and a permitted authenticated execution route.
 - Keep clear separation between CLI file settings and native Antigravity graphical UI controls. No GUI automation is currently connected.
+
+
+## VERIFIED LOCAL config plan/apply/rollback — 2026-10-31 09:35–09:39 Europe/Rome
+
+- On the existing experimental Codespace `haunted-shadow`, the user ran `python3 bridge/config_control.py plan verbosity low`. Screenshot showed `status=dry_run`, `changed=true`, `from=null`, `to=low`, and pre-change SHA-256 `f99423432ba6528ee62cbff006e620984be606ba0a6cd0f1d8fc81b0582a1f29`.
+- User then ran the **local** `apply` with that exact expected digest. Screenshot confirmed `status=updated`, `key=verbosity`, `to=low`, `rollback_available=true`, and post-write SHA-256 `a590514c160bc8c17e4624ef7599a0c44d4ba5d7a3cddc399cabd6381c1ab380`.
+- Finally user ran the **local** `rollback` with post-write digest. Screenshot confirmed `status=rolled_back`, key `verbosity`, and restored SHA-256 `f99423432ba6528ee62cbff006e620984be606ba0a6cd0f1d8fc81b0582a1f29`, equal to the original baseline.
+- **Result verified:** standalone Codespace config controller can plan, atomically write an allowlisted cosmetic CLI setting with a private rollback snapshot, then restore exact original settings content. No original secret values displayed; not a proof of in-memory CLI setting reload.
+- **Not yet verified:** end-to-end remote signed `config.plan`, `config.apply`, and `config.rollback` through Cloudflare. An earlier read-only queue insertion was blocked by connector safety; do not claim the remote write bridge is proven or work around blocked operations. Native GUI/button control also remains unimplemented.
+- `main`, original working Codespace, production Cloudflare resources and payment/idle limits were not changed by this local test.
+- **Next:** independently review CLI config report sanitation and remote approval gating, then test signed remote plan/apply/rollback through an authorized path if permitted. For native GUI UI settings, use a supported authenticated browser/computer control channel; do not substitute CLI JSON editing for actual button clicks.
