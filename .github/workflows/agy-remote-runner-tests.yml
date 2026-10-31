@@ -7,6 +7,7 @@ on:
     paths:
       - .devcontainer/agy-remote.py
       - bridge/tests/test_agy_remote.py
+      - bridge/tests/test_agy_crash_recovery.py
       - .github/workflows/agy-remote-runner-tests.yml
 
 permissions:
@@ -22,4 +23,4 @@ jobs:
       - name: Check Python syntax
         run: python3 -m py_compile .devcontainer/agy-remote.py
       - name: Run isolated lifecycle unit tests
-        run: python3 -m unittest discover -v -s bridge/tests -p 'test_agy_remote.py'
+        run: python3 -m unittest discover -v -s bridge/tests -p 'test_agy_*.py'
