@@ -7,6 +7,7 @@ on:
     paths:
       - windows-pc-agent-lab/v3/actions.mjs
       - windows-pc-agent-lab/v3/identity-v3.mjs
+      - windows-pc-agent-lab/v3/tests/windows-published-integration.test.mjs
       - .github/workflows/windows-pc-agent-v3-published-smoke.yml
   workflow_dispatch:
 
@@ -75,3 +76,6 @@ jobs:
           assert.equal(verify('sha256',Buffer.from(canonical),{key:publicKey,dsaEncoding:'ieee-p1363'},Buffer.from(signature,'base64url')),true);
           console.log('Published module checks passed, no deployment or Windows access');
           NODE
+      - name: Real Windows DPAPI and bounded workspace integration (synthetic identity only)
+        shell: bash
+        run: node --test windows-pc-agent-lab/v3/tests/windows-published-integration.test.mjs
