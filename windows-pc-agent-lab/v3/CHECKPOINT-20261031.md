@@ -58,3 +58,14 @@
 - Release remains **BLOCKED**: no published v3 worker/client/schema/full tests. Other audit findings: plaintext result retention in D1, filesystem reparse/TOCTOU and multiwriter CAS limitations, `open_app` relative executable search, potentially overridable reserved signing fields, synthetic-test vs live-device coverage gap, stale v2 README status.
 - Independent consultant's proposal mostly restates existing v3 pull architecture. Its sample GET+Bearer interface is not the verified v2 ECDSA POST contract; claims about bypassing safety filters via names are unsupported/rejected.
 - No execution, v3 deployment, data writes to D1, user Windows actions, production/main modifications, paid resources or workaround of tool restriction.
+
+## Verified published-module security fixes — 2026-10-31
+- Changes in experimental branch ONLY:
+  - `d72d9c3`: `identity-v3.mjs` now rejects signed-request reserved-field overrides, null and array input.
+  - `77683d0`: `actions.mjs` resolves allowlisted Notepad/Calculator through absolute Windows `SystemRoot\\System32` paths, not PATH search.
+  - `af46cb6`, `c2a01ac`: negative tests for signature overrides, Windows app absolute path, and symlink/junction workspace escape.
+  - `903fe36`: GitHub Actions synthetic `SystemRoot` used for cross-platform launcher-failure test.
+- Last checked published-module CI: **GitHub Actions run `41240093359`, SUCCESS on both Ubuntu and Windows**. Windows: **6 PASS, 0 FAIL, 0 SKIP**. Verified Windows job logs. The initial intermediate commits had failing CI and were superseded by fixes; do not report those as final.
+- Follow-up audit record: `windows-pc-agent-lab/v3/AUDIT-20261031-INDEPENDENT.md`, updated in commit `30ba8d9`.
+- Remaining concerns explicitly unresolved: filesystem TOCTOU/reparse races and multiactor SHA conflict; private file contents in Cloudflare D1; missing executable worker, Windows poller, SQL schema and full integration tests. Full v3 CI is still **BLOCKED intentionally**, not PASS.
+- No v3 deployment, access grant, real Windows task, Cloudflare D1 mutation, production/main/working v2 changes, paid resources or restriction bypass.
