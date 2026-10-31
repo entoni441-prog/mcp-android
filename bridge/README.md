@@ -62,3 +62,12 @@
 - No secrets copied, no arbitrary commands executed, no code changed in working Codespace or `main`, and no existing Cloudflare production resources modified.
 - **Scope limitation:** This proves **one-shot** execution initiated by a terminal command, not continuous hands-free polling, auto-start of the Bridge poller or ability to send arbitrary natural-language tasks. `Antigravity Remote Control` auto-resume is an already verified but separate subsystem.
 - **Next safe milestone:** create a bounded, idempotent background polling service for the *existing* approved test agent, verify one more fixed probe without manual Codespaces terminal invocation, then test its stop/start recovery. Keep fixed-probe-only allowlist until separately authorizing scoped tasks; do not touch billing or idle timeout.
+
+## Background polling v0.3 — code complete; activation pending
+
+- New file: bridge/supervisor.py, initial commit 570a82a8dfa6dce348a59a919d0b0096047548b9. Detached single-process supervisor with file lock, PID/status files, graceful stop, exponential retry backoff, 30-second quiet polling, 130-second child timeout and environment allowlist.
+- Auto-start is opt-in, limited to the existing experimental branch and the previously approved Ed25519 identity. The supervisor never enrolls itself and never changes Cloudflare or GitHub secrets.
+- In experiment/agy-codespaces-autostart-20261030, the already-used .devcontainer/agy-remote.py now launches the supervisor only when its source exists, preserving prior Remote Control behavior. devcontainer.json is unchanged to avoid rebuild and losing credentials.
+- Local integration test in a disposable filesystem and process namespace passed: startup, second start idempotence, repeated simulated probe polling and stop. No live background process was launched in the user's Codespace by the GitHub connector.
+- Next verification: operator synchronizes existing test Codespace, downloads pinned supervisor to its persistent workspace, starts launcher once; after that ChatGPT queues a single harmless probe, verifies D1 success without the operator invoking the agent, then checks supervisor recovery after an ordinary Codespace stop/start. Do not queue probes until the supervisor is confirmed running.
+- This does not make GitHub Codespaces always-on or wake it when stopped. Default idle timeout and billing limits remain in force.
