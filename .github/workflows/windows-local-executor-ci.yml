@@ -49,3 +49,43 @@ jobs:
           assert.match(src,/open_app/);
           console.log('No network, startup, shell or remote job handling in local launcher.');
           NODE
+      - name: Actual allowlisted Notepad process spawn in disposable Windows CI
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $prior = @(Get-Process -Name notepad -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+          try {
+            $raw = & node windows-pc-agent-lab/local-executor/launch-once.mjs --app=notepad --approve-once
+            if ($LASTEXITCODE -ne 0) { throw ('Actual process creation failed: ' + $LASTEXITCODE) }
+            $result = ($raw -join [Environment]::NewLine) | ConvertFrom-Json
+            if ($result.status -ne 'spawn_confirmed' -or $result.app -ne 'notepad') {
+              throw 'The Windows OS did not confirm the Notepad child spawn'
+            }
+            Write-Host 'Windows confirmed real System32 Notepad process creation (runner is noninteractive; GUI visibility unverified).'
+          } finally {
+            # Ephemeral CI only: close Notepad processes that this job created.
+            $after = @(Get-Process -Name notepad -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+            foreach ($id in $after) {
+              if ($prior -notcontains $id) {
+                Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
+              }
+            }
+            $global:LASTEXITCODE = 0
+          }
+      - name: Package a local, one-click, no-network launcher
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $base = 'dist/WindowsLocalExecutor'
+          New-Item -ItemType Directory -Force -Path "$base/local-executor","$base/v3" | Out-Null
+          Copy-Item 'windows-pc-agent-lab/local-executor/launch-once.mjs' "$base/local-executor/"
+          Copy-Item 'windows-pc-agent-lab/local-executor/OPEN-NOTEPAD-LOCAL.cmd' "$base/local-executor/"
+          Copy-Item 'windows-pc-agent-lab/v3/actions.mjs' "$base/v3/"
+          Compress-Archive -Path "$base/*" -DestinationPath 'dist/windows-local-notepad-once.zip' -Force
+          if (-not (Test-Path 'dist/windows-local-notepad-once.zip')) { throw 'Packaging failed' }
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: windows-local-notepad-once
+          path: dist/windows-local-notepad-once.zip
+          retention-days: 3
