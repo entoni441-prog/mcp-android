@@ -16,7 +16,7 @@ Status: offline implementation only, preserved on the dedicated experimental bra
 
 - `worker-v2.mjs`: **standalone** v2 server source; not a drop-in replacement for the currently deployed v1 worker.
 - `windows-agent-v2.mjs`: Windows Node.js 24 foreground client. Source is not automatically executed.
-- `schema-v2.sql`: isolated D1 schema migration, **not applied** by CI.
+- `schema-v2.sql`: isolated D1 schema migration, **applied 2026-10-31** directly to test-only D1 `pc-agent-readonly-lab`; CI itself never applies migrations. Gate `windows-v2` remains closed.
 - `tests/worker-v2.test.mjs`: mock-D1 security/protocol tests; no cloud calls and no changes to Windows.
 
 ## Offline verification
@@ -26,7 +26,7 @@ Status: offline implementation only, preserved on the dedicated experimental bra
 ## Deployment gates — not automatic
 
 1. Review code, Windows DPAPI implementation and test results, then approve use of the existing **test-only** Worker. v1 routes must stay available during migration; either route by prefix or deploy v2 into a separate test Worker. Never replace live v1 script with standalone v2 source without an integration plan.
-2. Execute `schema-v2.sql` **only** on D1 `pc-agent-readonly-lab` (`8c972046-2add-4df7-9f16-a8172b8061e2`). Leave `v2_enrollment_gate` CLOSED. Test v2 protocol in a separate test Worker or safely integrated v1+v2 staging worker.
+2. **Completed 2026-10-31:** `schema-v2.sql` was applied ONLY to D1 `pc-agent-readonly-lab` (`8c972046-2add-4df7-9f16-a8172b8061e2`); v2 gate is CLOSED and 0 devices are enrolled. Do not rerun migration. Next test v2 protocol in a separate test Worker or safely integrated v1+v2 staging worker.
 3. Before local enrollment, obtain the user's explicit consent to download/run the reviewed script; download by immutable commit SHA and check syntax. Manually open v2 gate via privileged D1 shortly before user runs `node windows-agent-v2.mjs enroll`.
 4. Compare the user-displayed fingerprint with the **specific** pending D1 record, approve it explicitly, then close v2 gate. Pairing alone sends no telemetry.
 5. After user permission, start `node windows-agent-v2.mjs run --minutes=5` in PowerShell. Inspect only most recent metrics via privileged D1; verify revocation and Ctrl+C shutdown. Do not install it as a service without a separate design and authorization.
