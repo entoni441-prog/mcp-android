@@ -1,32 +1,21 @@
-// Reproduce original Windows DPAPI pipeline using ONLY a synthetic test string.
-// No network, no real identity, no personal data. Windows GitHub runner.
+// Windows-only automated test of the exact Agent DPAPI implementation.
+// Synthetic fixture only, no real credentials, no network, no enrollment.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-function original(mode,input){
-  const script=`$ErrorActionPreference='Stop';
-  $value=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()));
-  $scope=[System.Security.Cryptography.DataProtectionScope]::CurrentUser;
-  if('${mode}' -eq 'protect') {$out=[System.Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($value),$null,$scope)}
-  else {$out=[System.Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($value),$null,$scope)};
-  [Console]::Out.Write([Convert]::ToBase64String($out));`;
-  return spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{
-    input:Buffer.from(input,'utf8').toString('base64'),
-    encoding:'utf8',timeout:15000,maxBuffer:1024*1024,windowsHide:true
-  });
-}
-test('original DPAPI protect+unprotect in Windows session',()=>{
+import {readFileSync} from 'node:fs';
+
+const source=readFileSync(new URL('../windows-agent-v2.mjs',import.meta.url),'utf8');
+const match=source.match(/(function dpapi\(mode,plaintextOrCiphertext\)\{[\s\S]*?\n\})\n\nfunction saveIdentity/);
+assert.ok(match,'DPAPI implementation missing or moved; update test extraction safely');
+assert.match(match[1],/Add-Type -AssemblyName System.Security -ErrorAction Stop/);
+// Test the same exact function body the user runs, not a duplicate test implementation.
+const dpapi=new Function('spawnSync','Buffer',match[1]+'\nreturn dpapi;')(spawnSync,Buffer);
+test('Windows DPAPI CurrentUser encrypt/decrypt round trip',()=>{
+  assert.equal(process.platform,'win32');
   const sample='DPAPI-SYNTHETIC-ROUNDTRIP-NO-SECRETS';
-  const protectedResult=original('protect',sample);
-  if(protectedResult.status!==0 || protectedResult.error){
-    // This is a fixed synthetic value only; no credentials.
-    throw Error('Original protect failed: status='+protectedResult.status+' error='+String(protectedResult.error?.message||'')+' stderr='+protectedResult.stderr.slice(0,1200));
-  }
-  const encrypted=protectedResult.stdout.trim();
-  assert.match(encrypted,/^[A-Za-z0-9+/]+={0,2}$/);
-  const decryptedResult=original('unprotect',encrypted);
-  if(decryptedResult.status!==0||decryptedResult.error){
-    throw Error('Original unprotect failed: status='+decryptedResult.status+' stderr='+decryptedResult.stderr.slice(0,1200));
-  }
-  assert.equal(Buffer.from(decryptedResult.stdout.trim(),'base64').toString('utf8'),sample);
+  const cipher=dpapi('protect',sample);
+  assert.match(cipher,/^[A-Za-z0-9+/]+={0,2}$/);
+  assert.notEqual(cipher,sample);
+  assert.equal(dpapi('unprotect',cipher),sample);
 });
