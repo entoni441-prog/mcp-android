@@ -8,6 +8,9 @@ on:
       - .devcontainer/agy-remote.py
       - bridge/tests/test_agy_remote.py
       - bridge/tests/test_agy_crash_recovery.py
+      - bridge/tests/test_agy_crash_guard.py
+      - bridge/test_remote_crash.py
+      - .vscode/tasks.json
       - .github/workflows/agy-remote-runner-tests.yml
 
 permissions:
@@ -21,6 +24,6 @@ jobs:
       - name: Checkout experimental branch
         uses: actions/checkout@v4
       - name: Check Python syntax
-        run: python3 -m py_compile .devcontainer/agy-remote.py
+        run: python3 -m py_compile .devcontainer/agy-remote.py bridge/test_remote_crash.py
       - name: Run isolated lifecycle unit tests
         run: python3 -m unittest discover -v -s bridge/tests -p 'test_agy_*.py'
