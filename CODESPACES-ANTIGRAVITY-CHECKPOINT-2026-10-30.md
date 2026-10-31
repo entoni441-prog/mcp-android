@@ -53,3 +53,15 @@ The ChatGPT GitHub connector can read/write repository files and branches, but c
 - **Conclusion:** `postStartCommand` + PTY runner restores Antigravity Remote Control automatically across a real stop/start of the *already-installed and authenticated* Codespace, without `systemd` or `tmux`. This is verified by user screenshots, not an API-side VM inspection.
 - **Remaining limitation:** Creating a completely fresh Codespace still requires CLI installation and one-time OAuth. Automatic CLI install is not implemented; do not confuse recovery of existing Codespace with initial provisioning. Codespaces auto-stop still applies, and GitHub compute/storage quota remains enforced.
 - **Next phase:** Before expanding to a ChatGPT-Antigravity MCP bridge, decide whether automated CLI provisioning of new Codespaces is necessary. Keep `main` unchanged and avoid storing Google credentials in Git.
+
+## Bridge background autostart checkpoint — 2026-10-31 (activation not yet verified)
+
+- One-shot signed task already completed successfully in D1 with result BRIDGE_OK; agent fingerprint 8fce8450fc2aa472 is approved, enrollment remains closed.
+- Existing devcontainer.json remains identical. The already verified postStartCommand continues to call .devcontainer/agy-remote.py start.
+- Experimental agy-remote.py now invokes a separate optional Bridge supervisor after its existing Remote Control start. This preserves the old Remote Control behavior and avoids rebuild / reauthentication. Commit af586ee8aeb291df4d2e1498163566c29144069d.
+- Proven agent.py source copied unchanged to this test branch. No keys or tokens committed.
+- Standalone supervisor implementation checked into Bridge-development branch experiment/agy-bridge-mcp-20261031 at immutable commit 570a82a8dfa6dce348a59a919d0b0096047548b9.
+- Local offline integration test: duplicate start prevented, repeated mock polling successful, status accurate, clean stop. Supervisor checks correct test branch, approved Ed25519 key fingerprint, CLI and curl. It filters inherited environment to avoid forwarding Codespaces/GitHub tokens.
+- Live activation still requires syncing the test branch in the existing test Codespace, copying the pinned supervisor into its persistent workspace, and starting the optional hook once. No direct Codespace shell-execution tool is available in this session.
+- Must verify one queued probe completes WITHOUT a manual agent invocation and then test stop/start. Do not claim verified before these observations.
+- Cost controls unchanged: background poll never writes terminal output or tries to defeat GitHub Codespaces idle timeout. Stopped Codespaces cannot run tasks or wake themselves.
