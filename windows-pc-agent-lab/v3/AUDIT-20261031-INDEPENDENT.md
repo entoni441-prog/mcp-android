@@ -37,3 +37,17 @@
 
 ### Запреты
 Не маскировать функциональность ради обхода фильтров, не разрабатывать скрытый shell/RAT, не менять `main`/production/v2/рабочие Windows, не тратить деньги на новый Codespace/подписку/пополнение без разрешения. Этот файл — аудит, не разрешение на release.
+
+## Verified regression repairs — 31.10.2026 (after initial audit)
+
+**Scope:** existing published v3 identity/action modules and their tests, on the same experimental branch only. No executable v3 server, Windows polling client, D1 migration or deployment.
+
+- **P2 signing override:** fixed in `identity-v3.mjs` at commit `d72d9c310df281e2c05f260562775afc19064b06`. `signedV3` rejects caller-supplied `id`, `timestamp`, `nonce`, `signature`, prototype-related property names, null and arrays. A negative regression test verifies that a normal `seq` request remains correctly signed.
+- **P2 PATH executable resolution:** fixed in `actions.mjs` at `77683d07c1b975e74420ac56f3fa3c11e09bfedc`. `open_app` now uses an absolute `SystemRoot\\System32\\notepad.exe` or `calc.exe` path and rejects absent, relative and UNC system roots; no command or task argument can select another executable. Does not attest to the authenticity of a compromised process environment.
+- **Filesystem escape regression coverage:** tests now exercise path escapes through a symlink/junction, attempts to write through it, existing reserved Windows names and parent traversal. These tests verify the existing link-check behavior; they do **not** prove resistance to a malicious concurrent rename/reparse-point race. Handle-based confinement and multiwriter optimistic-CAS limitations **remain open**.
+- **CI configuration** updated to pass a synthetic absolute Windows root when testing launcher error behavior on non-Windows runners.
+- **Independent CI result:** GitHub Actions `41240093359` — Ubuntu SUCCESS and Windows SUCCESS. Windows logs: 6 tests, **6 PASS / 0 FAIL / 0 SKIP** (including real synthetic DPAPI CurrentUser round-trip and above regressions). This does not validate live Windows v3 server/device integration.
+
+**Still open:** P0 full-v3 source gate blocked by prior publication restriction; P1 plaintext file-result retention in D1 and lack of auditable server-side grant/nonce logic; P2 concurrent filesystem race and CAS; live end-to-end opt-in test; stale historical v2 README. No workarounds of the denied executable publication and no rollout performed.
+
+**Controlled next milestone:** prioritize confidentiality/retention policy for v3 results and review the missing server/client sources **only through an expressly permitted source-publication/review workflow**. Do not launch Cloudflare v3 tasks or grant access while release gate remains blocked.
