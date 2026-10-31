@@ -64,7 +64,7 @@ jobs:
               return child;
             };
             await assert.rejects(
-              executeJob('open_app',{app:'notepad'},{workspace:path.join(tmp,'workspace'),platform:'win32',launcher:failure}),
+              executeJob('open_app',{app:'notepad'},{workspace:path.join(tmp,'workspace'),platform:'win32',systemRoot:'C:\\Windows',launcher:failure}),
               /app_launch_failed/
             );
           } finally {fs.rmSync(tmp,{recursive:true,force:true});}
