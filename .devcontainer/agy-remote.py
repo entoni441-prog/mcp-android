@@ -111,8 +111,22 @@ def status():
     return 0
 
 
+def start_all():
+    # Preserve the previously verified Remote Control startup unchanged.
+    result = start()
+    # Bridge is strictly optional; never break the existing lifecycle hook.
+    launcher = Path(__file__).resolve().parent.parent / "bridge" / "supervisor.py"
+    if launcher.is_file():
+        try:
+            subprocess.run([sys.executable, str(launcher), "start"], timeout=10,
+                           check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            print("Bridge start deferred; Remote Control unaffected.")
+    return result
+
+
 if __name__ == "__main__":
-    actions = {"start": start, "serve": serve, "stop": stop, "status": status}
+    actions = {"start": start_all, "serve": serve, "stop": stop, "status": status}
     if len(sys.argv) != 2 or sys.argv[1] not in actions:
         print("Usage: python3 agy-remote.py {start|status|stop}", file=sys.stderr)
         sys.exit(2)
