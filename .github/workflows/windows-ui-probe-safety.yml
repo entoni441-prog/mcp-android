@@ -1,0 +1,62 @@
+name: Windows UI Automation local-only probe — safety checks
+
+on:
+  push:
+    branches:
+      - experiment/windows-pc-agent-v3-control-20261031
+    paths:
+      - windows-pc-agent-lab/ui-probe/**
+      - .github/workflows/windows-ui-probe-safety.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  win-powershell:
+    name: Windows PowerShell parse and fail-closed contract
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse entire UI Automation script (without GUI access)
+        shell: powershell
+        run: |
+          $path = (Resolve-Path 'windows-pc-agent-lab/ui-probe/inspect-allowed-window.ps1').Path
+          $tokens = $null
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+          if ($errors.Count -ne 0) {
+            foreach ($issue in $errors) { Write-Host ('Parser error: ' + $issue.Message) }
+            throw "PowerShell script contains invalid syntax"
+          }
+          $commands = @($ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.CommandAst]
+          }, $true) | ForEach-Object { $_.GetCommandName() })
+          foreach ($forbidden in @('Invoke-Expression','Start-Process','Invoke-RestMethod','Invoke-WebRequest','New-ItemProperty','Set-ItemProperty','Remove-Item')) {
+            if ($commands -contains $forbidden) { throw ('Forbidden command: ' + $forbidden) }
+          }
+          $src = Get-Content -LiteralPath $path -Raw
+          foreach ($required in @('IApproveLocalInspection','GetForegroundWindow','FromHandle','ControlType','AutomationId')) {
+            if (-not $src.Contains($required)) { throw ('Missing safety contract: ' + $required) }
+          }
+          Write-Host 'UI Automation source parses; no prohibited PowerShell commands found.'
+      - name: Negative test — consent absent, app never inspected
+        shell: powershell
+        run: |
+          $raw = & powershell.exe -NoProfile -NonInteractive -File 'windows-pc-agent-lab/ui-probe/inspect-allowed-window.ps1' -App notepad
+          if ($LASTEXITCODE -ne 2) { throw ('Unexpected exit code without consent: ' + $LASTEXITCODE) }
+          $obj = ($raw -join [Environment]::NewLine) | ConvertFrom-Json
+          if ($obj.status -ne 'blocked' -or $obj.reason -ne 'explicit_local_consent_required') {
+            throw 'Consent gate did not fail closed.'
+          }
+          if ($obj.metadata -ne $null) { throw 'Non-consensual metadata leaked.' }
+          Write-Host 'Consent-gate negative test passed.'
+      - name: Negative test — arbitrary app rejected at argument boundary
+        shell: powershell
+        run: |
+          $raw = & powershell.exe -NoProfile -NonInteractive -File 'windows-pc-agent-lab/ui-probe/inspect-allowed-window.ps1' -App chrome 2>&1
+          if ($LASTEXITCODE -eq 0) { throw 'Unallowlisted app was accepted.' }
+          if (($raw -join [Environment]::NewLine) -notmatch 'ValidateSet') { throw 'App deny did not trigger ValidateSet.' }
+          Write-Host 'Application allowlist rejected non-approved application.'
