@@ -1,6 +1,6 @@
-# Windows PC Agent v2 — read-only telemetry prototype (NOT DEPLOYED)
+# Windows PC Agent v2 — read-only telemetry prototype
 
-Status: offline implementation only, preserved on the dedicated experimental branch. Do not merge into `main` or deploy without reviewing CI and explicit runtime consent. The verified v1 diagnostic remains untouched.
+**Historical note (updated 2026-10-31):** This README originally described the initial pre-deployment phase. Subsequent isolated live verification established an approved v2 device and signed Windows heartbeat; the current test D1 contains one approved v2 device and its enrollment gate is closed. The underlying v2 remains read-only and foreground-only, **not** a general remote-control service. Any step-by-step deployment instructions below are retained as historical gate requirements and must **not** be rerun automatically. Do not merge into `main` or modify the working v1/v2 deployment. The verified v1 diagnostic remains untouched.
 
 ## Boundaries
 
