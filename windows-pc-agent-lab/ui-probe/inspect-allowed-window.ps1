@@ -67,11 +67,11 @@ try {
             if ($current.ControlType -ne [System.Windows.Automation.ControlType]::Window) {
                 continue
             }
-            $pid = [int]$current.ProcessId
-            if ($pid -le 0) {
+            $targetProcessId = [int]$current.ProcessId
+            if ($targetProcessId -le 0) {
                 continue
             }
-            $proc = Get-Process -Id $pid -ErrorAction Stop
+            $proc = Get-Process -Id $targetProcessId -ErrorAction Stop
             if ($allowed -contains $proc.ProcessName) {
                 [void]$matches.Add($window)
             }
