@@ -1,0 +1,98 @@
+name: Windows PC Agent v3 — full integration (release gate)
+
+on:
+  push:
+    branches:
+      - experiment/windows-pc-agent-v3-control-20261031
+    paths:
+      - windows-pc-agent-lab/v3/worker-v3.mjs
+      - windows-pc-agent-lab/v3/windows-agent-v3.mjs
+      - windows-pc-agent-lab/v3/schema-v3.sql
+      - windows-pc-agent-lab/v3/build-worker.mjs
+      - windows-pc-agent-lab/v3/lock-v3.mjs
+      - windows-pc-agent-lab/v3/tests/**
+      - .github/workflows/windows-pc-agent-v3-full-integration.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-gate:
+    name: Require complete, reviewable sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify all required source components are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=windows-pc-agent-lab/v3
+          missing=0
+          for file in \
+            worker-v3.mjs \
+            windows-agent-v3.mjs \
+            schema-v3.sql \
+            build-worker.mjs \
+            lock-v3.mjs \
+            actions.mjs \
+            identity-v3.mjs \
+            tests/actions.test.mjs \
+            tests/protocol.test.mjs \
+            tests/integration.test.mjs \
+            tests/identity-windows.test.mjs \
+            tests/runtime-lock.test.mjs
+          do
+            if [ ! -s "$base/$file" ]; then
+              echo "::error file=$base/$file::BLOCKED: required v3 source is missing or empty"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::STOP: complete v3 not published; integration CI and staging are NOT authorized."
+            exit 1
+          fi
+          echo "All required files present; testing may proceed."
+  offline-integration:
+    name: Complete offline integration
+    needs: release-gate
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in \
+            windows-pc-agent-lab/v3/worker-v3.mjs \
+            windows-pc-agent-lab/v3/windows-agent-v3.mjs \
+            windows-pc-agent-lab/v3/build-worker.mjs \
+            windows-pc-agent-lab/v3/lock-v3.mjs \
+            windows-pc-agent-lab/v3/actions.mjs \
+            windows-pc-agent-lab/v3/identity-v3.mjs
+          do
+            node --check "$file"
+          done
+      - name: Build combined worker locally — NO deployment
+        shell: bash
+        run: node windows-pc-agent-lab/v3/build-worker.mjs
+      - name: Test all v3 components offline — NO Cloudflare credentials
+        shell: bash
+        run: node --test windows-pc-agent-lab/v3/tests/*.test.mjs
+      - name: Protect existing v1 and v2 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s windows-pc-agent-lab/worker.mjs
+          test -s windows-pc-agent-lab/v2/worker-v2.mjs
+          test -s windows-pc-agent-lab/v2/windows-agent-v2.mjs
+          echo 'v1/v2 source presence verified; no runtime modifications'
