@@ -82,3 +82,23 @@ Applied [ASTRA-STOP-RULES.md](ASTRA-STOP-RULES.md) at checkpoint `cb4c84f`. The 
 - This diagnostic script is in GitHub, **not yet synced or executed inside haunted-shadow**. No live process status can be inferred from source-only inspection. To use it, on the existing test Codespace run one bounded command: `git pull --ff-only origin experiment/agy-codespaces-autostart-20261030 && python3 bridge/diagnose_remote.py`.
 - After obtaining output: if the CLI child is present and log indicates a remote link, focus on Work browser access rather than reinstallation; if the CLI child is absent or authentication needed, stop with one targeted remediation only after seeing evidence. Do not auto-recreate identities or repeat Work Cloud Browser timeouts.
 - Google reference: https://antigravity.google/docs/remote-control?tab=cli
+
+
+### Confirmed user-side Remote Control evidence — 2026-10-31 (automation requirement)
+
+The operator opened the **test** GitHub Codespace labelled **«Призрачная тень»** in the Russian GitHub UI. A fresh, read-only local probe reported runner=running, cli_child=running, remote_link_present, Remote Control online=not_checked. Then the operator opened the already Google-authenticated Antigravity Remote Control site on their Samsung:
+- 11:28 Europe/Rome: one new `Online` instance `codespaces-d015bd-misty-ray`, others Offline; this row strongly correlates with the resumed test Codespace, but correlation by host/source identity is not cryptographically established.
+- 11:30: the active instance opened its CLI conversation view; `Security Notice & Data Use` was shown.
+- 11:35: the model selector was visibly opened. Selected: `Gemini 3.8 Flash High`. Listed: `Claude Sonnet 4.6 (Thinking)`, `Claude Opus 4.6 (Thinking)`, `GPT-OSS 120B (Medium)`, and `Gemini 4 Argon` (Unavailable). Entries showing `Notice` were not tested for permission or quota.
+- The operator explicitly objected to further manual UI navigation. Their requirement is **ChatGPT-operated autonomous UI controls**, not an instruction sequence to tap more menus.
+
+Consequences:
+1. **Remote Control web UI is now proven to work in the user's phone browser**. Do not classify the Google service or CLI runner as unavailable based on the prior Work Cloud Browser timeouts.
+2. **Work browser automation remains blocked:** the only available tool inventory in the current chat has GitHub/Cloudflare connectors, not a browser/computer-use controller. Existing Work GUI pilot timed out twice. The user's authenticated mobile browser cannot be assumed accessible to tools, and no direct clicks were performed by ChatGPT.
+3. **GUI pilot can no longer be advanced by repeatedly asking the operator to click buttons**. Progress must be through actual agent-driven, independently verified actions; stop and report precise capability blockers otherwise.
+4. Local CLI settings can be read/changed independently using the proven test-only config controller and the signed Bridge protocol, but the connector's earlier safety block on remote mutation MUST NOT be circumvented.
+5. **Acceptance criteria for next iteration:** (a) ChatGPT/authorized agent independently opens the test instance and reads its state; (b) independently activates exactly one reversible, low-risk UI control in the approved test context; (c) verifies the visible result; (d) rolls back and verifies; (e) records actual evidence, tools and logs, not inferred success.
+6. Settings requiring user consent (billing, security, permissions, integrations) remain excluded. Never change the working Codespace, main or production. Respect `ASTRA-STOP-RULES.md`. No further mobile navigation is requested as development work.
+7. UI-specific click automation is not yet implemented. The next GUI opportunity is **a demonstrably healthy Work browser-control session** or a **separate authenticated browser-control adapter**, not more manual operation.
+
+Official distinction: https://antigravity.google/docs/remote-control?tab=cli and https://antigravity.google/docs/settings?tab=cli
