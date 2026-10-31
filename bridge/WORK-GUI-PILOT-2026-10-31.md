@@ -124,3 +124,13 @@ Next permitted acceptance test only after independent browser control is actuall
 5. On errors follow one attempt + one targeted diagnostic then STOP. Preserve screenshots/grounded evidence.
 
 If not connected, GUI autonomy remains blocked. No manual UI click instructions for the operator; proceed only with independent, useful engineering work.
+
+
+### First autonomous TinyFish browser test: SUCCESS for access, BLOCKED on Offline instance — 2026-10-31
+
+- User personally completed Google sign-in once and saved a TinyFish default Browser Context Profile. On readback, the profile showed signed_in_sites contains google.com. User explicitly authorized one read-only test, maximum 120 seconds, with no model/preference/security/billing changes.
+- TinyFish Web Automation accepted one run: `070d4734-30a3-49af-85e7-f6f1b2aa6cfd`, https://agent.tinyfish.ai/runs/070d4734-30a3-49af-85e7-f6f1b2aa6cfd. Browser profile `prof_e05e8bcc05454dc2` (identifier is not a credential); read-only goal, 120s wall-time cap. The strict/max_steps configuration was unavailable on this account, and the failed preflight **did not launch** a run. User explicitly approved one default-mode run with 120s time limit.
+- Actual completed browser run: **status completed**, **14 seconds**, **3 steps**. Successfully opened `https://antigravity.google.com` with saved Google authentication and read the real instances dashboard. The operator did not perform these browser actions.
+- Exact result: seven visible instances, **all Offline**. Newly seen `codespaces-d015bd-misty-ray` also Offline; older `vivid-ion`, `swift-shard`, `mighty-void`, `roving-zenith`, `turbo-drift`, and protected working `codespaces-5e31df-golden-meteor` all Offline. No Connect action was attempted because no Online instance existed. Hence dropdown-model state **not read** and no settings changed.
+- This is first verified **autonomous authenticated web-browser operation by ChatGPT** in this project, distinct from the earlier Work Cloud Browser timeouts and user's manual mobile browser steps. It verifies TinyFish web UI access and reading, NOT yet a successful UI click or change.
+- Continue only when an Online **test** instance is available and independently correlated to «Призрачная тень». Do not act on offline/working instances. Avoid repeat browsing without changed condition. Don't ask the user to operate settings manually. Follow ASTRA STOP rules and the user's Drive-wide AI autonomy charter.
