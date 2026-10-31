@@ -102,3 +102,25 @@ Consequences:
 7. UI-specific click automation is not yet implemented. The next GUI opportunity is **a demonstrably healthy Work browser-control session** or a **separate authenticated browser-control adapter**, not more manual operation.
 
 Official distinction: https://antigravity.google/docs/remote-control?tab=cli and https://antigravity.google/docs/settings?tab=cli
+
+
+### Autonomous GUI access next gate — 2026-10-31
+
+Operator's primary requirement: **AI agents perform configuration and UI clicks; operator intervenes only for authentication/2FA or high-risk approvals**. Do not resume step-by-step mobile UI directions.
+
+Read-only discovery in ChatGPT session found:
+- Existing ChatGPT GitHub, Google Drive, and Cloudflare connectors are available. No direct browser/computer-use controller is exposed in this chat.
+- Native Astra Work browser-control earlier failed twice with 300 s timeout; STOP remains in force, no identical retries.
+- User independently verified Antigravity Remote Control web UI and a model-selection menu load on Samsung: underlying Remote Control path functional.
+- Third-party ChatGPT browser-control app TinyFish discovered as a possible alternative and offered for user connection. Connection, sign-in, Antigravity access, and actual UI control are all UNVERIFIED. Do not treat it as installed or granted access. No credentials, cookies, tokens or private URLs in chat.
+- Official Antigravity browser subagent can automate Chrome pages after consent, but Chrome availability/authentication in Codespace and any ability to control Antigravity's own UI remain unverified.
+- Existing CLI settings controller remains allowlisted, test-only. Earlier safety block on remote config-job insertion must not be circumvented.
+
+Next permitted acceptance test only after independent browser control is actually available and user handles sign-in:
+1. Retrieve Antigravity dashboard UI state once.
+2. Identify the active test instance from verifiable evidence.
+3. Open its visible model menu read-only, report selected model.
+4. No changes to model, permissions, quotas, billing, accounts or production on initial test.
+5. On errors follow one attempt + one targeted diagnostic then STOP. Preserve screenshots/grounded evidence.
+
+If not connected, GUI autonomy remains blocked. No manual UI click instructions for the operator; proceed only with independent, useful engineering work.
