@@ -73,3 +73,17 @@ jobs:
         run: |
           node --check windows-pc-agent-lab/ui-probe/validate-report.mjs
           node --test windows-pc-agent-lab/ui-probe/tests/validate-report.test.mjs
+      - name: PowerShell consent denial through strict offline stdin adapter
+        shell: powershell
+        run: |
+          $raw = & powershell.exe -NoProfile -NonInteractive -File 'windows-pc-agent-lab/ui-probe/inspect-allowed-window.ps1' -App notepad
+          if ($LASTEXITCODE -ne 2) { throw 'Expected consent refusal from PowerShell' }
+          $normalized = ($raw -join [Environment]::NewLine) | node windows-pc-agent-lab/ui-probe/validate-report-stdin.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Schema validation failed on real PowerShell output' }
+          $report = ($normalized -join [Environment]::NewLine) | ConvertFrom-Json
+          if ($report.status -ne 'blocked' -or $report.reason -ne 'explicit_local_consent_required') {
+            throw 'Offline PowerShell-to-contract round-trip mismatch'
+          }
+          if ($report.metadata -ne $null) { throw 'Unexpected metadata without consent' }
+          Write-Host 'Actual PowerShell refusal validated end-to-end; no Windows GUI or network touched.'
+          $global:LASTEXITCODE = 0
