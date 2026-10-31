@@ -151,3 +151,10 @@ Evidence from authenticated TinyFish profile (Google and GitHub sign-ins saved; 
 **Current verified state:** test Codespace is **Active**, GitHub/Google browser profiles authenticated, TinyFish can autonomously navigate both web dashboards. Antigravity Remote Control was **Offline** at last check. Whether `agy --remote-control` is running, has exited, is authenticated, or exposes a live new session is **UNKNOWN**. No working, main, production, billing, security, model, or config state modified.
 
 **STOP / next engineering checkpoint:** Do not re-run the failing TinyFish terminal-focus path or refresh Antigravity repeatedly. Need an **independent, tool-supported, access-controlled, read-only runtime status path** with exact safe output (runner PID, child state, redacted log signal) before changing runtime or asking operator to navigate GUI. Existing Bridge can report signed observations but its installed protocol must not be assumed to expose arbitrary shell or new diagnostics; do not bypass previously blocked Cloudflare mutations. If a legitimate diagnostic channel becomes available, run exactly one diagnostic, then either remediate a confirmed issue or STOP. No manual operator action requested now.
+
+
+### Operator policy clarification: strict STOP is ONLY for Astra Work — 2026-10-31
+
+The user explicitly corrected scope: Astra Work is metered/limited and must apply strict one-main-attempt plus one-diagnostic budget STOP; ordinary ChatGPT in this chat **is not bound by that arbitrary attempt cap** and may continue meaningful independent technical research, diagnostics and development. The distinction was updated in the master Google Drive charter and in `bridge/ASTRA-STOP-RULES.md` (commit `ca48631460135110b5c56201e860cb4ba04f7ce3`).
+
+This does not make other providers free/unmetered, authorize unsafe account changes, permit bypassing safety tool blocks, or allow infinite retries of unchanged failures. ChatGPT should independently pursue new safe routes rather than inappropriately STOP merely because a limited Astra Work rule has been reached.
