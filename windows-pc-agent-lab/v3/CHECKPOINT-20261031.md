@@ -95,3 +95,14 @@
 - Full chat↔Windows task channel remains **BLOCKED / NOT IMPLEMENTED**, as permitted v3 Worker/client/schema remain absent and previous explicit tool rejection may not be circumvented. This experimental standalone UI probe does **not** reproduce/rewrite those denied components.
 - Follow-up design status saved in `windows-pc-agent-lab/v3/CHAT-DIRECT-WINDOWS-DESIGN-20261031.md` at `5e9126fb14e95d3053b6ab41e99f5c1f32484f90`.
 - No changes to main/production/v2/Cloudflare/user Windows; no Work quota, TinyFish credits or new paid resources.
+
+## Offline PowerShell → strict UIA JSON contract — 2026-10-31
+- Last prior verified checkpoint: `4e33a4cf864f093ef015f1900a787d4833dea2b5`. Continued only the isolated `ui-probe/` test layer; no deployment.
+- Created `windows-pc-agent-lab/ui-probe/validate-report.mjs` with a 16 KiB bound, exact-key schema, known reasons/statuses, app allowlist, max 40 direct child controls, and rejection of injected titles/text/unknown fields/oversize. It is **offline and cannot issue commands**.
+- Created `windows-pc-agent-lab/ui-probe/validate-report-stdin.mjs` which validates one bounded PowerShell JSON response and emits a strict normalized report **only to stdout**, no file/network/cloud.
+- Added `windows-pc-agent-lab/ui-probe/tests/validate-report.test.mjs`: **6 PASS / 0 FAIL** on Windows runner; tested invalid status, extra sensitive fields, synthetic bad paths, payload inflation, unexpected prototype fields, valid controls and denied consent reports.
+- Extended `.github/workflows/windows-ui-probe-safety.yml` to run Node.js 24 regression tests and actual Windows PowerShell **no-consent refusal** through the strict stdin adapter, with result and null metadata asserted.
+- CI **SUCCESS**, run `41243186529` at commit `eefe0213bb9995d6638ddbb8d382640621b08971`. Logs explicitly confirm PowerShell parser PASS, absence-of-consent PASS, nonallowlisted app denied, Node 6/6 PASS, and actual PowerShell refusal → JSON contract PASS.
+- Documentation: `windows-pc-agent-lab/ui-probe/README.md`, updated commit `548bae3813bf4f3dbe1a135bbd01f3371c9c060b`.
+- **NOT VERIFIED / blocked:** real user's interactive Windows UIA readback, approved persistent local Windows process, authenticated transport between ordinary chat and Windows, and remote GUI actions. The existing v2 approved device is limited to outgoing diagnostic heartbeats. Previously denied publication of v3 executable Windows client/Worker/SQL must NOT be routed around via a renamed component, other connector or archive.
+- **No** Work, paid TinyFish, production/main/v2, test Cloudflare D1 mutations or Windows device changes. Status `OFFLINE_CONTRACT_PASS / LIVE_WINDOWS_NOT_CONNECTED / V3_RELEASE_STOP`.
