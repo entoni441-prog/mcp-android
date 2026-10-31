@@ -65,6 +65,33 @@
         "bridge/test_remote_crash.py",
         "inject"
       ]
+    },
+    {
+      "label": "Antigravity TEST — консультация по Windows Agent v3 (только текст)",
+      "type": "process",
+      "command": "/home/codespace/.local/bin/agy",
+      "args": [
+        "-p",
+        "Независимая инженерная консультация. Ответь ТОЛЬКО текстом, ничего не выполняй, не меняй файлы, не вызывай инструменты, не запрашивай секреты. Проект Windows PC Agent v3, репозиторий entoni441-prog/mcp-android, ветка experiment/windows-pc-agent-v3-control-20261031, checkpoint 66975bb. v2 доказал подписанную телеметрию Windows→Cloudflare D1. У v3 частичный Windows CI PASS, но публикация исполняемого сервера, Windows-клиента и SQL была заблокирована защитой ChatGPT; полный CI заблокирован. Обходить защиту запрещено. Предложи ОДИН разрешённый, минимальный технический маршрут к авторизованному удалённому управлению локальным Windows с уже имеющимися GitHub/Cloudflare/Antigravity. Различи Codespaces Remote Control и управление локальной Windows. Укажи ограничения, риски и следующий проверяемый шаг без оплаты или изменений рабочего окружения. Кратко по-русски.",
+        "--mode",
+        "plan",
+        "--output-format",
+        "text",
+        "--print-timeout",
+        "2m"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false,
+        "echo": false,
+        "clear": true
+      },
+      "problemMatcher": [],
+      "group": "test"
     }
   ]
 }
