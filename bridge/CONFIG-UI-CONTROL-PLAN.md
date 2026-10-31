@@ -50,3 +50,40 @@ No user secrets in Git, D1, logs or chat. Do not loosen permission presets to fo
 - Cloudflare settings check: D1 binding present, `config_jobs` exists and was initially empty; old test jobs remain. New agent changes are NOT live inside `haunted-shadow` until that Codespace pulls its branch.
 - Before claiming live success: check existing `BRIDGE_OK` probe after Worker deploy; synchronize test Codespace via `git pull --ff-only`; submit precisely one `config.inspect` and verify D1 result contains only allowed settings. If the Codespace auto-stopped, restart manually (no idle-timeout override).
 - Future: `config.plan` and `config.apply` only with explicit per-setting authorization, CAS digest, backup and readback; real graphical UI control still separate and unproven.
+
+
+## Security review + UI feasibility checkpoint — 2026-10-31
+
+### Code and tests
+- Previously verified in **real test Codespace**: local \`plan verbosity low\`, \`apply\` with matching SHA-256 and exact byte-for-byte \`rollback\`; settings restored to the original SHA. This was local execution, not a remotely queued mutation.
+- Isolated v0.4 Worker retains signed Ed25519 agent endpoints. **Dynamic V8 policy test: 14/14 PASS** for approval required on writes, expiry, allowed keys/values, digest validation and result redaction. Checked against the current GitHub Worker source, without changing Cloudflare.
+- Added reproducible \`bridge/tests/test_worker_config.mjs\` (14 hermetic Node tests) and \`bridge/tests/test_config_control.py\` (9 hermetic Python tests). Node policy rules were executed in the tool's JS runtime; **the checked-in Node/Python test files themselves have not yet been run in Codespaces/CI**.
+- Hardened local rollback for interruption after recording the private journal but before updating settings: if the file still has its original SHA, rollback now closes the pending journal without overwriting the already-correct settings. Source change also mirrored to the test Codespace GitHub branch, but **not yet pulled into the live Codespace**. No current user settings were changed by this update.
+- Read-only D1 verification: one completed inspect, one superseded failed plan, only one approved agent, enrollment closed. No remotely queued apply or rollback.
+
+### Existing Cloudflare tool limit
+- One earlier Cloudflare connector attempt to insert a new \`config.plan\` job was explicitly blocked by a safety layer. Do not retry the same mutation through another endpoint, script, proxy, GitHub Action, or credentials. The local plan/apply/rollback proved file operations but **did not remove this remote execution boundary**.
+- Therefore do not call the full remote control protocol proven, nor silently enable remote mutations.
+
+### Graphical/UI control separation
+Official Google docs reviewed:
+- https://antigravity.google/docs/commands/browser/
+- https://antigravity.google/docs/settings
+- https://antigravity.google/docs/remote-control
+
+The Antigravity \`/browser\` command can drive Chrome pages (click, fill, snapshot, screenshots, console) when browser subagent and Chrome DevTools are available. This is browser automation *inside an Antigravity session*, not a guarantee of controlling Antigravity's **own** CLI configuration overlay or native App/IDE chrome.
+- Remote Control web app is an authenticated conversation/approval surface. It is **not** assumed to expose all CLI settings controls. Actual CLI preferences remain configured via documented settings.json or interactive /config.
+- To operate visible GUI buttons, supply a browser/computer-use session connected to the actual UI. This chat currently has GitHub/Cloudflare connectors but **no direct browser/computer-use action**; do not invent clicks, screenshots, or UI change confirmations.
+- Work mode's Cloud Browser can be used for a first **read-only UI pilot** after user-authorized sign-in, checking which Antigravity settings pages are actually exposed. Do not export session cookies, create unauthenticated remote debugging endpoints, loosen account/agent permissions or change billing.
+
+### Exact first UI pilot once browser control is available
+1. Open the user's already authorized Antigravity Remote Control dashboard; inspect current instance list and selected test instance only.
+2. Open available Settings/Preferences pages and record exact controls that are visible, including each current value. Do not change any setting.
+3. Build a surface-by-surface capability inventory: browser UI, CLI persisted settings, native App/IDE-only settings.
+4. Perform a single reversible **cosmetic** UI change only if a real control exists and the user has approved that setting category; read back the visible state and revert. Never click unknown approval prompts or permission-escalation options.
+5. Only after read/write/revert verification extend Bridge with explicitly scoped UI actions and user-visible audit.
+
+### Invariants and next checkpoint
+- No production/main changes, no Codespace rebuild, no new billed infrastructure.
+- Keep existing fixed-probe and read-only inspect operational.
+- Keep GUI buttons and remote configuration mutations labeled **unverified** until an actual authenticated end-to-end test succeeds.
