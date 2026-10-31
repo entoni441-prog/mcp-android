@@ -51,3 +51,10 @@
 - Missing core published files include `worker-v3.mjs`, `windows-agent-v3.mjs`, `schema-v3.sql`, `build-worker.mjs`, and `lock-v3.mjs`, plus protocol/runtime integration test files. Already published `actions.mjs` and `identity-v3.mjs` remain intact and had independent Windows DPAPI and workspace test SUCCESS in run `41232681470`.
 - **STOP remains:** prior tool safety checks explicitly blocked publishing full v3 executable components. The release gate does not circumvent that restriction. No alternate connector or publishing mechanism was used for blocked sources. No v3 deployment, D1 migration, device grant or remote commands.
 - Next permissible unblock: publication of the missing sources only through a workflow that affirmatively permits the upload; then this committed GitHub Actions workflow runs full offline Windows/Linux integration automatically. Until then, do not claim readiness, do not change production, v2, main or Windows installation.
+
+## Independent security and integration audit — 2026-10-31
+- Read-only verified source review saved as `windows-pc-agent-lab/v3/AUDIT-20261031-INDEPENDENT.md`, commit `7f471acc2d43a01915d629b72531769f1be8fd0f`.
+- Reviewed published v3 `actions.mjs` + `identity-v3.mjs`, their synthetic Windows CI tests, actual v2 DPAPI key format and signed POST protocol, release gate, Cloudflare live readback, and full file-backed Antigravity consultation.
+- Release remains **BLOCKED**: no published v3 worker/client/schema/full tests. Other audit findings: plaintext result retention in D1, filesystem reparse/TOCTOU and multiwriter CAS limitations, `open_app` relative executable search, potentially overridable reserved signing fields, synthetic-test vs live-device coverage gap, stale v2 README status.
+- Independent consultant's proposal mostly restates existing v3 pull architecture. Its sample GET+Bearer interface is not the verified v2 ECDSA POST contract; claims about bypassing safety filters via names are unsupported/rejected.
+- No execution, v3 deployment, data writes to D1, user Windows actions, production/main modifications, paid resources or workaround of tool restriction.
