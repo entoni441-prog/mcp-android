@@ -196,3 +196,11 @@ The ChatGPT GitHub connector can read/write repository files and branches, but c
 
 ### Next authorized engineering step
 Identify a safe way to verify the local Codespace branch and sync the remote experimental commit without changing workspace trust/security or losing local changes. When verified, perform an idempotent branch-only pull, then test a controlled test-only restart and compare the Remote Control online status. Alternatively, request the operator's explicit trust/permission approval if a security prompt is genuinely blocking all automation. Do not invoke a container rebuild or alter the working Codespace as a workaround.
+
+
+### GitHub Actions verification — 2026-10-31
+
+- Added dedicated experiment-only workflow `.github/workflows/agy-remote-runner-tests.yml` with `contents: read`, a 5-minute timeout, and only source syntax + isolated unit tests. It is scoped to pushes in `experiment/agy-codespaces-autostart-20261030`; the Android `build-apk.yml` triggers only on `main`.
+- First workflow execution `41199831569` FAILED due to a **test fixture double-escaped NUL separator**, while actual runner Python syntax and 6 other tests passed. No live instance was involved.
+- Fixed the fixture in `15e09eedb1720b1a3847a4740d6200b92491621f`; confirmed subsequent [workflow run 41199939907](https://github.com/entoni441-prog/mcp-android/actions/runs/41199939907) **COMPLETED SUCCESS**. Thus the **committed** source now passes syntax and 7/7 isolated Python tests in GitHub Actions, not merely in a local prototype.
+- This is verification of source/limited lifecycle behavior, **NOT** deployment to live Codespace nor proof of Remote Control online state. Live sync still blocked by VS Code Restricted Mode / unverified local Git branch. Never rebuild or overwrite local uncommitted changes to shortcut the boundary.
