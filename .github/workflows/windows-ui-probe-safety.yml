@@ -57,8 +57,11 @@ jobs:
       - name: Negative test — arbitrary app rejected at argument boundary
         shell: powershell
         run: |
-          $raw = & powershell.exe -NoProfile -NonInteractive -File 'windows-pc-agent-lab/ui-probe/inspect-allowed-window.ps1' -App chrome 2>&1
+          $src = Get-Content 'windows-pc-agent-lab/ui-probe/inspect-allowed-window.ps1' -Raw
+          if (-not $src.Contains("[ValidateSet('notepad', 'calculator')]")) { throw 'Application allowlist contract missing.' }
+          # Native stderr from invalid arguments is expected; GitHub PowerShell
+          # treats redirected NativeCommandError as fatal, so suppress it via cmd.
+          & cmd.exe /d /c 'powershell.exe -NoProfile -NonInteractive -File windows-pc-agent-lab/ui-probe/inspect-allowed-window.ps1 -App chrome 1>NUL 2>NUL'
           if ($LASTEXITCODE -eq 0) { throw 'Unallowlisted app was accepted.' }
-          if (($raw -join [Environment]::NewLine) -notmatch 'ValidateSet') { throw 'App deny did not trigger ValidateSet.' }
           Write-Host 'Application allowlist rejected non-approved application.'
           $global:LASTEXITCODE = 0
