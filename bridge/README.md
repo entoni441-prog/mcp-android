@@ -79,3 +79,11 @@ On the previously paired and authorized test Codespace haunted-shadow, bridge/in
 This does not yet demonstrate Bridge recovery after stopping and restarting Codespace. A separate stop/start test must be performed. Existing Remote Control autostart remains independently verified. The background poller does not keep Codespace awake or bypass provider timeout, and only probe tasks are supported. The main repository branch, production Workers, original Codespace, and billing limits have not been changed.
 
 Corresponding technical checkpoint: experimental autostart branch CODESPACES-ANTIGRAVITY-CHECKPOINT-2026-10-30.md, commit 9d2f88d3336b18fa9ad32b9bc075168f68402c26.
+
+## Confirmed Bridge poller restart recovery — 2026-10-31
+- GitHub test Codespace haunted-shadow stopped from UI, then reopened normally. No shell commands entered after restart.
+- ChatGPT submitted one fixed harmless probe to isolated Cloudflare D1: probe-20261031-after-restart-0843.
+- D1 verified queued at 1793432618; claimed by approved agent 8fce8450fc2aa472 at 1793432636; finished successfully at 1793432641 with response BRIDGE_OK and error empty.
+- **Result:** autonomous polling and Antigravity execution resumed after actual Codespace stop/start, without user terminal actions, while the Codespace was active.
+- Scope remains fixed-probe-only; no general-purpose prompt/task execution or remote shell is enabled. A stopped Codespace cannot self-wake; no idle or billing settings changed.
+- Full evidence: CODESPACES-ANTIGRAVITY-CHECKPOINT-2026-10-30.md on experiment/agy-codespaces-autostart-20261030, recorded in commit c654b42ccb942a3faf662dc7d3475e2a5c82610b.
