@@ -1,4 +1,4 @@
-// Antigravity Bridge v0.2: Ed25519-signed, read-only probe only.
+// Antigravity Bridge v0.3: Ed25519-signed probes + redacted read-only config inspection.
 // Pairing is closed by default and approved through Cloudflare D1 management.
 const json = (obj, code = 200) => new Response(JSON.stringify(obj), {
   status: code, headers: {"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-content-type-options":"nosniff"}
@@ -50,7 +50,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
-      return json({service:"agy-bridge-mvp",version:"0.2",status:env.DB?"ready":"database_unbound"});
+      return json({service:"agy-bridge-mvp",version:"0.3-config-inspect",status:env.DB?"ready":"database_unbound"});
     }
     if(!env.DB) return json({error:"database_unbound"},503);
     if(url.search) return json({error:"query_not_supported"},400);
@@ -63,6 +63,33 @@ export default {
       if (url.pathname==="/v1/agent/enroll") return await enroll(env,raw);
       const agentId=await identity(request,env,raw);
       if (!agentId) return json({error:"unauthorized"},401);
+      if (url.pathname === "/v1/agent/config/claim") {
+        await env.DB.prepare("UPDATE config_jobs SET status='queued',agent_id=NULL,lease_until=NULL,updated_at=unixepoch() WHERE status='running' AND lease_until < unixepoch()").run();
+        const row=await env.DB.prepare("UPDATE config_jobs SET status='running',agent_id=?,claimed_at=unixepoch(),lease_until=unixepoch()+120,updated_at=unixepoch() WHERE id=(SELECT id FROM config_jobs WHERE status='queued' ORDER BY created_at,id LIMIT 1) AND status='queued' RETURNING id").bind(agentId).first();
+        return json({job:row?{id:row.id,kind:"config.inspect"}:null});
+      }
+      const configMatch=url.pathname.match(/^\/v1\/agent\/config\/([a-zA-Z0-9_-]{8,80})\/finish$/);
+      if (configMatch) {
+        let payload; try{payload=JSON.parse(raw)}catch{return json({error:"bad_json"},400)}
+        if(!["success","error"].includes(payload?.status))return json({error:"bad_status"},400);
+        let report=null;
+        if(payload.status==="success"){
+          const data=payload.report;
+          const keys=["verbosity","colorScheme","altScreenMode","runningLightSpeed"];
+          const allowed={
+            verbosity:["low","medium","high"],
+            colorScheme:["terminal","light","solarized light","colorblind-friendly light","dark","solarized dark","colorblind-friendly dark","tokyo night"],
+            altScreenMode:["default","always","never"],
+            runningLightSpeed:["fast","medium","slow","off"]
+          };
+          if(data?.status!=="ok"||typeof data.sha256!=="string"||!(/^(?:[0-9a-f]{64}|missing)$/.test(data.sha256))||typeof data.preferences!=="object"||!data.preferences||Array.isArray(data.preferences))return json({error:"bad_report"},400);
+          if(Object.keys(data.preferences).length!==keys.length||!keys.every(k=>Object.hasOwn(data.preferences,k) && (data.preferences[k]===null || allowed[k].includes(data.preferences[k]))))return json({error:"bad_report"},400);
+          report=JSON.stringify({sha256:data.sha256,preferences:Object.fromEntries(keys.map(k=>[k,data.preferences[k]]))});
+        }
+        const error=payload.status==="error"?"inspection_failed":"";
+        const result=await env.DB.prepare("UPDATE config_jobs SET status=?,report_json=?,error=?,lease_until=NULL,updated_at=unixepoch() WHERE id=? AND status='running' AND agent_id=? AND lease_until>unixepoch()").bind(payload.status,report,error,configMatch[1],agentId).run();
+        return json({accepted:result.meta?.changes===1});
+      }
       if (url.pathname === "/v1/agent/claim") {
         await env.DB.prepare("UPDATE jobs SET status='queued',agent_id=NULL,lease_until=NULL,updated_at=unixepoch() WHERE status='running' AND kind='probe' AND lease_until < unixepoch()").run();
         const row = await env.DB.prepare("UPDATE jobs SET status='running',agent_id=?,claimed_at=unixepoch(),lease_until=unixepoch()+180,updated_at=unixepoch() WHERE id=(SELECT id FROM jobs WHERE status='queued' AND kind='probe' ORDER BY created_at LIMIT 1) AND status='queued' RETURNING id,kind").bind(agentId).first();
