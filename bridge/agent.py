@@ -128,6 +128,27 @@ def execute_probe():
         return {"status": "error", "error": "invalid_cli_response"}
 
 
+def inspect_config():
+    """Read only the strictly allowlisted CLI preferences; never return raw settings."""
+    script = Path(__file__).resolve().parent / "config_control.py"
+    if not script.is_file():
+        return {"status": "error"}
+    safe_env = {k: os.environ[k] for k in ("HOME", "PATH", "LANG", "LC_ALL", "XDG_CONFIG_HOME")
+                if k in os.environ}
+    try:
+        proc = subprocess.run([sys.executable, str(script), "inspect"],
+                              cwd="/workspaces/mcp-android", env=safe_env,
+                              capture_output=True, text=True, timeout=12)
+        if proc.returncode != 0 or len(proc.stdout) > 3000:
+            return {"status": "error"}
+        report = json.loads(proc.stdout)
+        if not isinstance(report, dict) or report.get("status") != "ok":
+            return {"status": "error"}
+        return {"status": "success", "report": report}
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        return {"status": "error"}
+
+
 def main():
     parser=argparse.ArgumentParser()
     grp=parser.add_mutually_exclusive_group(required=True)
@@ -149,13 +170,21 @@ def main():
             return 0
         while True:
             job=request_json(endpoint,"/v1/agent/claim",{},agent_id).get("job")
-            if not job: print("No queued probe jobs.")
-            elif job.get("kind")=="probe" and re.fullmatch(r"[a-zA-Z0-9_-]{8,80}",job.get("id","")):
+            if job:
+                if job.get("kind")!="probe" or not re.fullmatch(r"[a-zA-Z0-9_-]{8,80}",job.get("id","")):
+                    raise RuntimeError("Unexpected probe kind")
                 result=execute_probe()
                 ack=request_json(endpoint,"/v1/agent/jobs/"+job["id"]+"/finish",result,agent_id)
                 print("Probe:",result["status"],"accepted:",ack.get("accepted"))
-            else:
-                raise RuntimeError("Unexpected job type")
+            config_job=request_json(endpoint,"/v1/agent/config/claim",{},agent_id).get("job")
+            if config_job:
+                if config_job.get("kind")!="config.inspect" or not re.fullmatch(r"[a-zA-Z0-9_-]{8,80}",config_job.get("id","")):
+                    raise RuntimeError("Unexpected config kind")
+                result=inspect_config()
+                ack=request_json(endpoint,"/v1/agent/config/"+config_job["id"]+"/finish",result,agent_id)
+                print("Config inspect:",result["status"],"accepted:",ack.get("accepted"))
+            if not job and not config_job:
+                print("No queued jobs.")
             if not args.loop: return 0
             time.sleep(20)
     except BridgeHTTPError as exc:
