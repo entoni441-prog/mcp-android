@@ -71,3 +71,10 @@
 - No v3 deployment, access grant, real Windows task, Cloudflare D1 mutation, production/main/working v2 changes, paid resources or restriction bypass.
 
 - Follow-up historical documentation clarification: v2 README corrected in commit `0056786d7c1dd1ad169cf92133a55c630e5f5342`; audit updated at `641a4edd1d2b58518a896f9060fd1e09eb14d31b`. No v2 code or deployment changed.
+
+## Supported local Windows access route decision — 2026-10-31
+- Independent official documentation check identified **ChatGPT Work Local + Computer Use + Remote connections** as the supported direct ChatGPT-to-Windows route, subject to the desktop app, actual account eligibility, host connection, approvals and Windows unlocked foreground session.
+- Exact design/acceptance gate: `windows-pc-agent-lab/v3/SUPPORTED-LOCAL-WINDOWS-ROUTE-20261031.md` (commit `93b046af3c94a389547bf0dd7f0ae5513c531178`).
+- **Not yet verified:** user Windows PC is connected to ChatGPT Work Local; Computer Use available and approved; mobile remote continuation works. This session lacks a connected local Windows host tool, so these steps require approved local desktop-app access.
+- Alternative Antigravity Remote Control only accesses whichever computer hosts Antigravity CLI: tested Linux Codespace is not the local Windows host. Do not present it as Windows desktop control.
+- Existing v3 publication STOP unchanged; no new worker/client/schema publishing, no test D1 mutation, no production/main/working v2 modification and no paid resources.
