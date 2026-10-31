@@ -1,0 +1,51 @@
+name: Windows local one-shot launcher — CI
+
+on:
+  push:
+    branches:
+      - experiment/windows-pc-agent-v3-control-20261031
+    paths:
+      - windows-pc-agent-lab/local-executor/**
+      - .github/workflows/windows-local-executor-ci.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safe-local-executor:
+    name: Local-only launcher validation
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate previously published bounded action module and local launcher
+        shell: bash
+        run: |
+          node --check windows-pc-agent-lab/v3/actions.mjs
+          node --check windows-pc-agent-lab/local-executor/launch-once.mjs
+          node --check windows-pc-agent-lab/local-executor/launch-once.test.mjs
+      - name: Verify local one-shot command contract without launching an application
+        shell: bash
+        run: node --test windows-pc-agent-lab/local-executor/launch-once.test.mjs
+      - name: Assert launcher contains no network/persistence or unrestricted shell
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const src=fs.readFileSync('windows-pc-agent-lab/local-executor/launch-once.mjs','utf8');
+          for(const forbidden of ['fetch(', 'http.request(', 'https.request(', 'exec(', 'execSync(', 'powershell.exe','schtasks','reg add','--background','--daemon']) {
+            assert.equal(src.includes(forbidden),false,'Unexpected construct: '+forbidden);
+          }
+          assert.match(src,/--approve-once/);
+          assert.match(src,/open_app/);
+          console.log('No network, startup, shell or remote job handling in local launcher.');
+          NODE
