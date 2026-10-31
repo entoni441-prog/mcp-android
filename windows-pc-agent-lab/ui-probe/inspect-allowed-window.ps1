@@ -55,14 +55,17 @@ try {
 
     # Read ONLY the foreground window selected by the local user.
     # No enumeration or inspection of unrelated desktop windows.
-    Add-Type -TypeDefinition @'
+    $win32Definition = @'
 using System;
 using System.Runtime.InteropServices;
 public static class LocalForegroundWindow {
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
 }
-'@ -ErrorAction Stop
+'@
+    Add-Type -TypeDefinition $win32Definition -ErrorAction Stop
+    # A local user running this from PowerShell needs a moment to focus the app.
+    Start-Sleep -Milliseconds 3000
     $hwnd = [LocalForegroundWindow]::GetForegroundWindow()
     if ($hwnd -eq [IntPtr]::Zero) {
         Write-Result 'blocked' 'no_foreground_window' $null
