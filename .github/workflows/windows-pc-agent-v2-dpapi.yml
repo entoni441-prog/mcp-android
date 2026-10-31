@@ -1,0 +1,23 @@
+name: Windows PC Agent v2 — Windows DPAPI diagnosis
+on:
+  push:
+    branches:
+      - experiment/windows-pc-agent-v2-readonly-20261031
+    paths:
+      - windows-pc-agent-lab/v2/tests/dpapi-windows.test.mjs
+      - windows-pc-agent-lab/v2/windows-agent-v2.mjs
+      - .github/workflows/windows-pc-agent-v2-dpapi.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-dpapi:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Reproduce DPAPI using synthetic data only
+        run: node --test windows-pc-agent-lab/v2/tests/dpapi-windows.test.mjs
