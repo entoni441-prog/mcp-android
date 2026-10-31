@@ -11,7 +11,7 @@ assert.ok(match,'DPAPI implementation missing or moved; update test extraction s
 assert.match(match[1],/Add-Type -AssemblyName System.Security -ErrorAction Stop/);
 // Test the same exact function body the user runs, not a duplicate test implementation.
 const dpapi=new Function('spawnSync','Buffer',match[1]+'\nreturn dpapi;')(spawnSync,Buffer);
-test('Windows DPAPI CurrentUser encrypt/decrypt round trip',()=>{
+test('Windows DPAPI CurrentUser encrypt/decrypt round trip',{skip:process.platform!=='win32'},()=>{
   assert.equal(process.platform,'win32');
   const sample='DPAPI-SYNTHETIC-ROUNDTRIP-NO-SECRETS';
   const cipher=dpapi('protect',sample);
