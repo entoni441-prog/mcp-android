@@ -22,5 +22,15 @@ Verify whether ChatGPT Work's authenticated Cloud Browser can independently oper
 7. Report outcome with screenshots or a precise visibility/action record. Distinguish read-only inventory from working clicks, and from CLI config-file edits. Make no unverified success claims.
 8. Update this checkpoint in experimental branch only after observed results.
 
-## Current gate
+## Gate before Work pilot
 No direct Cloud Browser or computer-use tool is exposed to the ordinary chat session that authored this handoff. Actual UI operations must be performed in a Work session with computer-use enabled; do not promise they have happened otherwise.
+
+## Work GUI observation — 2026-10-31
+
+| Action | Visible result |
+| --- | --- |
+| Opened the official Antigravity site in Work Cloud Browser | The welcome screen showed “Welcome to Antigravity” and a “Sign in” button. |
+| Clicked “Sign in” | Google Accounts opened with “Use your Google Account”, an “Email or phone” field and a “Next” button. |
+| Continued through the secure account form and selected “Try another way” | Google displayed its sign-in method chooser. Authentication is pending at this checkpoint. |
+
+The click and navigation are verified. The welcome screen did not expose Settings/Preferences, instances, approvals, model selection or permissions. Availability of these controls inside the signed-in app remains unknown. No cosmetic setting was changed or reverted. Next verification starts after Google sign-in: identify the test instance if visible, inventory the controls, then change and restore one cosmetic preference only if available.
