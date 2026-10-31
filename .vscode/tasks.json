@@ -1,0 +1,25 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Antigravity TEST — статус Remote Control (только чтение)",
+      "type": "process",
+      "command": "python3",
+      "args": [
+        "bridge/diagnose_remote.py"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false,
+        "echo": false,
+        "clear": true
+      },
+      "problemMatcher": [],
+      "group": "test"
+    }
+  ]
+}
