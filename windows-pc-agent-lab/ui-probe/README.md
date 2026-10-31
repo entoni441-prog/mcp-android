@@ -31,3 +31,14 @@ powershell.exe -NoProfile -File .\windows-pc-agent-lab\ui-probe\inspect-allowed-
 - [GetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getforegroundwindow)
 - [AutomationElement.FromHandle](https://learn.microsoft.com/en-us/dotnet/api/system.windows.automation.automationelement.fromhandle?view=netframework-4.8.1)
 - [AutomationElement.FindAll](https://learn.microsoft.com/en-us/dotnet/api/system.windows.automation.automationelement.findall?view=windowsdesktop-10.0)
+
+## Офлайн-контракт результата — 31.10.2026
+Добавлены `validate-report.mjs` (строгая проверка схемы) и `validate-report-stdin.mjs` (строго ограниченный адаптер только stdin → stdout). Они **не осуществляют сетевого обмена**, не создают новые задачи, не пишут файлы, не читают личные данные и не предоставляют удалённое управление.
+
+- Вход: одна строка JSON из локального PowerShell `inspect-allowed-window.ps1`, не более 16 КиБ. Допустимы только `ok/inspection_completed`, известные безопасные `blocked` и `error` статусы; приложение — `notepad` или `calculator`.
+- При `ok`: до 40 элементов, только `controlType`, `automationId`, `isEnabled`; неизвестные поля, названия окон, тексты, значения, персональные данные, неподтверждённые статусы и неподходящие типы → ошибка `invalid_uia_report`.
+- При `blocked/error`: допускается **только null** вместо метаданных, чтобы отказ не приводил к утечке.
+- Проверка Windows CI: структурные негативные тесты (`node --test windows-pc-agent-lab/ui-probe/tests/validate-report.test.mjs`) плюс передача **реального PowerShell-отказа без согласия** в `validate-report-stdin.mjs`, где он заново проверяется.
+- Контракт **не доказывает интеграцию** с Cloudflare. У Windows v2 нет интерфейса получения задач, сервер/клиент v3 были ранее заблокированы к публикации. Не использовать отдельный транспорт для обхода прежнего отказа.
+
+**Приёмка этапов:** `LOCAL_SCHEMA_PASS` — после успешного CI; `LOCAL_UI_READBACK` — не подтверждено на реальном ПК; `CLOUD_TRANSPORT` и `CHAT_REMOTE_ACTION` — не реализованы.
