@@ -51,3 +51,5 @@
 **Still open:** P0 full-v3 source gate blocked by prior publication restriction; P1 plaintext file-result retention in D1 and lack of auditable server-side grant/nonce logic; P2 concurrent filesystem race and CAS; live end-to-end opt-in test; stale historical v2 README. No workarounds of the denied executable publication and no rollout performed.
 
 **Controlled next milestone:** prioritize confidentiality/retention policy for v3 results and review the missing server/client sources **only through an expressly permitted source-publication/review workflow**. Do not launch Cloudflare v3 tasks or grant access while release gate remains blocked.
+
+- **P3 documentation partial closure:** v2 README header was corrected in commit `0056786d7c1dd1ad169cf92133a55c630e5f5342` to distinguish historical pre-deployment instructions from the later verified, read-only live v2. The original historical checklist remains for provenance and must not be treated as new deployment instructions.
