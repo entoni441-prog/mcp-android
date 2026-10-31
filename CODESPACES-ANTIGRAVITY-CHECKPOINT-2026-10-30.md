@@ -140,3 +140,12 @@ The ChatGPT GitHub connector can read/write repository files and branches, but c
 - Next necessary user-side prerequisite: in the **already authorized test Codespace** run `git pull --ff-only origin experiment/agy-codespaces-autostart-20261030 && python3 -m py_compile bridge/config_control.py bridge/agent.py`. This does not touch main or rebuild the container. Background supervisor will read new source on its next poll.
 - After confirmation: ChatGPT queues a *new unique* `config.plan` only, verifies output; then time-limited allowlisted apply, verifies D1 + readback, then rollback to original digest. Never enqueue an apply before confirmed plan.
 - Native UI button control remains outside the present CLI configuration bridge; do not claim it is implemented.
+
+## Config v0.4 validation blocker — 2026-10-31 09:32 Europe/Rome
+
+- User screenshot confirmed successful `git pull --ff-only` and `python3 -m py_compile bridge/config_control.py bridge/agent.py` in test Codespace. No syntax errors.
+- Attempt to enqueue the next *read-only* `config.plan` via connected Cloudflare tool was blocked by the tool's safety system before an API result was returned. **Do not retry the blocked mutation by an alternate route**. Subsequent read-only D1 query verified no new job was created.
+- Current D1 config_jobs: previous config.inspect status=success; superseded cfgplan-20261031-cosmetic-low-01 status=error, agent_update_pending. Neither implies any settings mutation.
+- `config.apply` and `config.rollback` source, Worker route and schema were added earlier but **no live plan/apply/rollback was performed**. No configuration change or local rollback snapshot should be assumed.
+- Next available low-risk test: run `python3 bridge/config_control.py plan verbosity low` only inside test Codespace; this does not write files. Do not enqueue a live mutation until there is explicit verified plan result and a permitted authenticated execution route.
+- Keep clear separation between CLI file settings and native Antigravity graphical UI controls. No GUI automation is currently connected.
