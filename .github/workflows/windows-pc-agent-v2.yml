@@ -18,10 +18,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Build combined v1+v2 worker without deployment
+        run: node windows-pc-agent-lab/v2/build-worker.mjs
       - name: Static syntax checks
         run: |
           node --check windows-pc-agent-lab/v2/worker-v2.mjs
           node --check windows-pc-agent-lab/v2/windows-agent-v2.mjs
+          node --check windows-pc-agent-lab/v2/build-worker.mjs
+          node --check windows-pc-agent-lab/v2/.dist/worker-combined.mjs
           node --check windows-pc-agent-lab/v2/tests/worker-v2.test.mjs
-      - name: Offline security/protocol tests (mock D1, no deployment, no Windows access)
-        run: node --test windows-pc-agent-lab/v2/tests/worker-v2.test.mjs
+          node --check windows-pc-agent-lab/v2/tests/integration.test.mjs
+      - name: Offline security and v1 compatibility tests (mock D1; no deployment)
+        run: node --test windows-pc-agent-lab/v2/tests/*.test.mjs
