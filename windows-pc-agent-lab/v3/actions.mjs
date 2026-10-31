@@ -55,7 +55,7 @@ export function validateJob(action,args){
   if(action==='open_app' && (!keys(args,['app'])||!['notepad','calculator'].includes(args.app)))throw Error('invalid_args');
   return true;
 }
-export async function executeJob(action,args,{workspace,platform=process.platform,launcher=spawn}={}){
+export async function executeJob(action,args,{workspace,platform=process.platform,launcher=spawn,systemRoot=process.env.SystemRoot}={}){
   validateJob(action,args);
   const root=requireRoot(workspace);
   switch(action){
@@ -94,8 +94,14 @@ export async function executeJob(action,args,{workspace,platform=process.platfor
     }
     case 'open_app':{
       if(platform!=='win32')throw Error('windows_only');
+      // An executable name alone would invoke Windows PATH/search-order resolution.
+      // Accept only an absolute local-drive Windows directory supplied by the OS;
+      // never permit the task payload to choose a path or a network share.
+      if(typeof systemRoot!=='string'||!/^[a-zA-Z]:\\/.test(systemRoot)||
+         !path.win32.isAbsolute(systemRoot))throw Error('invalid_windows_system_root');
       const exe=args.app==='notepad'?'notepad.exe':'calc.exe';
-      const proc=launcher(exe,[],{detached:true,stdio:'ignore',windowsHide:false});
+      const executable=path.win32.join(systemRoot,'System32',exe);
+      const proc=launcher(executable,[],{detached:true,stdio:'ignore',windowsHide:false});
       // spawn() may fail asynchronously (ENOENT, permissions). Never report success first.
       await new Promise((resolve,reject)=>{
         proc.once('error',()=>reject(Error('app_launch_failed')));
