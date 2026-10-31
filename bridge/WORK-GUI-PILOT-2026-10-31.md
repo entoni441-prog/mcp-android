@@ -35,3 +35,18 @@ No direct Cloud Browser or computer-use tool is exposed to the ordinary chat ses
 | Selected the alternate route in the chooser | Google opened Account recovery and requested a previously used password. Returned to the normal sign-in page without submitting recovery information. Authentication remains pending. |
 
 The click and navigation are verified. The welcome screen did not expose Settings/Preferences, instances, approvals, model selection or permissions. Availability of these controls inside the signed-in app remains unknown. No cosmetic setting was changed or reverted. Next verification starts after Google sign-in: identify the test instance if visible, inventory the controls, then change and restore one cosmetic preference only if available.
+
+## Authenticated GUI pilot — 2026-10-31
+
+Google sign-in succeeded. Work observed the Remote Control Instances page and clicked **Refresh instances**. The button became disabled, the list displayed a loading indicator, then the button re-enabled with a newer update time. All six rows still showed Offline.
+
+| Instance | Evidence linking it to haunted-shadow |
+| --- | --- |
+| codespaces-d015bd-turbo-drift | Test launcher start, recorded in the autostart branch checkpoint. |
+| codespaces-d015bd-roving-zenith | Same test Codespace after stop/start, previously observed Online. |
+| codespaces-d015bd-mighty-void | Shared prefix only. Unverified. |
+| codespaces-d015bd-swift-shard | Shared prefix only. Unverified. |
+| codespaces-d015bd-vivid-ion | Most recently opened, same prefix. Current assignment unverified. |
+| codespaces-5e31df-golden-meteor | Outside test scope. |
+
+The offline list exposed refresh, remove actions, Google Account and feedback. No instance start, settings, cosmetic preference or model selector was visible on that screen. No instance was removed and no preference or model was changed. A read-only aggregate of the isolated bridge's approved-agent request records showed the last signed request was 1,256 seconds old. A sleeping Codespace is plausible, but the website does not distinguish host suspension from a stopped process or connectivity failure. Opening GitHub Codespaces in Work led to GitHub sign-in. Next: inspect the exact test host's state and resume it if stopped, refresh Antigravity, then correlate the online row before inspecting session controls.
