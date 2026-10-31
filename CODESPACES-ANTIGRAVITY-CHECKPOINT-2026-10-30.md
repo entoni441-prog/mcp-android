@@ -118,3 +118,15 @@ The ChatGPT GitHub connector can read/write repository files and branches, but c
 - No configuration was changed. No sensitive values, complete config JSON, account tokens, or key material returned.
 - Worker v0.3 config.inspect endpoint works; original probe endpoint remained compatible, confirmed by successful probe-20261031-worker-v03-compat.
 - **Next:** add tightly scoped remote config.plan/config.apply with compare-and-swap, snapshot/read-back/rollback and independent verification. GUI button control remains separate and unimplemented; do not misrepresent configuration-file editing as mouse click control.
+
+## Bridge v0.4 config control — implementation checkpoint, 2026-10-31
+
+- Official Antigravity docs verified CLI cosmetic keys `verbosity`, `colorScheme`, `altScreenMode`, `runningLightSpeed` in `~/.gemini/antigravity-cli/settings.json`. Some runtime flags may override persisted values.
+- Implemented `bridge/config_control.py` local `inspect`, `plan`, `apply`, `rollback`. Apply uses exact setting/value allowlist, SHA-256 compare-and-swap, restrictive private local journal snapshot, atomic replace, readback; rollback rejects changed settings via digest verification.
+- `bridge/agent.py` now handles only signed `config.inspect`, `config.plan`, `config.apply`, `config.rollback` jobs; invokes a fixed local tool, not arbitrary commands. Source updated in experiment/agy-codespaces-autostart-20261030; existing supervisor and postStartCommand unchanged.
+- Isolated D1 `config_jobs` migration adds kind, key/value, expected SHA, approval bit, expiry and result fields. Existing successful `probe` jobs unchanged.
+- Deployed isolated Cloudflare Worker `agy-bridge-mvp` version `0.4-config-control`, signed auth, allowlisted key/value checks, mutating jobs require D1 approval and not-expired authorization. Worker checks and sanitizes incoming status/result JSON.
+- **Backward compatibility proven:** existing running supervisor autonomously completed post-deploy probe `probe-20261031-worker-config-v04` successfully with `BRIDGE_OK`.
+- Added one read-only plan job `cfgplan-20261031-cosmetic-low-01`: change `verbosity` to `low`; status queued, approved=0 (not needed for planning). No setting changed.
+- **NEXT:** sync current test Codespace with `git pull --ff-only origin experiment/agy-codespaces-autostart-20261030`, run `python3 -m py_compile bridge/config_control.py bridge/agent.py`; old supervisor picks up new source on next poll automatically. ChatGPT then verifies D1 result for plan. Only after a successful plan may ChatGPT queue a separately approved cosmetic apply with exact expected digest and short TTL. Then independently verify readback and queue rollback with exact post-apply SHA/TTL; verify original state restored.
+- **Not verified yet:** live remote plan/apply/rollback and native GUI button control. Do not claim any Antigravity setting changed or that screenshots/buttons are accessible. Original production, main, working Codespace and payment controls unchanged.
