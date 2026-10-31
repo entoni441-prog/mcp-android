@@ -40,3 +40,14 @@
 - D1 inspection confirmed 0 agents, registration window open; `403` likely from HTTP-client-specific protection, not the pairing logic, but root cause remains unproven.
 - Modified `bridge/agent.py` to use `curl` transport with request body over stdin, not CLI arguments, preserving Ed25519 headers, JSON response parsing and sanitized errors. Commit `5667f167536a0c4481f9962cb18a3d13e4011191`. Still needs a live enroll test. No secret values sent in chat.
 - Refreshed short registration window. Next action: fetch agent pinned to `5667f167...`, syntax-check it and rerun `--enroll` on test Codespace. Do not re-create DB, Worker or keys.
+
+
+## Confirmed pairing & queued smoke test — 2026-10-31 (Europe/Rome)
+- Test Codespace reached `/health` with response `{"service":"agy-bridge-mvp","version":"0.2","status":"ready"}`.
+- Python urllib enrollment received HTTP 403 non-JSON. From same Codespace, direct `curl` to the same Worker endpoint returned HTTP 400 JSON `invalid_key` for a deliberate fake key.
+- Agent HTTP transport switched to `curl` with request body on stdin, commit `5667f167536a0c4481f9962cb18a3d13e4011191`. Live enrollment then returned `Registration: pending`.
+- Screenshot's public fingerprint `8fce8450fc2aa472` independently matched the sole pending agent in D1.
+- Closed enrollment (`enroll_until=0`) then approved the exact matching pending agent via D1. Verified `status: approved`, exactly 1 change. No private key material or OAuth secrets disclosed.
+- Created one fixed, harmless probe D1 job `probe-20261031-0820-bridge-v02`; initial status `queued`. Not yet executed.
+- Next: On the already authorized test Codespace, use existing downloaded `/tmp/agy-bridge-agent.py` with `AGY_BRIDGE_URL=https://agy-bridge-mvp.entoni441.workers.dev python3 /tmp/agy-bridge-agent.py --once`, inspect signed claim and completion and separately confirm D1 job status/result.
+- Do not issue additional jobs or approve another agent before observing first signed end-to-end result.
