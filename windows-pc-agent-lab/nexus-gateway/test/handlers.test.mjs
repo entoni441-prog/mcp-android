@@ -39,6 +39,20 @@ test('consent page escapes client name and issues single-use nonce', async () =>
   assert.ok(nonceFrom(html));
 });
 
+test('consent form CSP allows only self and the client callback origin', async () => {
+  const m = makeEnv(); const env = await withPass(m.env);
+  const csp = async redirectUri => {
+    env.OAUTH_PROVIDER.parseAuthRequest = async () => ({clientId: 'chatgpt', redirectUri, scope: [], state: 's'});
+    return (await handleDefault(new Request(BASE + '/authorize'), env)).headers.get('content-security-policy');
+  };
+  assert.match(await csp('https://chatgpt.com/cb?x=1'), /form-action 'self' https:\/\/chatgpt\.com;/);
+  assert.match(await csp('http://127.0.0.1:9000/cb'), /form-action 'self' http:\/\/127\.0\.0\.1:9000;/);
+  for (const bad of ['http://evil.com/cb', 'myapp://localhost/cb', 'not a url'])
+    assert.match(await csp(bad), /form-action 'self';/, bad);
+  const errors = await handleDefault(post('0'.repeat(64), PASS), env);
+  assert.match(errors.headers.get('content-security-policy'), /form-action 'self';/);
+});
+
 test('correct passphrase completes authorization exactly once', async () => {
   const m = makeEnv(); const env = await withPass(m.env);
   const nonce = nonceFrom(await (await handleDefault(new Request(BASE + '/authorize'), env)).text());
@@ -138,11 +152,8 @@ test('PC offline: initialize, notifications, ping and tools/list still work (con
   assert.equal((await handleMcp(new Request(BASE + '/mcp', {method: 'POST', body: '{bad'}), m.env, ctx)).status, 400);
 });
 
-test('consent page CSP allows the OAuth client redirect origin (else browsers block the 302 back)', async () => {
+test('non-http(s) redirect URI never widens form-action', async () => {
   const {env: e} = makeEnv(); const env = await withPass(e);
-  const r = await handleDefault(new Request(BASE + '/authorize'), env);
-  const policy = r.headers.get('content-security-policy');
-  assert.match(policy, /form-action 'self' https:\/\/chatgpt\.com;/);
   const bad = {...env, OAUTH_PROVIDER: {...env.OAUTH_PROVIDER, parseAuthRequest: async () => ({clientId: 'chatgpt', redirectUri: 'javascript:alert(1)', scope: []})}};
-  assert.equal((await handleDefault(new Request(BASE + '/authorize'), bad)).status, 400);
+  assert.match((await handleDefault(new Request(BASE + '/authorize'), bad)).headers.get('content-security-policy'), /form-action 'self';/);
 });

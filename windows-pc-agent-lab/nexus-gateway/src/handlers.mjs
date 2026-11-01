@@ -26,25 +26,22 @@ async function bearerOk(request, secret) {
 }
 const json = (status, body, extra = {}) => new Response(JSON.stringify(body), {status, headers: {'content-type': 'application/json', 'cache-control': 'no-store', ...extra}});
 const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
-const HTML_HEADERS = {
+const cspHeaders = formAction => ({
   'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
-  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-};
-// CSP form-action also governs the redirect that follows a form POST (Chrome/Edge). The consent form
-// must therefore allow the OAuth client's redirect origin, or the 302 back to ChatGPT is silently blocked.
-const csp = (formOrigins = []) => "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'" +
-  formOrigins.map(o => ' ' + o).join('') + "; base-uri 'none'; frame-ancestors 'none'";
-export function redirectOrigin(redirectUri) {
-  try {
-    const u = new URL(redirectUri);
-    if (u.protocol === 'https:' && !u.username && !u.password) return u.origin;
-    if (u.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(u.hostname)) return u.origin;
-  } catch { /* invalid */ }
-  return null;
+  'content-security-policy': `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; base-uri 'none'; frame-ancestors 'none'`,
+});
+const HTML_HEADERS = cspHeaders("'self'");
+const isLocalHost = h => ['localhost', '127.0.0.1'].includes(h);
+// Chrome applies form-action to the redirect that follows a form POST, so the consent form must also allow
+// the client's callback origin (redirectUri is already matched to the registered client by parseAuthRequest).
+function consentHeaders(redirectUri) {
+  let u; try { u = new URL(redirectUri); } catch { return HTML_HEADERS; }
+  const allowed = u.protocol === 'https:' || (u.protocol === 'http:' && isLocalHost(u.hostname));
+  return allowed ? cspHeaders(`'self' ${u.origin}`) : HTML_HEADERS;
 }
-const page = (title, body, status = 200, formOrigins = []) => new Response(
+const page = (title, body, status = 200, headers = HTML_HEADERS) => new Response(
   `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${title}</title>` +
-  `<body style="font-family:system-ui;max-width:520px;margin:40px auto;padding:0 16px">${body}</body></html>`, {status, headers: {...HTML_HEADERS, 'content-security-policy': csp(formOrigins)}});
+  `<body style="font-family:system-ui;max-width:520px;margin:40px auto;padding:0 16px">${body}</body></html>`, {status, headers});
 
 /** OAuth defaultHandler: /authorize consent with owner passphrase, /tunnel registration, /health. */
 export async function handleDefault(request, env) {
@@ -61,15 +58,13 @@ export async function handleDefault(request, env) {
     try { auth = await env.OAUTH_PROVIDER.parseAuthRequest(request); } catch { return page('Ошибка', '<p>Некорректный запрос авторизации.</p>', 400); }
     const client = auth?.clientId ? await env.OAUTH_PROVIDER.lookupClient(auth.clientId) : null;
     if (!client) return page('Ошибка', '<p>Неизвестный клиент.</p>', 400);
-    const back = redirectOrigin(auth.redirectUri);
-    if (!back) return page('Ошибка', '<p>Недопустимый адрес возврата.</p>', 400);
     const nonce = await guard.issue(auth);
     const name = escapeHtml(client.clientName || client.client_name || 'MCP client');
     return page('NEXUS — доступ к ПК',
       `<h1>Разрешить доступ к Windows-ПК?</h1><p><b>${name}</b> запрашивает управление NEXUS Host на твоём компьютере.</p>` +
       `<p>Подтверди только если подключение начал ты.</p><form method="POST" action="/authorize">` +
       `<input type="hidden" name="nonce" value="${nonce}"><p><label>Пароль владельца<br><input type="password" name="passphrase" autocomplete="current-password" required style="width:100%"></label></p>` +
-      `<button type="submit" name="decision" value="approve">Разрешить</button> <button type="submit" name="decision" value="deny">Отклонить</button></form>`, 200, [back]);
+      `<button type="submit" name="decision" value="approve">Разрешить</button> <button type="submit" name="decision" value="deny">Отклонить</button></form>`, 200, consentHeaders(auth.redirectUri));
   }
   if (request.method !== 'POST') return new Response('Method not allowed', {status: 405});
 
@@ -89,7 +84,7 @@ export async function handleDefault(request, env) {
     request: auth, userId: 'owner', scope: auth.scope || [], props: {owner: true}, metadata: {label: 'NEXUS owner'},
   });
   const target = new URL(redirectTo);
-  if (target.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(target.hostname)) return page('Ошибка', '<p>Недопустимый адрес возврата.</p>', 400);
+  if (target.protocol !== 'https:' && !isLocalHost(target.hostname)) return page('Ошибка', '<p>Недопустимый адрес возврата.</p>', 400);
   // Some embedded OAuth browsers ignore cross-origin redirects after a form POST — give a link too.
   const safe = escapeHtml(redirectTo);
   return new Response(`<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${safe}"><p>Доступ выдан. <a href="${safe}">Вернуться в ChatGPT</a></p>`,
