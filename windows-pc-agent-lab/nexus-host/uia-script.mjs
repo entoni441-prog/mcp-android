@@ -76,16 +76,24 @@ function NxTabOf($e) {
   return $null
 }
 function NxTabs($w) {
+  # Bounded walk (≤ 400 nodes, depth ≤ 8) instead of FindAll(Descendants): FindAll on a large/foreign window can take
+  # tens of seconds. Tabs of Notepad/Terminal-like apps sit within a few levels of the window.
   $out = New-Object System.Collections.ArrayList
   if ($null -eq $w) { return ,$out }
-  $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::TabItem)
-  try { $all = $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond) } catch { return ,$out }
-  $i = 0
-  foreach ($t in $all) {
-    if ($i -ge 100) { break }; $i++
-    $sel = $false
-    try { $sel = $t.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected } catch { }
-    [void]$out.Add(@{ rid = (NxRid $t); name = (NxStr $t.Current.Name 120); selected = [bool]$sel })
+  $stack = New-Object System.Collections.Stack
+  $stack.Push(@($w, 0)); $seen = 0
+  while ($stack.Count -gt 0 -and $seen -lt 400 -and $out.Count -lt 100) {
+    $item = $stack.Pop(); $e = $item[0]; $d = $item[1]; $seen++
+    if ($e.Current.ControlType -eq [System.Windows.Automation.ControlType]::TabItem) {
+      $sel = $false
+      try { $sel = $e.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected } catch { }
+      [void]$out.Add(@{ rid = (NxRid $e); name = (NxStr $e.Current.Name 120); selected = [bool]$sel })
+      continue
+    }
+    if ($d -ge 8) { continue }
+    $k = $TW.GetFirstChild($e); $kids = New-Object System.Collections.ArrayList
+    while ($null -ne $k -and $kids.Count -lt 200) { [void]$kids.Add($k); $k = $TW.GetNextSibling($k) }
+    for ($i = $kids.Count - 1; $i -ge 0; $i--) { $stack.Push(@($kids[$i], ($d + 1))) }
   }
   return ,$out
 }
