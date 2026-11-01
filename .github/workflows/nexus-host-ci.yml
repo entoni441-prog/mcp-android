@@ -20,8 +20,8 @@ jobs:
         with: {distribution: temurin, java-version: '17'}
       - name: Unit + integration tests (fake GUI, real files/tasks/HTTP)
         run: node --test windows-pc-agent-lab/nexus-host/server.test.mjs windows-pc-agent-lab/nexus-host/access.test.mjs windows-pc-agent-lab/nexus-host/e2e-gateway.test.mjs windows-pc-agent-lab/nexus-host/windows.test.mjs windows-pc-agent-lab/nexus-host/gui.test.mjs windows-pc-agent-lab/nexus-host/modules.test.mjs
-      - name: Real browser over CDP (Chrome on Linux, Edge on Windows)
-        run: node --test windows-pc-agent-lab/nexus-host/browser.test.mjs
+      - name: Egress proxy + real browser over CDP incl. SSRF/redirect/DNS negatives (Chrome on Linux, Edge on Windows)
+        run: node --test --test-reporter=spec windows-pc-agent-lab/nexus-host/egress-proxy.test.mjs windows-pc-agent-lab/nexus-host/browser.test.mjs
       - name: Real Java 17 Robot under Xvfb
         if: runner.os == 'Linux'
         env: {NEXUS_REAL_GUI: '1'}

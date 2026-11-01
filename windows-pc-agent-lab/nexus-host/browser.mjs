@@ -4,14 +4,20 @@
  * driven over the Chrome DevTools Protocol with Node's built-in WebSocket (Node ≥ 22).
  * The owner's normal Edge/Chrome profile, cookies and passwords are never touched.
  *
- * Policy: http/https only; localhost / private networks refused (SSRF to the Host itself or the LAN);
- * downloads denied; typing into password fields refused; snapshot never returns field values.
+ * Policy (two layers):
+ *  1. urlAllowed — fast refusal of non-http(s) URLs and literal local/private hosts in tool arguments;
+ *  2. egress-proxy.mjs — NETWORK LEVEL: all browser traffic (navigations, every redirect hop, subresources,
+ *     fetch/XHR/WebSocket) is forced through a local proxy that resolves DNS once and refuses any name that
+ *     resolves to a non-public address, then connects to that checked IP (DNS rebinding cannot swap it).
+ *     QUIC disabled, WebRTC limited to proxied traffic, loopback NOT bypassed.
+ * Downloads denied; typing into password fields refused; snapshot never returns field values.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import {spawn} from 'node:child_process';
 import {requireCap} from './capabilities.mjs';
+import {createEgressProxy, isPublicIp} from './egress-proxy.mjs';
 
 const isObj = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const onlyKeys = (a, allowed) => isObj(a) && Object.keys(a).every(k => allowed.includes(k));
@@ -24,13 +30,8 @@ export function urlAllowed(raw, {allowPrivate = false} = {}) {
   if (allowPrivate) return true;
   const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal') || !h.includes('.') && !net.isIP(h)) return false;
-  if (net.isIPv4(h)) {
-    const [a, b] = h.split('.').map(Number);
-    if (a === 10 || a === 127 || a === 0 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)) return false;
-  }
-  if (net.isIPv6(h)) {
-    if (h === '::1' || h === '::' || /^f[cd]/.test(h) || /^fe[89ab]/.test(h) || h.startsWith('::ffff:')) return false;
-  }
+  if (net.isIP(h) && !isPublicIp(h)) return false;
+  // Decimal/hex/octal IPv4 spellings (http://2130706433/, http://0x7f.1/) are normalised by WHATWG URL to dotted form above.
   return true;
 }
 
@@ -86,9 +87,10 @@ const SNAPSHOT_JS = `(() => {
 
 const KEYS = {Enter: 13, Tab: 9, Escape: 27, Backspace: 8, ArrowDown: 40, ArrowUp: 38, ArrowLeft: 37, ArrowRight: 39, PageDown: 34, PageUp: 33, Home: 36, End: 35, Space: 32};
 
-export function createBrowser({caps, home, platform = process.platform, browserPath, headless = false, allowPrivate = false, spawnFn = spawn, onOwnedPid = () => {}}) {
+/** allowPrivate and proxyOptions are TEST-ONLY injections; production callers (server.mjs) never pass them. */
+export function createBrowser({caps, home, platform = process.platform, browserPath, headless = false, allowPrivate = false, proxyOptions = {}, spawnFn = spawn, onOwnedPid = () => {}}) {
   const profile = path.join(home, 'edge-profile');
-  let proc = null, page = null, browserWs = null;
+  let proc = null, page = null, browserWs = null, proxy = null;
 
   async function ensure() {
     if (page && !page.closed) return page;
@@ -97,7 +99,9 @@ export function createBrowser({caps, home, platform = process.platform, browserP
     fs.mkdirSync(profile, {recursive: true});
     const portFile = path.join(profile, 'DevToolsActivePort');
     fs.rmSync(portFile, {force: true});
-    const args = [`--user-data-dir=${profile}`, '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', '--no-first-run',
+    if (!proxy) { proxy = createEgressProxy({allowPrivate, ...proxyOptions}); proxy.port = await proxy.listen(); }
+    const args = [`--user-data-dir=${profile}`, `--proxy-server=http://127.0.0.1:${proxy.port}`, '--proxy-bypass-list=<-loopback>',
+      '--disable-quic', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--dns-prefetch-disable', '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', '--no-first-run',
       '--no-default-browser-check', '--disable-sync', '--disable-features=msEdgeSyncFeature', 'about:blank'];
     if (headless) args.unshift('--headless=new', '--no-sandbox');
     proc = spawnFn(exe, args, {stdio: 'ignore', windowsHide: false, detached: false});
@@ -126,6 +130,9 @@ export function createBrowser({caps, home, platform = process.platform, browserP
   }
   async function guardUrl() {
     const url = await evaluate('location.href');
+    const reset = async code => { await page.send('Page.navigate', {url: 'about:blank'}); await waitLoad(); throw Error(code); };
+    if (/^chrome-error:|^edge-error:/.test(url)) await reset('navigation_blocked');
+    if (await evaluate("(document.body ? document.body.innerText : '').startsWith('nexus_egress_denied')")) await reset('egress_denied_private_destination');
     if (url !== 'about:blank' && !urlAllowed(url, {allowPrivate})) { await page.send('Page.navigate', {url: 'about:blank'}); throw Error('url_not_allowed_after_redirect'); }
     return url;
   }
@@ -196,6 +203,7 @@ export function createBrowser({caps, home, platform = process.platform, browserP
       const url = await guardUrl();
       return {done: true, action: args.action, url, title: await evaluate('document.title')};
     },
-    stop() { page?.close(); browserWs?.close(); try { proc?.kill(); } catch { /* gone */ } proc = null; page = null; },
+    egressStats: () => proxy?.stats ?? null,
+    stop() { page?.close(); browserWs?.close(); try { proc?.kill(); } catch { /* gone */ } proxy?.close(); proc = null; page = null; proxy = null; },
   };
 }
