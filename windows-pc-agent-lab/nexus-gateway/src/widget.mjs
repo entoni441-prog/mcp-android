@@ -96,6 +96,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (!s || typeof s !== 'object') return;
     if (s.state === 'off') { stopped = true; halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
   }
+  let readySince = 0;
   function halt() { clearTimeout(timer); timer = null; }
   function schedule(ms) { halt(); if (!paused && !stopped) timer = setTimeout(tick, ms); }
   const interval = () => Math.round(1000 / Number($('fps').value || 2));
@@ -109,6 +110,15 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
       const sc = r && r.structuredContent;
       if (r && r.isError) throw new Error((r.content && r.content[0] && r.content[0].text) || 'error');
       if (!sc || sc.state === 'off') { onStatus({state: 'off'}); return; }
+      // 0.5.1: grant on, but no task runs → the PC produces no frames; poll slowly, give up after 10 min idle.
+      if (sc.state === 'ready') {
+        readySince = readySince || Date.now();
+        setState('offline', 'NEXUS · задача завершена');
+        show('Нет активной задачи', 'Трансляция идёт только во время работы NEXUS на рабочем столе. Кадры появятся сами при следующей задаче.', false);
+        if (Date.now() - readySince > 600000) { stopped = true; halt(); return; }
+        return schedule(5000);
+      }
+      readySince = 0;
       const im = (r.content || []).find(c => c.type === 'image');
       if (im && sc.seq !== lastSeq) { $('img').src = 'data:' + im.mimeType + ';base64,' + im.data; lastSeq = sc.seq; lastAt = Date.now(); }
       fails = 0; hide();
@@ -144,7 +154,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   (async () => {
     try {
       const init = await Promise.race([
-        rpc('ui/initialize', {appInfo: {name: 'nexus-live-view', version: '0.5.0'}, appCapabilities: {availableDisplayModes: ['inline', 'pip', 'fullscreen']}, protocolVersion: '2026-01-26'}),
+        rpc('ui/initialize', {appInfo: {name: 'nexus-live-view', version: '0.5.1'}, appCapabilities: {availableDisplayModes: ['inline', 'pip', 'fullscreen']}, protocolVersion: '2026-01-26'}),
         new Promise((_, rej) => setTimeout(() => rej(new Error('no_mcp_apps_host')), 4000)),
       ]);
       host = init || {}; notify('ui/notifications/initialized', {});

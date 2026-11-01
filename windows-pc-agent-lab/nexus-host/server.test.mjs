@@ -42,8 +42,8 @@ test('MCP handshake and tool discovery', async () => {
   assert.equal((await rpc(null, {jsonrpc: '2.0', method: 'notifications/initialized'})).status, 202);
   const tools = (await rpc('tools/list', {})).body.result.tools.map(t => t.name);
   assert.deepEqual(tools, TOOLS.map(t => t.name));
-  assert.equal(tools.length, 35);
-  assert.equal(init.body.result.serverInfo.version, '0.5.0');
+  assert.equal(tools.length, 36);
+  assert.equal(init.body.result.serverInfo.version, '0.5.1');
 });
 
 test('workspace file round-trip with optimistic sha', async () => {

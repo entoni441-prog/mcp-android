@@ -93,7 +93,7 @@ test('end to end over HTTP: keyboard refused → set_capability → allowed path
   const call = async (name, args) => (await (await fetch(url, {method: 'POST', headers: {'content-type': 'application/json', authorization: `Bearer ${cfg.token}`},
     body: JSON.stringify({jsonrpc: '2.0', id: ++id, method: 'tools/call', params: {name, arguments: args}})})).json()).result;
   try {
-    assert.equal((await call('get_capabilities', {})).structuredContent.gui_input, false);
+    assert.equal((await call('get_capabilities', {})).structuredContent.grants.gui_input, false);
     assert.match((await call('keyboard_action', {keys: 'enter'})).content[0].text, /capability_disabled/);
     const on = await call('set_capability', {capability: 'gui_input', enabled: true});
     assert.equal(on.isError, false); assert.equal(on.structuredContent.enabled, true);

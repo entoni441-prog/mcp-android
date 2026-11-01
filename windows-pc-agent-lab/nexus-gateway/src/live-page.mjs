@@ -81,6 +81,7 @@ function viewerPage() {
     try {
       const r = await fetch('/live/frame?w=' + (innerWidth > 1100 ? 1600 : 960), {cache: 'no-store', credentials: 'same-origin'});
       if (r.status === 401) { location.href = '/live'; return; }
+      if (r.status === 204) { state('offline', 'нет активной задачи', 'Кадры идут только пока NEXUS работает на рабочем столе.'); return sched(5000); }
       if (r.status === 409) { stopped = true; state('offline', 'Live View выключен', 'Включается только по твоей просьбе в чате ChatGPT («включи Live View»), затем обнови страницу.'); return; }
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || ('HTTP ' + r.status));
       const b = await r.blob(); const u = URL.createObjectURL(b); $('i').src = u; if (url) URL.revokeObjectURL(url); url = u;
@@ -138,6 +139,7 @@ export async function handleLive(request, env, {callHost, sha256hex}) {
     if (!r.ok) return jsonR(503, {error: r.reason});
     const sc = r.result?.structuredContent;
     if (sc?.state === 'off') return jsonR(409, {error: 'live_view_off'});
+    if (sc?.state === 'ready') return new Response(null, {status: 204, headers: sec}); // 0.5.1: no task running → no frame (the page keeps waiting slowly)
     const img = (r.result?.content || []).find(c => c.type === 'image' && c.mimeType === 'image/jpeg');
     if (!img || typeof img.data !== 'string') return jsonR(502, {error: r.result?.isError ? String(r.result?.content?.[0]?.text || 'host_error').slice(0, 120) : 'no_frame'});
     const bytes = Uint8Array.from(atob(img.data), c => c.charCodeAt(0));

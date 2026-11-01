@@ -125,7 +125,17 @@ export async function handleMcp(request, env, ctx, {fetcher = fetch} = {}) {
   try { msg = JSON.parse(body); } catch { return json(400, {jsonrpc: '2.0', id: null, error: {code: -32700, message: 'parse_error'}}); }
   if (Array.isArray(msg)) return json(400, {jsonrpc: '2.0', id: null, error: {code: -32600, message: 'batch_not_supported'}});
   if (!msg || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') return rpcErr(msg?.id, -32600, 'invalid_request');
-  if (!Object.hasOwn(msg, 'id')) return new Response(null, {status: 202}); // notifications
+  if (!Object.hasOwn(msg, 'id')) {
+    // 0.5.1: ChatGPT Stop may arrive as notifications/cancelled → forward to the PC (ends the work session there).
+    // Best effort, never blocks the 202; every other notification is still answered here only.
+    if (msg.method === 'notifications/cancelled') {
+      const trace = newTrace();
+      console.log(JSON.stringify({nexus: 'client_cancelled', requestId: msg.params?.requestId ?? null, trace}));
+      const p = forwardNotification(env, body, {fetcher, trace}).catch(() => {});
+      if (ctx?.waitUntil) ctx.waitUntil(p); else await p;
+    }
+    return new Response(null, {status: 202});
+  }
   const {id, method, params = {}} = msg;
   if (method === 'initialize') {
     const v = PROTOCOL_VERSIONS.includes(params?.protocolVersion) ? params.protocolVersion : PROTOCOL_VERSIONS[0];
@@ -146,6 +156,16 @@ export async function handleMcp(request, env, ctx, {fetcher = fetch} = {}) {
   const r = await callHost(env, params.name, params.arguments ?? {}, {fetcher, trace, body});
   if (!r.ok) return rpcOk(id, {content: [{type: 'text', text: r.text}], isError: true});
   return new Response(r.raw, {status: 200, headers: {'content-type': 'application/json', 'cache-control': 'no-store'}});
+}
+
+async function forwardNotification(env, body, {fetcher, trace}) {
+  const raw = await env.OAUTH_KV.get('tunnel');
+  if (!raw) return;
+  let reg; try { reg = JSON.parse(raw); } catch { return; }
+  if (!TUNNEL_RE.test(reg.url)) return;
+  await fetcher(reg.url + '/mcp', {method: 'POST', body,
+    headers: {'content-type': 'application/json', authorization: 'Bearer ' + secret(env.NEXUS_TOKEN), 'x-nexus-trace': trace},
+    signal: AbortSignal.timeout(10_000)});
 }
 
 const newTrace = () => { const b = new Uint8Array(8); crypto.getRandomValues(b); return hex(b); };

@@ -60,7 +60,7 @@ test('listWindows: not Windows, PowerShell failure, cap at 100', async () => {
 
 // Real Windows PowerShell (GitHub windows-latest runner). Opens Notepad so at least one titled window may exist;
 // the runner is not the owner's PC and has no Smart App Control — this proves the script, not the home setup.
-test('REAL: Windows PowerShell executes the fixed script and returns a valid list', {skip: process.platform !== 'win32'}, async () => {
+test('REAL: Windows PowerShell executes the fixed script and returns a valid list', {skip: process.platform !== 'win32' || process.env.NEXUS_REAL_GUI !== '1' ? 'real GUI: launches notepad.exe; run only with NEXUS_REAL_GUI=1' : false}, async () => {
   const np = spawn(path.win32.join(process.env.SystemRoot, 'System32', 'notepad.exe'), [], {detached: true, stdio: 'ignore'});
   await new Promise(r => setTimeout(r, 2500));
   try {

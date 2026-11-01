@@ -28,6 +28,7 @@ import {searchFiles, fileAction} from './files.mjs';
 import {createCapStore} from './capstore.mjs';
 import {createConsent} from './consent.mjs';
 import {createLive} from './live.mjs';
+import {createSession} from './session.mjs';
 import {createApps} from './apps.mjs';
 const MAX_BODY = 64 * 1024;
 
@@ -69,7 +70,7 @@ export function loadConfig(env = process.env) {
 
 /** One runtime per host process: Java daemon, browser, task table. Tests inject fakes via deps.runtime. */
 export function createRuntime(cfg, deps = {}) {
-  const {procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, appsDeps: _ad, principal: _p, accessVerifier: _v, runtime: _r, trace: _t, ...execDeps} = deps;
+  const {procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, sessionDeps: _sd, appsDeps: _ad, principal: _p, accessVerifier: _v, runtime: _r, trace: _t, ...execDeps} = deps;
   const store = createCapStore({file: cfg.capabilitiesFile || null, initial: cfg.caps || validateCapabilities(DEFAULT_CAPABILITIES), audit: e => audit(cfg, e)});
   store.watch();
   const caps = store.view;
@@ -77,7 +78,13 @@ export function createRuntime(cfg, deps = {}) {
   const procs = createProcs({caps, cfg, consent, ...(deps.procsDeps || {})});
   const gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, ...(deps.guiDeps || {})});
   const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
-  const live = createLive({caps, store, capture: (w, q) => gui.frameJpeg(w, q), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
+  const session = createSession({caps, audit: e => audit(cfg, e), ...(deps.sessionDeps || {})});
+  const live = createLive({caps, store, session, capture: (w, q) => gui.frameJpeg(w, q), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
+  // End of every session: stream off at the source first, then clean up what NEXUS itself opened.
+  session.onEnd(async () => { live.sessionEnded(); return {liveActive: false}; });
+  session.onEnd(async reason => (typeof gui.cleanupOwned === 'function' ? {windows: await gui.cleanupOwned(reason)} : {}));
+  session.onEnd(async reason => (typeof browser.cleanupSession === 'function' ? {browser: await browser.cleanupSession(reason)} : {}));
+  session.onEnd(async reason => (typeof procs.cancelSession === 'function' ? {tasks: await procs.cancelSession(reason)} : {}));
   const apps = createApps({caps, store, consent, gui, workspace: cfg.workspace, execDeps,
     ...(execDeps.platform ? {platform: execDeps.platform} : {}), ...(execDeps.systemRoot ? {systemRoot: execDeps.systemRoot} : {}),
     ...(execDeps.launcher ? {launcher: execDeps.launcher} : {}), ...(deps.appsDeps || {})});
@@ -101,19 +108,30 @@ export function createRuntime(cfg, deps = {}) {
     },
     connection_status: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); const d = diagnostics(cfg); return {host: 'reachable', version: d.version, uptimeSec: d.uptimeSec, tunnel: d.tunnelHealth, registeredAt: d.tunnel?.registeredAt ?? null}; },
     host_diagnostics: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return diagnostics(cfg); },
-    get_capabilities: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return store.status(); },
-    set_capability: a => {
+    // 0.5.1: persistent owner grants and the current work session are reported separately.
+    get_capabilities: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return {grants: store.status(), session: session.status()}; },
+    set_capability: async a => {
       if (!a || typeof a !== 'object' || Object.keys(a).some(k => !['capability', 'enabled'].includes(k))) throw Error('invalid_args');
+      // Lowering a grant is always allowed. Raising from chat is allowed only while the owner's switch grantsFromChat is on.
+      if (a.enabled === true && caps.grantsFromChat === false) throw Error('owner_profile_required');
       const r = store.set(a.capability, a.enabled, 'tool');
-      if (a.capability === 'live_view' && !a.enabled) live.live_control({action: 'stop'});
-      return {...r, note: 'Applied immediately, no restart. Recorded in audit log.'};
+      if (!a.enabled && a.capability === 'live_view') live.live_control({action: 'stop'});
+      if (!a.enabled && a.capability === 'gui_input') await session.end('grant_revoked');
+      return {...r, persistent: true, note: 'Persistent grant (survives tasks and restarts). Recorded in audit log.'};
+    },
+    // 0.5.1: explicit end of a task — stream off, NEXUS-owned windows/tabs closed, verified state returned.
+    finish_task: async a => {
+      if (a && Object.keys(a).length) throw Error('invalid_args');
+      const r = await session.end('finish_task');
+      return {...r, verified: {liveActive: session.status().liveActive, live: live.status().state, sessionActive: session.active()}};
     },
     live_frame: a => live.live_frame(a), live_control: a => live.live_control(a), watch_nexus: a => live.watch_nexus(a),
     manage_app_access: a => apps.manage_app_access(a), browser_tabs: a => browser.browser_tabs(a),
     browser_open: a => browser.browser_open(a), browser_snapshot: a => browser.browser_snapshot(a), browser_action: a => browser.browser_action(a),
   };
   handlers.open_app = a => apps.open_app(a);
-  return {caps, store, consent, handlers, gui, procs, browser, live, apps, stop() { store.stop(); live.stop(); gui.stop(); browser.stop(); procs.stopAll(); }};
+  return {caps, store, consent, handlers, gui, procs, browser, live, apps, session,
+    stop() { session.end('host_stop').catch(() => {}); session.stop(); store.stop(); live.stop(); gui.stop(); browser.stop(); procs.stopAll(); }};
 }
 
 export function printCapabilities(cfg) {
@@ -174,7 +192,15 @@ const rpcError = (id, code, message) => ({jsonrpc: '2.0', id: id ?? null, error:
 export async function handleRpc(msg, cfg, deps = {}) {
   if (!msg || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') return rpcError(msg?.id, -32600, 'invalid_request');
   const isNotification = !Object.hasOwn(msg, 'id');
-  if (isNotification) return null;
+  if (isNotification) {
+    // 0.5.1: the client (ChatGPT Stop) cancelled a request → end the work session at once (stream off, cleanup).
+    if (msg.method === 'notifications/cancelled') {
+      const rt = deps.runtime || cfg.runtime;
+      audit(cfg, {event: 'client_cancelled', by: deps.principal, trace: deps.trace, requestId: msg.params?.requestId ?? null});
+      if (rt?.session) await rt.session.end('client_cancelled');
+    }
+    return null;
+  }
   const {id, method, params = {}} = msg;
   switch (method) {
     case 'initialize': {
@@ -193,12 +219,12 @@ export async function handleRpc(msg, cfg, deps = {}) {
       if (!TOOLS.some(t => t.name === name)) return rpcError(id, -32602, 'unknown_tool');
       const started = Date.now();
       try {
-        const {principal: _p, accessVerifier: _v, runtime: _r, procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, appsDeps: _ad, trace: _t, ...execDeps} = deps;
+        const {principal: _p, accessVerifier: _v, runtime: _r, procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, sessionDeps: _sd, appsDeps: _ad, trace: _t, ...execDeps} = deps;
         const rt = deps.runtime || (cfg.runtime ||= createRuntime(cfg, deps));
         rt.store?.refresh('file');
         let out;
         if (name === 'list_windows') out = await listWindows(args, {tmpDir: path.join(cfg.home, 'tmp'), ...execDeps});
-        else if (rt.handlers[name]) out = await rt.handlers[name](args);
+        else if (rt.handlers[name]) out = rt.session ? await rt.session.around(name, () => rt.handlers[name](args)) : await rt.handlers[name](args);
         else out = await executeJob(name, args, {workspace: cfg.workspace, ...execDeps});
         if (name !== 'live_frame') audit(cfg, {by: deps.principal, trace: deps.trace, tool: name, ok: true, ms: Date.now() - started, args: auditArgs(args)});
         if (out && Array.isArray(out.content) && Object.hasOwn(out, 'structured')) {

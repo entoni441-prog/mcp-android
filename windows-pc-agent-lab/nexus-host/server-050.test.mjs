@@ -29,8 +29,8 @@ function host(capsJson = {}, extra = {}) {
 }
 const auditOf = h => fs.readFileSync(h.cfg.auditFile, 'utf8');
 
-test('catalog 0.5.0: 35 tools; live_frame is app-only; widget tools point at the ui:// resource', () => {
-  assert.equal(TOOLS.length, 35);
+test('catalog 0.5.1: 36 tools; live_frame is app-only; widget tools point at the ui:// resource', () => {
+  assert.equal(TOOLS.length, 36);
   const lf = TOOLS.find(t => t.name === 'live_frame');
   assert.deepEqual(lf._meta.ui.visibility, ['app']);
   assert.equal(lf._meta.ui.resourceUri, LIVE_UI);
@@ -39,13 +39,16 @@ test('catalog 0.5.0: 35 tools; live_frame is app-only; widget tools point at the
   for (const t of TOOLS) assert.equal(t.inputSchema.additionalProperties, false, t.name);
 });
 
-test('Live View: off by default → no capture; on → frame; shared capture; STOP at source; no image in audit', async () => {
+test('Live View 0.5.1: no grant → off; grant but no session → ready, no capture; watch session → frames; STOP at source keeps grant', async () => {
   const h = await host().start();
   try {
     const off = (await h.call('live_frame')).structuredContent;
     assert.equal(off.state, 'off'); assert.equal(h.captures.length, 0);
     assert.equal((await h.call('watch_nexus')).structuredContent.state, 'off');
     assert.equal((await h.call('set_capability', {capability: 'live_view', enabled: true})).isError, false);
+    assert.equal((await h.call('live_frame')).structuredContent.state, 'ready', 'grant alone produces no frames');
+    assert.equal(h.captures.length, 0);
+    assert.equal((await h.call('watch_nexus')).structuredContent.streaming, true);
     const [a, b] = await Promise.all([h.call('live_frame'), h.call('live_frame')]);
     assert.equal(a.content[0].type, 'image'); assert.equal(a.content[0].mimeType, 'image/jpeg');
     assert.equal(a.structuredContent.state, 'live'); assert.deepEqual(a.structuredContent.cursor, {x: 10, y: 20});
@@ -54,15 +57,15 @@ test('Live View: off by default → no capture; on → frame; shared capture; ST
     assert.equal((await h.call('live_frame', {maxWidth: 5000})).isError, true);
     assert.equal((await h.call('live_frame', {foo: 1})).isError, true);
     const st = (await h.call('live_control', {action: 'stop'})).structuredContent;
-    assert.equal(st.state, 'off'); assert.equal(st.changed, true);
+    assert.equal(st.stopped, true); assert.equal(st.streaming, false);
     const n = h.captures.length;
-    assert.equal((await h.call('live_frame')).structuredContent.state, 'off');
+    assert.notEqual((await h.call('live_frame')).structuredContent.state, 'live');
     assert.equal(h.captures.length, n, 'no capture after STOP');
-    assert.equal(JSON.parse(fs.readFileSync(path.join(h.home, 'capabilities.json'), 'utf8')).live_view, false);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(h.home, 'capabilities.json'), 'utf8')).live_view, true, 'persistent grant kept');
     const log = auditOf(h);
     assert.ok(!log.includes('/9j/') && !log.includes('"tool":"live_frame","ok":true'), 'frames never audited');
     assert.match(log, /"event":"live_view_viewing","on":true/);
-    assert.match(log, /"source":"live_control_stop"/);
+    assert.match(log, /"event":"session_end"/);
   } finally { h.stop(); }
 });
 
@@ -77,7 +80,7 @@ test('Live View rate limit: ≤5 captures/s however often viewers poll', async (
 test('gui_input and live_view are separate: enabling live_view does not enable input', async () => {
   const h = await host({live_view: true}).start();
   try {
-    const c = (await h.call('get_capabilities')).structuredContent;
+    const c = (await h.call('get_capabilities')).structuredContent.grants;
     assert.equal(c.live_view, true); assert.equal(c.gui_input, false);
     assert.match((await h.call('keyboard_action', {keys: 'enter'})).content[0].text, /capability_disabled/);
     assert.match((await h.call('set_capability', {capability: 'browser', enabled: true})).content[0].text, /invalid_args/);
@@ -95,7 +98,7 @@ test('manage_app_access: grant only via consent+exact target; HARD_DENY never; r
     assert.match((await h.call('manage_app_access', {action: 'request', process: 'x', exe: 'C:\\Windows\\System32\\cmd.exe'})).content[0].text, /app_hard_denied|app_exe_invalid/);
     const r = (await h.call('manage_app_access', {action: 'request', process: 'mspaint'})).structuredContent;
     assert.equal(r.status, 'consent_required'); assert.equal(r.kind, 'grant'); assert.deepEqual(r.options, ['allow', 'cancel']);
-    assert.ok(!(await h.call('get_capabilities')).structuredContent.inputApps.includes('mspaint'), 'nothing granted before consent');
+    assert.ok(!(await h.call('get_capabilities')).structuredContent.grants.inputApps.includes('mspaint'), 'nothing granted before consent');
     assert.match((await h.call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target + ' '})).content[0].text, /consent_target_mismatch/);
     assert.match((await h.call('confirm_action', {consentId: r.consentId, decision: 'close_discard', target: r.target})).content[0].text, /invalid_args/);
     const c = (await h.call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target})).structuredContent;
@@ -161,6 +164,6 @@ test('/healthz is unauthenticated and leaks nothing; trace id reaches errors and
     assert.match(auditOf(h), /"trace":"abcdef0123456789"/);
     assert.ok(!auditOf(h).includes('not a trace'));
     const cs = (await h.call('connection_status')).structuredContent;
-    assert.equal(cs.host, 'reachable'); assert.equal(cs.version, '0.5.0');
+    assert.equal(cs.host, 'reachable'); assert.equal(cs.version, '0.5.1');
   } finally { h.stop(); }
 });

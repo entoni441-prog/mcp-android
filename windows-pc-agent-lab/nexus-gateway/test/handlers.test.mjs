@@ -159,3 +159,21 @@ test('non-http(s) redirect URI never widens form-action', async () => {
   const bad = {...env, OAUTH_PROVIDER: {...env.OAUTH_PROVIDER, parseAuthRequest: async () => ({clientId: 'chatgpt', redirectUri: 'javascript:alert(1)', scope: []})}};
   assert.match((await handleDefault(new Request(BASE + '/authorize'), bad)).headers.get('content-security-policy'), /form-action 'self';/);
 });
+
+test('0.5.1: notifications/cancelled (ChatGPT Stop) is forwarded to the PC once, still answered 202; other notifications are not', async () => {
+  const m = makeEnv();
+  await m.env.OAUTH_KV.put('tunnel', JSON.stringify({url: 'https://abc-def.trycloudflare.com', registeredAt: Date.now()}));
+  const sent = [];
+  const fetcher = async (url, init) => { sent.push({url, body: init.body, auth: init.headers.authorization}); return new Response(null, {status: 202}); };
+  const ctx = {props: {owner: true}, waitUntil: p => waits.push(p)}; const waits = [];
+  const cancel = JSON.stringify({jsonrpc: '2.0', method: 'notifications/cancelled', params: {requestId: 5, reason: 'stop'}});
+  assert.equal((await handleMcp(new Request(BASE + '/mcp', {method: 'POST', body: cancel}), m.env, ctx, {fetcher})).status, 202);
+  await Promise.all(waits);
+  assert.equal(sent.length, 1); assert.equal(sent[0].url, 'https://abc-def.trycloudflare.com/mcp');
+  assert.equal(sent[0].body, cancel); assert.equal(sent[0].auth, 'Bearer ' + TOKEN);
+  assert.equal((await handleMcp(new Request(BASE + '/mcp', {method: 'POST', body: JSON.stringify({jsonrpc: '2.0', method: 'notifications/initialized'})}), m.env, ctx, {fetcher})).status, 202);
+  assert.equal(sent.length, 1);
+  // PC offline: still 202, nothing thrown
+  await m.env.OAUTH_KV.delete('tunnel');
+  assert.equal((await handleMcp(new Request(BASE + '/mcp', {method: 'POST', body: cancel}), m.env, ctx, {fetcher})).status, 202);
+});

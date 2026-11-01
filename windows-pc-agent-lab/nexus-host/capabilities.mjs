@@ -17,6 +17,7 @@ export const DEFAULT_CAPABILITIES = Object.freeze({
   run_task: false,           // run_task/task_status/task_cancel — DANGEROUS
   browser: false,            // browser_* (separate Edge profile) — DANGEROUS
   live_view: false,          // 0.5.0: live screen stream (watch_nexus widget, gateway /live) — shows everything on screen
+  grantsFromChat: true,      // 0.5.1: owner switch — may set_capability RAISE a grant from chat? (lowering is always allowed)
   inputApps: ['Notepad', 'CalculatorApp'],
   launchApps: {},            // 0.5.0: owner-approved launchable apps {name: absolute exe path}; added via manage_app_access
   tasks: {},
@@ -38,7 +39,7 @@ export const HARD_DENY = Object.freeze([
 const norm = s => String(s).toLowerCase().replace(/\.exe$/i, '');
 export const isHardDenied = name => HARD_DENY.includes(norm(name));
 
-const BOOL_KEYS = ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser', 'live_view'];
+const BOOL_KEYS = ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser', 'live_view', 'grantsFromChat'];
 export const APP_NAME = /^[A-Za-z0-9._-]{1,60}$/;
 export const LAUNCH_NAME = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 const TASK_NAME = /^[a-z0-9][a-z0-9_-]{0,39}$/;
