@@ -145,7 +145,7 @@ test('PC offline: initialize, notifications, ping and tools/list still work (con
   assert.equal((await handleMcp(new Request(BASE + '/mcp', {method: 'POST', body: JSON.stringify({jsonrpc: '2.0', method: 'notifications/initialized'})}), m.env, ctx, {fetcher})).status, 202);
   assert.deepEqual((await (await handleMcp(rpc('ping', 2), m.env, ctx, {fetcher})).json()).result, {});
   const list = await (await handleMcp(rpc('tools/list', 3), m.env, ctx, {fetcher})).json();
-  assert.deepEqual(list.result.tools.map(t => t.name), ['get_status', 'list_dir', 'read_text', 'make_dir', 'write_text', 'open_app']);
+  assert.deepEqual(list.result.tools.map(t => t.name), ['get_status', 'list_dir', 'read_text', 'make_dir', 'write_text', 'open_app', 'list_windows']);
   assert.equal(forwarded, 0, 'nothing forwarded to the PC');
   assert.equal((await (await handleMcp(rpc('resources/list', 4), m.env, ctx)).json()).error.code, -32601);
   assert.equal((await (await handleMcp(rpc('tools/call', 5, {name: 'run_shell', arguments: {}}), m.env, ctx)).json()).error.message, 'unknown_tool');
