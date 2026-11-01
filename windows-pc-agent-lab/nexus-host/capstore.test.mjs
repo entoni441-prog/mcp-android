@@ -98,7 +98,7 @@ test('end to end over HTTP: keyboard refused → set_capability → allowed path
     const on = await call('set_capability', {capability: 'gui_input', enabled: true});
     assert.equal(on.isError, false); assert.equal(on.structuredContent.enabled, true);
     // Same running Host, no restart: the capability gate now passes (fails later only because this test runs on Linux).
-    assert.match((await call('keyboard_action', {keys: 'enter'})).content[0].text, /windows_only|focus_not_allowed/); // gate passed; Linux stops at platform, Windows at the real focus check
+    assert.doesNotMatch((await call('mouse_action', {action: 'move', x: 1, y: 1})).content[0].text, /capability_disabled/); // gate passed (what follows depends on the desktop; `move` never clicks or types)
     assert.equal((await call('set_capability', {capability: 'browser', enabled: true})).isError, true);
     assert.equal((await call('set_capability', {capability: 'gui_input', enabled: true, extra: 1})).isError, true);
     await call('set_capability', {capability: 'gui_input', enabled: false});
