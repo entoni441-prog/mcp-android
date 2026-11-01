@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {loadConfig, createServer} from './server.mjs';
+import {loadConfig, createServer, printCapabilities} from './server.mjs';
 
 const TUNNEL_RE = /https:\/\/[a-z0-9-]{3,80}\.trycloudflare\.com/;
 
@@ -48,6 +48,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const server = createServer(cfg);
   await new Promise(r => server.listen(cfg.port, '127.0.0.1', r));
   console.log(`NEXUS Host — ACTIVE on 127.0.0.1:${cfg.port}`);
+  printCapabilities(cfg);
 
   const tunnel = spawn(exe, ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${cfg.port}`], {stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true});
   let registered = false, stopping = false;
@@ -68,7 +69,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (stopping) return; stopping = true;
     console.log('Stopping: unregistering tunnel…');
     try { await registerTunnel(gateway, cfg.token, null, {method: 'DELETE'}); } catch { /* best effort */ }
-    tunnel.kill(); server.close();
+    tunnel.kill(); server.close(); cfg.runtime?.stop();
     setTimeout(() => process.exit(code), 500).unref();
   }
   process.on('SIGINT', () => stop(0)); process.on('SIGTERM', () => stop(0));

@@ -111,3 +111,4 @@ export async function executeJob(action,args,{workspace,platform=process.platfor
     }
   }
 }
+export {safePath, requireRoot, targetPath};

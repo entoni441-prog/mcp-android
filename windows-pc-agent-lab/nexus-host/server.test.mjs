@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {loadConfig, createServer} from './server.mjs';
+import {TOOLS} from './catalog.mjs';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-'));
 const cfg = loadConfig({NEXUS_HOME: path.join(tmp, 'home'), NEXUS_WORKSPACE: path.join(tmp, 'ws'), NEXUS_PORT: '0'});
@@ -39,7 +40,9 @@ test('MCP handshake and tool discovery', async () => {
   assert.equal(init.body.result.serverInfo.name, 'nexus-host');
   assert.equal((await rpc(null, {jsonrpc: '2.0', method: 'notifications/initialized'})).status, 202);
   const tools = (await rpc('tools/list', {})).body.result.tools.map(t => t.name);
-  assert.deepEqual(tools, ['get_status', 'list_dir', 'read_text', 'make_dir', 'write_text', 'open_app', 'list_windows']);
+  assert.deepEqual(tools, TOOLS.map(t => t.name));
+  assert.equal(tools.length, 25);
+  assert.equal(init.body.result.serverInfo.version, '0.4.0');
 });
 
 test('workspace file round-trip with optimistic sha', async () => {

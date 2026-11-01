@@ -18,10 +18,13 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {executeJob} from '../v3/actions.mjs';
-import {listWindows, LIST_WINDOWS_TOOL} from './windows.mjs';
-
-const VERSION = '0.3.0';
-const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
+import {listWindows} from './windows.mjs';
+import {TOOLS, VERSION, PROTOCOL_VERSIONS} from './catalog.mjs';
+import {loadCapabilities, validateCapabilities, DEFAULT_CAPABILITIES} from './capabilities.mjs';
+import {createGui} from './gui.mjs';
+import {createProcs} from './procs.mjs';
+import {createBrowser} from './browser.mjs';
+import {searchFiles, fileAction} from './files.mjs';
 const MAX_BODY = 64 * 1024;
 
 export function loadConfig(env = process.env) {
@@ -47,8 +50,11 @@ export function loadConfig(env = process.env) {
     }
     access = {teamDomain: a.teamDomain, aud: a.aud, allowedEmails: a.allowedEmails.map(e => e.toLowerCase())};
   }
+  const {file: capabilitiesFile, caps} = env.NEXUS_CAPABILITIES_JSON
+    ? {file: null, caps: validateCapabilities(JSON.parse(env.NEXUS_CAPABILITIES_JSON))}
+    : loadCapabilities(home);
   return {
-    home, token, tokenFile, access,
+    home, token, tokenFile, access, caps, capabilitiesFile,
     port: Number(env.NEXUS_PORT || 8765),
     workspace: env.NEXUS_WORKSPACE || path.join(os.homedir(), 'NEXUS-workspace'),
     auditFile: path.join(home, 'audit.log'),
@@ -56,16 +62,40 @@ export function loadConfig(env = process.env) {
   };
 }
 
-const str = (description) => ({type: 'string', description});
-const TOOLS = [
-  {name: 'get_status', description: 'Host status: OS, uptime, memory.', inputSchema: {type: 'object', properties: {}, additionalProperties: false}, annotations: {readOnlyHint: true}},
-  {name: 'list_dir', description: 'List a folder inside the NEXUS workspace. path="" is the workspace root; use "/" separators.', inputSchema: {type: 'object', properties: {path: str('Relative path')}, required: ['path'], additionalProperties: false}, annotations: {readOnlyHint: true}},
-  {name: 'read_text', description: 'Read a small UTF-8 text file (≤8 KiB) inside the workspace. Returns text and sha256.', inputSchema: {type: 'object', properties: {path: str('Relative path')}, required: ['path'], additionalProperties: false}, annotations: {readOnlyHint: true}},
-  {name: 'make_dir', description: 'Create one folder inside the workspace.', inputSchema: {type: 'object', properties: {path: str('Relative path')}, required: ['path'], additionalProperties: false}},
-  {name: 'write_text', description: 'Create (expectedSha256=null) or replace (expectedSha256=current sha256) a small text file inside the workspace.', inputSchema: {type: 'object', properties: {path: str('Relative path'), content: str('UTF-8 text ≤8 KiB'), expectedSha256: {type: ['string', 'null']}}, required: ['path', 'content', 'expectedSha256'], additionalProperties: false}},
-  {name: 'open_app', description: 'Open an allowlisted Windows app on the owner\'s desktop.', inputSchema: {type: 'object', properties: {app: {type: 'string', enum: ['notepad', 'calculator']}}, required: ['app'], additionalProperties: false}},
-  LIST_WINDOWS_TOOL,
-];
+
+/** One runtime per host process: Java daemon, browser, task table. Tests inject fakes via deps.runtime. */
+export function createRuntime(cfg, deps = {}) {
+  const caps = cfg.caps || validateCapabilities(DEFAULT_CAPABILITIES);
+  const procs = createProcs({caps, cfg, ...(deps.procsDeps || {})});
+  const gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, ...(deps.guiDeps || {})});
+  const browser = createBrowser({caps, home: cfg.home, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
+  const ws = {workspace: cfg.workspace};
+  const handlers = {
+    image_selftest: a => gui.image_selftest(a), capture_screen: a => gui.capture_screen(a), focus_window: a => gui.focus_window(a),
+    window_info: a => gui.window_info(a), inspect_ui: a => gui.inspect_ui(a), mouse_action: a => gui.mouse_action(a), keyboard_action: a => gui.keyboard_action(a),
+    list_processes: a => procs.list_processes(a), process_action: a => procs.process_action(a), run_task: a => procs.run_task(a),
+    task_status: a => procs.task_status(a), task_cancel: a => procs.task_cancel(a), read_audit_log: a => procs.read_audit_log(a),
+    search_files: a => searchFiles(a, ws), file_action: a => fileAction(a, ws),
+    browser_open: a => browser.browser_open(a), browser_snapshot: a => browser.browser_snapshot(a), browser_action: a => browser.browser_action(a),
+  };
+  return {caps, handlers, gui, procs, browser, stop() { gui.stop(); browser.stop(); procs.stopAll(); }};
+}
+
+export function printCapabilities(cfg) {
+  const c = cfg.caps;
+  const on = ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser'].map(k => `${k}=${c[k] ? 'ON' : 'off'}`).join(' ');
+  console.log(`Capabilities (${cfg.capabilitiesFile || 'env'}): ${on}`);
+  console.log(`Input apps: ${c.inputApps.join(', ') || '-'}; tasks: ${Object.keys(c.tasks).join(', ') || '-'}`);
+  if (process.platform === 'win32') { cfg.runtime ||= createRuntime(cfg); cfg.runtime.gui.warm(); }
+}
+
+/** Audit never stores typed text or file content — only their length. */
+export function auditArgs(args) {
+  if (!args || typeof args !== 'object') return undefined;
+  const out = {};
+  for (const [k, v] of Object.entries(args)) out[k] = (k === 'text' || k === 'content') && typeof v === 'string' ? `<${v.length} chars>` : typeof v === 'string' ? v.slice(0, 200) : v;
+  return out;
+}
 
 function audit(cfg, entry) {
   try { fs.appendFileSync(cfg.auditFile, JSON.stringify({t: new Date().toISOString(), ...entry}) + '\n'); } catch { /* audit must not crash host */ }
@@ -86,7 +116,7 @@ export async function handleRpc(msg, cfg, deps = {}) {
         protocolVersion: PROTOCOL_VERSIONS.includes(requested) ? requested : PROTOCOL_VERSIONS[0],
         capabilities: {tools: {listChanged: false}},
         serverInfo: {name: 'nexus-host', version: VERSION},
-        instructions: 'Owner-approved access to one Windows PC. File tools are confined to the NEXUS workspace folder.',
+        instructions: 'Owner-approved access to one Windows PC. File tools are confined to the NEXUS workspace folder. GUI input, process control, tasks and browser are off unless the owner enabled them in capabilities.json.',
       });
     }
     case 'ping': return rpcResult(id, {});
@@ -96,15 +126,20 @@ export async function handleRpc(msg, cfg, deps = {}) {
       if (!TOOLS.some(t => t.name === name)) return rpcError(id, -32602, 'unknown_tool');
       const started = Date.now();
       try {
-        const {principal: _p, accessVerifier: _v, ...execDeps} = deps;
-        const out = name === 'list_windows'
-          ? await listWindows(args, {tmpDir: path.join(cfg.home, 'tmp'), ...execDeps})
-          : await executeJob(name, args, {workspace: cfg.workspace, ...execDeps});
-        audit(cfg, {by: deps.principal, tool: name, ok: true, ms: Date.now() - started, path: args?.path, app: args?.app, titles: args?.includeTitles});
+        const {principal: _p, accessVerifier: _v, runtime: _r, procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, ...execDeps} = deps;
+        const rt = deps.runtime || (cfg.runtime ||= createRuntime(cfg, deps));
+        let out;
+        if (name === 'list_windows') out = await listWindows(args, {tmpDir: path.join(cfg.home, 'tmp'), ...execDeps});
+        else if (rt.handlers[name]) out = await rt.handlers[name](args);
+        else out = await executeJob(name, args, {workspace: cfg.workspace, ...execDeps});
+        audit(cfg, {by: deps.principal, tool: name, ok: true, ms: Date.now() - started, args: auditArgs(args)});
+        if (out && Array.isArray(out.content) && Object.hasOwn(out, 'structured')) {
+          return rpcResult(id, {content: out.content, structuredContent: out.structured, isError: false});
+        }
         return rpcResult(id, {content: [{type: 'text', text: JSON.stringify(out)}], structuredContent: out, isError: false});
       } catch (e) {
-        const code = /^[a-z_]+$/.test(e?.message) ? e.message : 'internal_error';
-        audit(cfg, {by: deps.principal, tool: name, ok: false, error: code, detail: e?.detail, path: args?.path, app: args?.app});
+        const code = /^[a-z0-9_]+(?:: [\w -]+)?$/.test(e?.message) ? e.message : 'internal_error';
+        audit(cfg, {by: deps.principal, tool: name, ok: false, error: code, detail: e?.detail, args: auditArgs(args)});
         return rpcResult(id, {content: [{type: 'text', text: `error: ${code}`}], isError: true});
       }
     }
@@ -201,7 +236,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.log(`Token file: ${cfg.tokenFile}  (never paste it into chats)`);
     console.log('Close this window or press Ctrl+C to STOP all access.');
     audit(cfg, {event: 'start', version: VERSION});
+    printCapabilities(cfg);
   });
-  const stop = () => { audit(cfg, {event: 'stop'}); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 1000).unref(); };
+  const stop = () => { audit(cfg, {event: 'stop'}); cfg.runtime?.stop(); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 1000).unref(); };
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
 }
