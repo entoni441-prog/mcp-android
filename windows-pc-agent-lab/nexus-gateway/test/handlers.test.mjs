@@ -137,3 +137,12 @@ test('PC offline: initialize, notifications, ping and tools/list still work (con
   assert.equal((await (await handleMcp(rpc('tools/call', 5, {name: 'run_shell', arguments: {}}), m.env, ctx)).json()).error.message, 'unknown_tool');
   assert.equal((await handleMcp(new Request(BASE + '/mcp', {method: 'POST', body: '{bad'}), m.env, ctx)).status, 400);
 });
+
+test('consent page CSP allows the OAuth client redirect origin (else browsers block the 302 back)', async () => {
+  const {env: e} = makeEnv(); const env = await withPass(e);
+  const r = await handleDefault(new Request(BASE + '/authorize'), env);
+  const policy = r.headers.get('content-security-policy');
+  assert.match(policy, /form-action 'self' https:\/\/chatgpt\.com;/);
+  const bad = {...env, OAUTH_PROVIDER: {...env.OAUTH_PROVIDER, parseAuthRequest: async () => ({clientId: 'chatgpt', redirectUri: 'javascript:alert(1)', scope: []})}};
+  assert.equal((await handleDefault(new Request(BASE + '/authorize'), bad)).status, 400);
+});

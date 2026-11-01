@@ -37,6 +37,13 @@ jobs:
           for i in $(seq 50); do grep -q ready serve.log && break; sleep 0.2; done
           python test/real-client/client.py http://127.0.0.1:8899/mcp | tee client.log
           grep -q REAL_CLIENT_OFFLINE_PASS client.log
+      - name: Real browser (headless Chromium) — consent form POST must reach the client callback
+        run: |
+          pip install -q playwright && python -m playwright install --with-deps chromium > /dev/null
+          node test/browser/serve.mjs 8901 8902 > br.log 2>&1 &
+          for i in $(seq 50); do grep -q ready br.log && break; sleep 0.2; done
+          python test/browser/consent.py http://localhost:8901 | tee browser.log
+          grep -q BROWSER_CONSENT_PASS browser.log
       - name: Bundle Worker with real workers-oauth-provider (dry run, no deploy, no credentials)
         run: npx wrangler deploy --dry-run --outdir dist
       - run: ls -la dist && grep -c "ConsentGuard" dist/index.js
