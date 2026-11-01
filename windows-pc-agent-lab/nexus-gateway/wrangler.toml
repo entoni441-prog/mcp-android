@@ -3,11 +3,13 @@ main = "src/index.mjs"
 compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
+# Only the main workers.dev URL; no per-version preview hosts (smaller attack surface).
+preview_urls = false
 
-# Create once:  npx wrangler kv namespace create OAUTH_KV  → paste the id below.
+# OAUTH_KV created 2026-11-01 (id is not a secret).
 [[kv_namespaces]]
 binding = "OAUTH_KV"
-id = "REPLACE_WITH_KV_ID"
+id = "3fe292be3db4422d9c41447fe7788e7e"
 
 # Atomic consent guard (lockout + single-use nonce). SQLite-backed DO — available on Workers Free.
 [[durable_objects.bindings]]
