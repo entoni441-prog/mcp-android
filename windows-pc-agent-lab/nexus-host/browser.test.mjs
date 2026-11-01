@@ -112,3 +112,56 @@ test('real browser: redirects, DNS names and page JS cannot reach private addres
     assert.ok(st.denied >= 4 && st.allowed >= 1);
   } finally { b.stop(); site.close(); secret.close(); }
 });
+
+// 0.5.0: tabs, wait-for-text, select, and owner consent before irreversible/financial/outgoing clicks.
+const PAGE050 = `<!doctype html><title>Shop</title><h1 id=h>shop</h1>
+<select id=s aria-label="Size"><option value=s>Small</option><option value=l>Large</option></select>
+<button onclick="setTimeout(()=>document.getElementById('h').textContent='loaded later',400)">Load</button>
+<button onclick="document.getElementById('h').textContent='PAID'">Оплатить заказ</button>
+<form onsubmit="document.getElementById('h').textContent='SENT';return false"><input aria-label="Message" id=m><button type=submit>Send</button></form>`;
+
+test('real browser 0.5.0: tabs, wait, select, consent before pay/send', {skip: !exe && 'no browser'}, async () => {
+  const srv = http.createServer((req, res) => { res.setHeader('content-type', 'text/html; charset=utf-8'); res.end(req.url === '/b' ? '<title>B</title><p>bee</p>' : PAGE050); });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-br5-'));
+  const {createConsent} = await import('./consent.mjs');
+  const consent = createConsent();
+  const b = createBrowser({caps: validateCapabilities({browser: true}), home, consent, browserPath: exe, headless: true, allowPrivate: true, proxyOptions: {ports: [srv.address().port]}});
+  try {
+    await b.browser_open({url: base + '/'});
+    let s = await b.browser_snapshot({});
+    const ref = n => s.elements.find(e => e.name === n)?.ref;
+    await b.browser_action({action: 'select', ref: ref('Size'), value: 'Large'});
+    await assert.rejects(b.browser_action({action: 'select', ref: ref('Size'), value: 'XXL'}), /no_option/);
+    await b.browser_action({action: 'click', ref: ref('Load')});
+    const w = await b.browser_action({action: 'wait', text: 'loaded later', timeoutMs: 5000});
+    assert.equal(w.found, true);
+    // pay button → consent_required, nothing happens until allow
+    const r = await b.browser_action({action: 'click', ref: ref('Оплатить заказ')});
+    assert.equal(r.status, 'consent_required'); assert.equal(r.kind, 'grant');
+    assert.match(r.target, /Оплатить заказ/);
+    assert.doesNotMatch((await b.browser_snapshot({})).text, /PAID/);
+    const p = consent.take(r.consentId, 'allow', r.target);
+    await p.apply();
+    assert.match((await b.browser_snapshot({})).text, /PAID/);
+    // Enter in a form whose submit button says "Send" → consent too
+    s = await b.browser_snapshot({});
+    await b.browser_action({action: 'type', ref: ref('Message'), text: 'hi'});
+    const e = await b.browser_action({action: 'press', key: 'Enter'});
+    assert.equal(e.status, 'consent_required');
+    assert.doesNotMatch((await b.browser_snapshot({})).text, /SENT/);
+    // tabs
+    const t0 = await b.browser_tabs({action: 'list'});
+    assert.equal(t0.tabs.length, 1);
+    const t1 = await b.browser_tabs({action: 'new', url: base + '/b'});
+    assert.equal(t1.tabs.length, 2); assert.equal(t1.tabs.find(t => t.current).title, 'B');
+    const first = t1.tabs.find(t => !t.current).id;
+    await b.browser_tabs({action: 'switch', id: first});
+    assert.equal((await b.browser_snapshot({})).title, 'Shop');
+    const t2 = await b.browser_tabs({action: 'close', id: t1.tabs.find(t => t.title === 'B').id});
+    assert.equal(t2.tabs.length, 1);
+    await assert.rejects(b.browser_tabs({action: 'new', url: 'file:///etc/passwd'}), /url_not_allowed/);
+    await assert.rejects(b.browser_tabs({action: 'switch', id: 'zz'}), /invalid_args/);
+  } finally { b.stop(); srv.close(); }
+});

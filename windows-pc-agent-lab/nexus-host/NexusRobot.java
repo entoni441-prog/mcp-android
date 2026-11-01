@@ -18,6 +18,10 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageWriter;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.IIOImage;
+import javax.imageio.stream.ImageOutputStream;
 
 public class NexusRobot {
   static Robot robot;
@@ -85,6 +89,49 @@ public class NexusRobot {
         ImageIO.write(outImg, "png", new File(file));
         return String.format(Locale.ROOT, "{\"screenW\":%d,\"screenH\":%d,\"imageW\":%d,\"imageH\":%d,\"colours\":%d,\"ms\":%d}",
           b.width, b.height, outImg.getWidth(), outImg.getHeight(), colours.size(), (System.nanoTime() - t) / 1_000_000);
+      }
+      case "frame": {
+        // 0.5.0 Live View: JPEG of the primary screen with the mouse cursor drawn in (Robot does not capture it).
+        // frame <maxW> <quality 10..95> <base64 file>
+        if (p.length != 4) throw new IllegalArgumentException("invalid_args");
+        int maxW = num(p[1], 200, 4000);
+        int q = num(p[2], 10, 95);
+        String file = new String(Base64.getDecoder().decode(p[3]), StandardCharsets.UTF_8);
+        Rectangle b = primary();
+        long t = System.nanoTime();
+        BufferedImage img = robot.createScreenCapture(b);
+        int w = img.getWidth(), h = img.getHeight();
+        int ow = Math.min(w, maxW), oh = (int) Math.round(h * (ow / (double) w));
+        BufferedImage outImg = new BufferedImage(ow, oh, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = outImg.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.drawImage(img, 0, 0, ow, oh, null);
+        int cx = -1, cy = -1;
+        PointerInfo pi = MouseInfo.getPointerInfo();
+        if (pi != null) {
+          Point pt = pi.getLocation();
+          if (b.contains(pt)) {
+            cx = pt.x; cy = pt.y;
+            double s = ow / (double) w;
+            int x = (int) Math.round((pt.x - b.x) * s), y = (int) Math.round((pt.y - b.y) * s);
+            int[] xs = {x, x, x + 4, x + 7, x + 9, x + 6, x + 11};
+            int[] ys = {y, y + 16, y + 12, y + 18, y + 17, y + 11, y + 11};
+            g.setColor(Color.WHITE); g.fillPolygon(xs, ys, xs.length);
+            g.setColor(Color.BLACK); g.setStroke(new BasicStroke(1.2f)); g.drawPolygon(xs, ys, xs.length);
+            g.setColor(new Color(255, 60, 60, 160)); g.setStroke(new BasicStroke(2f)); g.drawOval(x - 9, y - 9, 18, 18);
+          }
+        }
+        g.dispose();
+        ImageWriter wr = ImageIO.getImageWritersByFormatName("jpg").next();
+        ImageWriteParam prm = wr.getDefaultWriteParam();
+        prm.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+        prm.setCompressionQuality(q / 100f);
+        try (ImageOutputStream ios = ImageIO.createImageOutputStream(new File(file))) {
+          wr.setOutput(ios); wr.write(null, new IIOImage(outImg, null, null), prm);
+        } finally { wr.dispose(); }
+        return String.format(Locale.ROOT, "{\"screenW\":%d,\"screenH\":%d,\"imageW\":%d,\"imageH\":%d,\"cursorX\":%d,\"cursorY\":%d,\"ms\":%d}",
+          b.width, b.height, ow, oh, cx, cy, (System.nanoTime() - t) / 1_000_000);
       }
       case "move": {
         int x = num(p[1], -100000, 100000), y = num(p[2], -100000, 100000);

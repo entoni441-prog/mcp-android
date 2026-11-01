@@ -9,7 +9,8 @@ import {TOOLS} from './catalog.mjs';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-'));
 const cfg = loadConfig({NEXUS_HOME: path.join(tmp, 'home'), NEXUS_WORKSPACE: path.join(tmp, 'ws'), NEXUS_PORT: '0'});
 const launched = [];
-const fakeLauncher = (exe) => { launched.push(exe); const h = {}; return {once: (ev, fn) => { if (ev === 'spawn') setImmediate(fn); return h; }, unref() {}}; };
+const launchedArgs = [];
+const fakeLauncher = (exe, args = []) => { launched.push(exe); launchedArgs.push(args); const h = {}; return {once: (ev, fn) => { if (ev === 'spawn') setImmediate(fn); return h; }, unref() {}}; };
 const server = createServer(cfg, {platform: 'win32', systemRoot: 'C:\\Windows', launcher: fakeLauncher});
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${server.address().port}/mcp`;
@@ -41,8 +42,8 @@ test('MCP handshake and tool discovery', async () => {
   assert.equal((await rpc(null, {jsonrpc: '2.0', method: 'notifications/initialized'})).status, 202);
   const tools = (await rpc('tools/list', {})).body.result.tools.map(t => t.name);
   assert.deepEqual(tools, TOOLS.map(t => t.name));
-  assert.equal(tools.length, 29);
-  assert.equal(init.body.result.serverInfo.version, '0.4.2');
+  assert.equal(tools.length, 35);
+  assert.equal(init.body.result.serverInfo.version, '0.5.0');
 });
 
 test('workspace file round-trip with optimistic sha', async () => {
@@ -71,9 +72,15 @@ test('list_windows is refused off-Windows and rejects unknown args', async () =>
   assert.equal((await call('list_windows', {cmd: 'whoami'})).isError, true);
 })
 
-test('open_app resolves absolute System32 path only', async () => {
-  assert.equal((await call('open_app', {app: 'notepad'})).isError, false);
+test('open_app resolves absolute System32 path only; notepad gets a NEW scratch file, never an owner file', async () => {
+  const r = await call('open_app', {app: 'notepad'});
+  assert.equal(r.isError, false);
   assert.equal(launched.at(-1), 'C:\\Windows\\System32\\notepad.exe');
+  assert.match(launchedArgs.at(-1)[0], /[\\/]\.nexus-scratch[\\/]NEXUS-[0-9a-f]{6}\.txt$/);
+  assert.equal(fs.readFileSync(launchedArgs.at(-1)[0], 'utf8'), '');
+  assert.match(r.structuredContent.scratchFile, /^\.nexus-scratch\/NEXUS-[0-9a-f]{6}\.txt$/);
+  assert.equal((await call('open_app', {app: 'cmd'})).isError, true); // not granted
+  assert.equal((await call('open_app', {app: '../x'})).isError, true);
 });
 
 test('malformed input and oversized body', async () => {

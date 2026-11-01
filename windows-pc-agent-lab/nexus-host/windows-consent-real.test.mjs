@@ -109,3 +109,36 @@ test('Windows: closing a window NEXUS did not open needs consent; own window clo
     gui.stop();
   }
 });
+
+// 0.5.0: open_app notepad opens a NEW scratch document; ownership is bound to its unique token, so a pre-existing
+// owner Notepad window is never owned, and the scratch window closes autonomously.
+test('Windows 0.5.0: open_app scratch document is owned by token; owner window is not', {skip: !RUN && 'win32 + NEXUS_REAL_GUI=1 only', timeout: 300_000}, async () => {
+  const {createApps} = await import('./apps.mjs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-scratch-real-'));
+  const consent = createConsent();
+  const caps = validateCapabilities({gui_input: true});
+  const gui = createGui({caps, home, workspace: path.join(home, 'ws'), platform: 'win32', consent});
+  const apps = createApps({caps, store: null, consent, gui, workspace: path.join(home, 'ws'), platform: 'win32'});
+  const known = new Set((await listWindows({}, {tmpDir: home})).windows.map(w => w.pid));
+  const owner = await newNotepad(home, known);
+  const pids = [owner];
+  try {
+    const r = await apps.open_app({app: 'notepad'});
+    console.log('open_app scratch', JSON.stringify(r));
+    const token = r.scratchFile.match(/NEXUS-[0-9a-f]{6}/)[0];
+    const owned = [...r.createdByNexus.windows, ...r.createdByNexus.tabs];
+    assert.ok(owned.length >= 1 && owned.every(n => n.includes(token)), 'only names with the token are owned');
+    const mine = (await listWindows({includeTitles: true}, {tmpDir: home})).windows.find(w => /^notepad$/i.test(w.process) && (w.title || '').includes(token));
+    assert.ok(mine, 'scratch window visible'); pids.push(mine.pid);
+    // owner window: close needs consent
+    await gui.focus_window({pid: owner});
+    assert.equal((await gui.keyboard_action({keys: 'alt+f4'})).status, 'consent_required');
+    // scratch window: autonomous
+    await gui.focus_window({pid: mine.pid});
+    const k = await gui.keyboard_action({keys: 'ctrl+w'});
+    console.log('scratch ctrl+w', JSON.stringify(k));
+    assert.notEqual(k.status, 'consent_required');
+  } finally {
+    for (const p of pids) spawnSync(path.join(process.env.SystemRoot, 'System32', 'taskkill.exe'), ['/PID', String(p), '/F']);
+  }
+});

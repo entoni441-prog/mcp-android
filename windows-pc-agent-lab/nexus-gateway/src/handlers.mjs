@@ -6,7 +6,9 @@
  * Bindings: OAUTH_KV (KV: OAuth library + tunnel URL), CONSENT_GUARD (Durable Object: atomic lockout + single-use consent).
  * OAUTH_PROVIDER is injected by workers-oauth-provider.
  */
-import {TOOLS, PROTOCOL_VERSIONS, SERVER_INFO} from './catalog.mjs';
+import {TOOLS, PROTOCOL_VERSIONS, SERVER_INFO, LIVE_UI} from './catalog.mjs';
+import {WIDGET_RESOURCE, widgetContents} from './widget.mjs';
+import {handleLive} from './live-page.mjs';
 
 const enc = new TextEncoder();
 // `wrangler secret put` fed from a PowerShell pipe may append CR/LF — normalise once.
@@ -44,10 +46,11 @@ const page = (title, body, status = 200, headers = HTML_HEADERS) => new Response
   `<body style="font-family:system-ui;max-width:520px;margin:40px auto;padding:0 16px">${body}</body></html>`, {status, headers});
 
 /** OAuth defaultHandler: /authorize consent with owner passphrase, /tunnel registration, /health. */
-export async function handleDefault(request, env) {
+export async function handleDefault(request, env, {fetcher = fetch} = {}) {
   const url = new URL(request.url);
   if (url.pathname === '/health') return json(200, {ok: true, service: 'nexus-gateway'});
   if (url.pathname === '/tunnel') return handleTunnel(request, env);
+  if (url.pathname === '/live' || url.pathname.startsWith('/live/')) return handleLive(request, env, {sha256hex, callHost: (name, args) => callHost(env, name, args, {fetcher})});
   if (url.pathname !== '/authorize') return new Response('Not found', {status: 404});
   const expected = secret(env.OWNER_PASSPHRASE_SHA256 || '').toLowerCase();
   if (!env.OAUTH_PROVIDER || !env.CONSENT_GUARD || !/^[a-f0-9]{64}$/.test(expected)) return new Response('Gateway not configured', {status: 503});
@@ -78,7 +81,7 @@ export async function handleDefault(request, env) {
   if (r.status === 'invalid') return page('Ошибка', '<p>Сессия истекла или уже использована. Начни подключение заново.</p>', 400);
   if (r.status === 'denied') return page('Отклонено', '<p>Доступ не выдан.</p>', 403);
   if (r.status === 'bad_passphrase') return page('Ошибка', `<p>Неверный пароль. Осталось попыток: ${r.remaining}.</p>`, 403);
-  if (r.status !== 'ok') return page('Ошибка', '<p>Отказ.</p>', 403);
+  if (r.status !== 'ok' || r.auth?.kind === 'live_login') return page('Ошибка', '<p>Отказ.</p>', 403);
   const auth = r.auth;
   const {redirectTo} = await env.OAUTH_PROVIDER.completeAuthorization({
     request: auth, userId: 'owner', scope: auth.scope || [], props: {owner: true}, metadata: {label: 'NEXUS owner'},
@@ -126,47 +129,106 @@ export async function handleMcp(request, env, ctx, {fetcher = fetch} = {}) {
   const {id, method, params = {}} = msg;
   if (method === 'initialize') {
     const v = PROTOCOL_VERSIONS.includes(params?.protocolVersion) ? params.protocolVersion : PROTOCOL_VERSIONS[0];
-    return rpcOk(id, {protocolVersion: v, capabilities: {tools: {listChanged: false}}, serverInfo: SERVER_INFO,
+    return rpcOk(id, {protocolVersion: v, capabilities: {tools: {listChanged: false}, resources: {listChanged: false}, extensions: {'io.modelcontextprotocol/ui': {}}}, serverInfo: SERVER_INFO,
       instructions: 'Owner-approved access to one Windows PC via NEXUS Host. If a tool returns pc_offline, the PC is not connected.'});
   }
   if (method === 'ping') return rpcOk(id, {});
   if (method === 'tools/list') return rpcOk(id, {tools: TOOLS});
+  // 0.5.0 MCP Apps: the Live View widget template is static and served by the gateway (works while the PC is offline).
+  if (method === 'resources/list') return rpcOk(id, {resources: [WIDGET_RESOURCE]});
+  if (method === 'resources/templates/list') return rpcOk(id, {resourceTemplates: []});
+  if (method === 'resources/read') return params?.uri === LIVE_UI ? rpcOk(id, {contents: widgetContents()}) : rpcErr(id, -32002, 'resource_not_found');
   if (method !== 'tools/call') return rpcErr(id, -32601, 'method_not_found');
   if (!TOOLS.some(t => t.name === params?.name)) return rpcErr(id, -32602, 'unknown_tool');
 
-  // 0.4.2: every "PC not reachable" answer carries a reason code (no secrets, no tunnel URL) for pc_offline diagnosis;
-  // also printed to the Worker log (visible in `wrangler tail`).
+  const trace = newTrace();
+  if (params?.name === 'connection_status') return rpcOk(id, await connectionStatus(env, {fetcher, trace}));
+  const r = await callHost(env, params.name, params.arguments ?? {}, {fetcher, trace, body});
+  if (!r.ok) return rpcOk(id, {content: [{type: 'text', text: r.text}], isError: true});
+  return new Response(r.raw, {status: 200, headers: {'content-type': 'application/json', 'cache-control': 'no-store'}});
+}
+
+const newTrace = () => { const b = new Uint8Array(8); crypto.getRandomValues(b); return hex(b); };
+const READ_ONLY = new Set(TOOLS.filter(t => t.annotations?.readOnlyHint === true).map(t => t.name));
+
+/**
+ * Forward one tools/call to the PC. Returns {ok:true, result, raw} or {ok:false, reason, text}.
+ * 0.4.2 rules kept: pc_timeout is distinct from pc_offline (the action may have run — never auto-repeated);
+ * exactly one retry, only for read-only tools, only on network error / edge 502-504/530.
+ * 0.5.0: trace id (X-Nexus-Trace) correlates gateway log, PC audit log and the error text.
+ */
+export async function callHost(env, name, args, {fetcher = fetch, trace = newTrace(), body = null} = {}) {
   const offline = reason => {
-    console.log(JSON.stringify({nexus: 'pc_offline', reason, tool: params?.name}));
-    return rpcOk(id, {content: [{type: 'text', text: `${OFFLINE_TEXT} [reason: ${reason}]`}], isError: true});
+    console.log(JSON.stringify({nexus: 'pc_offline', reason, tool: name, trace}));
+    return {ok: false, reason: 'pc_offline:' + reason, text: `${OFFLINE_TEXT} [reason: ${reason}] [trace: ${trace}] Call connection_status for a diagnosis.`};
   };
   const raw = await env.OAUTH_KV.get('tunnel');
   if (!raw) return offline('no_tunnel_registered');
-  const {url, registeredAt} = JSON.parse(raw);
+  let reg; try { reg = JSON.parse(raw); } catch { return offline('bad_tunnel_record'); }
+  const {url, registeredAt} = reg;
   if (!TUNNEL_RE.test(url)) return offline('bad_tunnel_url');
-  const readOnly = TOOLS.find(t => t.name === params?.name)?.annotations?.readOnlyHint === true;
+  const payload = body ?? JSON.stringify({jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name, arguments: args}});
   const forward = () => fetcher(url + '/mcp', {
-    method: 'POST', body,
-    headers: {'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer ' + secret(env.NEXUS_TOKEN)},
+    method: 'POST', body: payload,
+    headers: {'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer ' + secret(env.NEXUS_TOKEN), 'x-nexus-trace': trace},
     signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
   });
+  const readOnly = READ_ONLY.has(name);
   let r;
   for (let attempt = 1; ; attempt++) {
     try { r = await forward(); }
     catch (e) {
       if (e?.name === 'TimeoutError') {
-        console.log(JSON.stringify({nexus: 'pc_timeout', tool: params?.name}));
-        return rpcOk(id, {content: [{type: 'text', text: `pc_timeout: NEXUS Host did not answer within ${TOOL_TIMEOUT_MS / 1000} s. The action may still have run — check before repeating. [tool: ${params?.name}]`}], isError: true});
+        console.log(JSON.stringify({nexus: 'pc_timeout', tool: name, trace}));
+        return {ok: false, reason: 'pc_timeout', text: `pc_timeout: NEXUS Host did not answer within ${TOOL_TIMEOUT_MS / 1000} s. The action may still have run — check before repeating. [tool: ${name}] [trace: ${trace}]`};
       }
       if (readOnly && attempt === 1) { await new Promise(res => setTimeout(res, 1500)); continue; } // safe to repeat
       return offline('tunnel_unreachable');
     }
-    // 530/502/504 from Cloudflare edge = tunnel down/reconnecting; a read-only call may be retried once.
     if ([502, 503, 504, 530].includes(r.status) && readOnly && attempt === 1) { await new Promise(res => setTimeout(res, 1500)); continue; }
     break;
   }
   if (r.status === 530 || r.status === 502 || r.status === 503 || r.status === 504) return offline(`edge_${r.status}${registeredAt ? '_registered_' + Math.round((Date.now() - registeredAt) / 1000) + 's_ago' : ''}`);
   if (r.status >= 500) return offline(`host_${r.status}`);
   if (r.status === 404) return offline('host_404');
-  return new Response(await r.text(), {status: r.status, headers: {'content-type': r.headers.get('content-type') || 'application/json', 'cache-control': 'no-store'}});
+  if (r.status === 401) return offline('host_401_token_mismatch');
+  const text = await r.text();
+  let msg = null; try { msg = JSON.parse(text); } catch { /* passthrough */ }
+  return {ok: true, raw: text, result: msg?.result ?? null};
 }
+
+/**
+ * 0.5.0 connection_status — answered by the gateway itself (works while the PC is offline): registration record,
+ * unauthenticated tunnel probe (/healthz), then the host's own tunnel-event verdict when reachable.
+ */
+export async function connectionStatus(env, {fetcher = fetch, trace = newTrace()} = {}) {
+  const out = {gateway: 'ok', trace, checkedAt: new Date().toISOString()};
+  const raw = await env.OAUTH_KV.get('tunnel');
+  if (!raw) return result({...out, registration: null, verdict: 'pc_not_connected', recovery: 'Start NEXUS Host on the PC (Task Scheduler entry) and wait for «Tunnel registered».'});
+  let reg; try { reg = JSON.parse(raw); } catch { reg = {}; }
+  const age = reg.registeredAt ? Math.round((Date.now() - reg.registeredAt) / 1000) : null;
+  out.registration = {ageSec: age, stale: age !== null && age > 25 * 60};
+  if (!TUNNEL_RE.test(reg.url || '')) return result({...out, verdict: 'bad_registration', recovery: 'Restart NEXUS Host on the PC; it re-registers its tunnel.'});
+  let probe;
+  try {
+    const t0 = Date.now();
+    const r = await fetcher(reg.url + '/healthz', {signal: AbortSignal.timeout(6000), headers: {'x-nexus-trace': trace}});
+    probe = {status: r.status, ms: Date.now() - t0};
+  } catch (e) { probe = {status: 0, error: e?.name === 'TimeoutError' ? 'timeout' : 'network'}; }
+  out.tunnelProbe = probe;
+  if (probe.status === 200) {
+    const h = await callHost(env, 'connection_status', {}, {fetcher, trace});
+    const hs = h.ok ? h.result?.structuredContent : null;
+    out.host = hs || {error: h.reason || 'host_error'};
+    const v = hs?.tunnel?.verdict;
+    out.verdict = !h.ok ? 'host_reachable_but_mcp_failed' : v === 'idle_timeouts_recovered' ? 'online_with_recent_reconnects' : v && v !== 'ok' ? v : 'online';
+    out.recovery = out.verdict === 'online' ? 'none' : out.verdict === 'online_with_recent_reconnects' ? 'none needed: cloudflared reconnected by itself; repeat only read-only calls, verify effects before repeating actions.' : 'Restart NEXUS Host on the PC if the problem persists.';
+  } else if (probe.status === 530 || probe.status === 0) {
+    out.verdict = out.registration.stale ? 'pc_offline_stale_registration' : 'tunnel_down_or_reconnecting';
+    out.recovery = out.registration.stale ? 'The PC has not refreshed its tunnel for >25 min: NEXUS Host or the PC is probably off/asleep. Start it on the PC.' : 'Wait 30–60 s and call connection_status again; if still down, restart NEXUS Host on the PC.';
+  } else {
+    out.verdict = `tunnel_http_${probe.status}`; out.recovery = 'Restart NEXUS Host on the PC.';
+  }
+  return result(out);
+}
+const result = o => ({content: [{type: 'text', text: JSON.stringify(o)}], structuredContent: o, isError: false});

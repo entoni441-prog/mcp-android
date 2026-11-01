@@ -30,6 +30,15 @@ test('NexusRobot.java: info, capture, input, defence-in-depth validation', {skip
     await assert.rejects(d.cmd('click 1 1 left 3'), /out_of_range/);
     await assert.rejects(d.cmd('exec calc'), /unknown_command/);
     await assert.rejects(d.cmd('move 1 1\nexec x'), /invalid_args/);
+    // 0.5.0 Live View frame: JPEG with the cursor drawn at the real pointer position
+    const jf = path.join(tmp, 'frm.jpg');
+    const fr = await d.cmd(`frame 480 60 ${Buffer.from(jf).toString('base64')}`);
+    console.log('robot frame', JSON.stringify(fr));
+    const jpg = fs.readFileSync(jf);
+    assert.deepEqual([...jpg.subarray(0, 3)], [0xff, 0xd8, 0xff]);
+    assert.equal(fr.imageW, Math.min(480, info.w));
+    assert.equal(fr.cursorX, cx); assert.equal(fr.cursorY, cy);
+    await assert.rejects(d.cmd(`frame 480 5 ${Buffer.from(jf).toString('base64')}`), /out_of_range/);
     // helper keeps serving after errors
     assert.equal((await d.cmd('info')).w, info.w);
   } finally { d.stop(); }

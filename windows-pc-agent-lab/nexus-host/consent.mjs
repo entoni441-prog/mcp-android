@@ -1,5 +1,5 @@
 /**
- * NEXUS Host 0.4.3 — ownership of windows/tabs and owner consent for closing.
+ * NEXUS Host 0.5.0 — ownership of windows/tabs and owner consent for closing.
  *
  * Principle (owner, 01.11.2026): autonomy by default, consent for risky actions — no blanket ban.
  *  - Windows/tabs/processes created by NEXUS in this Host session are "owned": closing them is autonomous.
@@ -98,16 +98,30 @@ export function createConsent({audit = () => {}, now = () => Date.now()} = {}) {
      *  - a new window without tabs (classic Notepad, Calculator) → owned;
      *  - otherwise at most ONE new tab may be owned; several new tabs at once are ambiguous → nothing is owned.
      */
-    recordCreated(before = [], after = [], source) {
+    recordCreated(before = [], after = [], source, {token = null} = {}) {
       const created = {windows: [], tabs: []};
       const refuse = reason => { created.ownership = 'none'; created.reason = reason;
         audit({event: 'nexus_created_refused', source, reason, windows: (after || []).length}); return created; };
       if (!Array.isArray(before) || !Array.isArray(after)) return refuse('snapshot_failed');
       const prevW = new Set(before.map(w => String(w.hwnd)));
       const prevT = new Set(before.flatMap(w => tabsOf(w).map(t => t.rid)));
-      const cold = before.length === 0;
       const newWins = after.filter(w => !prevW.has(String(w.hwnd)));
       const newTabs = after.flatMap(w => tabsOf(w).filter(t => !prevT.has(t.rid)).map(t => ({w, t})));
+      // 0.5.0: a unique token (NEXUS scratch file name) identifies exactly what NEXUS opened, even on a cold start
+      // with a restored session: only tabs/windows whose NAME contains the token are owned.
+      if (token) {
+        const has = x => typeof x?.name === 'string' && x.name.includes(token);
+        for (const {t} of newTabs) if (has(t)) { owned.tabs.add(t.rid); created.tabs.push(t.name); }
+        for (const w of newWins) {
+          const tabs = tabsOf(w);
+          if (tabs.length ? tabs.every(t => has(t) && !prevT.has(t.rid)) : has(w)) { owned.windows.add(String(w.hwnd)); created.windows.push(w.name); if (w.pid) owned.pids.add(w.pid); }
+        }
+        created.ownership = created.windows.length || created.tabs.length ? 'token' : 'none';
+        if (created.ownership === 'none') return refuse('token_not_found');
+        audit({event: 'nexus_created', source, by: 'token', ...created});
+        return created;
+      }
+      const cold = before.length === 0;
       if (cold && newWins.some(w => tabsOf(w).length)) return refuse('cold_start_session_restore_possible');
       if (newTabs.length > 1) return refuse('multiple_new_tabs_ambiguous');
       for (const w of newWins) {
@@ -144,12 +158,27 @@ export function createConsent({audit = () => {}, now = () => Date.now()} = {}) {
         instruction: `This would close something NEXUS did not open (${target}). Ask the owner in chat. If the owner agrees, call confirm_action with consentId, the owner's decision, and target exactly "${target}". Never decide for the owner.`};
     },
 
+    /**
+     * 0.5.0: consent for a non-close risky action (granting app access, an irreversible browser click…).
+     * `apply` runs only after confirm_action(decision 'allow'). Same single-use / TTL / exact-target rules.
+     */
+    requestGrant({what, target, apply, replay = null}) {
+      if (typeof target !== 'string' || !target || typeof apply !== 'function') throw Error('invalid_args');
+      const id = crypto.randomBytes(6).toString('hex');
+      pending.set(id, {id, c: {kind: 'grant', what}, replay, apply, target, expires: now() + TTL_MS});
+      for (const [k, v] of pending) if (v.expires < now()) pending.delete(k);
+      audit({event: 'consent_required', consentId: id, kind: 'grant', what, target});
+      return {status: 'consent_required', consentId: id, kind: 'grant', what, target, options: ['allow', 'cancel'], expiresInSec: TTL_MS / 1000,
+        instruction: `This needs the owner's permission (${target}). Ask the owner in chat. If the owner agrees, call confirm_action with consentId, decision "allow", and target exactly "${target}". Never decide for the owner.`};
+    },
+
     /** Validate a confirm_action call; returns the pending record (consumed) or throws. */
     take(consentId, decision, target) {
       const p = pending.get(consentId);
       if (!p || p.expires < now()) { pending.delete(consentId); throw Error('consent_expired_or_unknown'); }
       if (target !== p.target) throw Error('consent_target_mismatch');
-      if (!['close_discard', 'close_save', 'cancel'].includes(decision)) throw Error('invalid_args');
+      const ok = p.c.kind === 'grant' ? ['allow', 'cancel'] : ['close_discard', 'close_save', 'cancel'];
+      if (!ok.includes(decision)) throw Error('invalid_args');
       if (p.c.kind === 'discard' && decision === 'close_save') throw Error('invalid_args');
       pending.delete(consentId);
       audit({event: 'consent_decision', consentId, decision, target: p.target});

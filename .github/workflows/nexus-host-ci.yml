@@ -1,7 +1,7 @@
 name: nexus-host-ci
 on:
   push:
-    branches: [experiment/nexus-host-mcp-20261101, experiment/nexus-0.4.0-20261101, experiment/nexus-0.4.1-20261101, experiment/nexus-0.4.2-20261101, experiment/nexus-0.4.3-ownership-20261101]
+    branches: [experiment/nexus-host-mcp-20261101, experiment/nexus-0.4.0-20261101, experiment/nexus-0.4.1-20261101, experiment/nexus-0.4.2-20261101, experiment/nexus-0.4.3-ownership-20261101, experiment/nexus-0.5.0-unified-20261101]
     paths: ['windows-pc-agent-lab/nexus-host/**', 'windows-pc-agent-lab/nexus-gateway/**', 'windows-pc-agent-lab/v3/actions.mjs', '.github/workflows/nexus-host-ci.yml']
   workflow_dispatch:
 permissions:
@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: '17'}
       - name: Unit + integration tests (fake GUI, real files/tasks/HTTP)
-        run: node --test windows-pc-agent-lab/nexus-host/server.test.mjs windows-pc-agent-lab/nexus-host/access.test.mjs windows-pc-agent-lab/nexus-host/e2e-gateway.test.mjs windows-pc-agent-lab/nexus-host/windows.test.mjs windows-pc-agent-lab/nexus-host/gui.test.mjs windows-pc-agent-lab/nexus-host/modules.test.mjs windows-pc-agent-lab/nexus-host/capstore.test.mjs windows-pc-agent-lab/nexus-host/consent.test.mjs windows-pc-agent-lab/nexus-host/server-042.test.mjs
+        run: node --test windows-pc-agent-lab/nexus-host/server.test.mjs windows-pc-agent-lab/nexus-host/access.test.mjs windows-pc-agent-lab/nexus-host/e2e-gateway.test.mjs windows-pc-agent-lab/nexus-host/windows.test.mjs windows-pc-agent-lab/nexus-host/gui.test.mjs windows-pc-agent-lab/nexus-host/modules.test.mjs windows-pc-agent-lab/nexus-host/capstore.test.mjs windows-pc-agent-lab/nexus-host/consent.test.mjs windows-pc-agent-lab/nexus-host/server-042.test.mjs windows-pc-agent-lab/nexus-host/server-050.test.mjs
       - name: Egress proxy + real browser over CDP incl. SSRF/redirect/DNS negatives (Chrome on Linux, Edge on Windows)
         run: node --test --test-reporter=spec windows-pc-agent-lab/nexus-host/egress-proxy.test.mjs windows-pc-agent-lab/nexus-host/browser.test.mjs
       - name: Real Java 17 Robot under Xvfb
@@ -40,7 +40,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: 22}
       - run: npm install --no-audit --no-fund
-      - run: node --test test/handlers.test.mjs test/guard-core.test.mjs test/offline.test.mjs
+      - run: node --test test/handlers.test.mjs test/guard-core.test.mjs test/offline.test.mjs test/live050.test.mjs
       - uses: actions/setup-python@v5
         with: {python-version: '3.13'}
       - name: Real MCP client (official Python SDK) against gateway with PC offline
@@ -60,4 +60,4 @@ jobs:
           grep -q BROWSER_CONSENT_PASS browser.log
       - name: Bundle Worker with real workers-oauth-provider (dry run, no deploy, no credentials)
         run: npx wrangler deploy --dry-run --outdir dist
-      - run: ls -la dist && grep -c "ConsentGuard" dist/index.js
+      - run: ls -la dist && grep -c "ConsentGuard" dist/index.js && grep -c "live-view-v1" dist/index.js

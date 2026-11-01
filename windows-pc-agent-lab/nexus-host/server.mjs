@@ -27,6 +27,8 @@ import {createBrowser} from './browser.mjs';
 import {searchFiles, fileAction} from './files.mjs';
 import {createCapStore} from './capstore.mjs';
 import {createConsent} from './consent.mjs';
+import {createLive} from './live.mjs';
+import {createApps} from './apps.mjs';
 const MAX_BODY = 64 * 1024;
 
 export function loadConfig(env = process.env) {
@@ -67,14 +69,18 @@ export function loadConfig(env = process.env) {
 
 /** One runtime per host process: Java daemon, browser, task table. Tests inject fakes via deps.runtime. */
 export function createRuntime(cfg, deps = {}) {
-  const {procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, principal: _p, accessVerifier: _v, runtime: _r, ...execDeps} = deps;
+  const {procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, appsDeps: _ad, principal: _p, accessVerifier: _v, runtime: _r, trace: _t, ...execDeps} = deps;
   const store = createCapStore({file: cfg.capabilitiesFile || null, initial: cfg.caps || validateCapabilities(DEFAULT_CAPABILITIES), audit: e => audit(cfg, e)});
   store.watch();
   const caps = store.view;
   const consent = createConsent({audit: e => audit(cfg, e)});
   const procs = createProcs({caps, cfg, consent, ...(deps.procsDeps || {})});
   const gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, ...(deps.guiDeps || {})});
-  const browser = createBrowser({caps, home: cfg.home, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
+  const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
+  const live = createLive({caps, store, capture: (w, q) => gui.frameJpeg(w, q), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
+  const apps = createApps({caps, store, consent, gui, workspace: cfg.workspace, execDeps,
+    ...(execDeps.platform ? {platform: execDeps.platform} : {}), ...(execDeps.systemRoot ? {systemRoot: execDeps.systemRoot} : {}),
+    ...(execDeps.launcher ? {launcher: execDeps.launcher} : {}), ...(deps.appsDeps || {})});
   const ws = {workspace: cfg.workspace};
   const handlers = {
     image_selftest: a => gui.image_selftest(a), capture_screen: a => gui.capture_screen(a), focus_window: a => gui.focus_window(a),
@@ -87,38 +93,33 @@ export function createRuntime(cfg, deps = {}) {
           typeof a.consentId !== 'string' || typeof a.target !== 'string') throw Error('invalid_args');
       const p = consent.take(a.consentId, a.decision, a.target);
       if (a.decision === 'cancel') return {cancelled: true, target: p.target};
+      if (p.c.kind === 'grant') return {confirmed: true, decision: 'allow', target: p.target, result: await p.apply()};
       const opts = {consented: p, decision: a.decision};
       const out = p.replay.tool === 'process_action' ? await procs.process_action(p.replay.args, opts) : await gui[p.replay.tool](p.replay.args, opts);
       return {confirmed: true, decision: a.decision, target: p.target, result: out,
         next: a.decision === 'close_discard' ? 'If a save prompt appears, «Don\'t save» is allowed for 60 s.' : 'If a save prompt appears, choose «Save».'};
     },
+    connection_status: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); const d = diagnostics(cfg); return {host: 'reachable', version: d.version, uptimeSec: d.uptimeSec, tunnel: d.tunnelHealth, registeredAt: d.tunnel?.registeredAt ?? null}; },
     host_diagnostics: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return diagnostics(cfg); },
     get_capabilities: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return store.status(); },
     set_capability: a => {
       if (!a || typeof a !== 'object' || Object.keys(a).some(k => !['capability', 'enabled'].includes(k))) throw Error('invalid_args');
-      return {...store.set(a.capability, a.enabled, 'tool'), note: 'Applied immediately, no restart. Recorded in audit log.'};
+      const r = store.set(a.capability, a.enabled, 'tool');
+      if (a.capability === 'live_view' && !a.enabled) live.live_control({action: 'stop'});
+      return {...r, note: 'Applied immediately, no restart. Recorded in audit log.'};
     },
+    live_frame: a => live.live_frame(a), live_control: a => live.live_control(a), watch_nexus: a => live.watch_nexus(a),
+    manage_app_access: a => apps.manage_app_access(a), browser_tabs: a => browser.browser_tabs(a),
     browser_open: a => browser.browser_open(a), browser_snapshot: a => browser.browser_snapshot(a), browser_action: a => browser.browser_action(a),
   };
-  // open_app: record windows/tabs that appear as NEXUS-created (Windows 11 Notepad may open a TAB in the owner's window).
-  const APP_PROC = {notepad: 'notepad', calculator: 'CalculatorApp'};
-  handlers.open_app = async a => {
-    const name = APP_PROC[a?.app];
-    const before = name ? await gui.snapshotApp(name) : [];
-    const out = await executeJob('open_app', a, {workspace: cfg.workspace, ...execDeps});
-    if (!name || process.platform !== 'win32') return out;
-    let after = before;
-    for (let i = 0; i < 5; i++) { await new Promise(r => setTimeout(r, 400)); after = await gui.snapshotApp(name); if (before !== null && after !== null && JSON.stringify(after) !== JSON.stringify(before)) break; }
-    return {...out, createdByNexus: consent.recordCreated(before, after, 'open_app:' + a.app),
-      note: 'Only windows/tabs listed in createdByNexus may be closed without asking the owner.'};
-  };
-  return {caps, store, consent, handlers, gui, procs, browser, stop() { store.stop(); gui.stop(); browser.stop(); procs.stopAll(); }};
+  handlers.open_app = a => apps.open_app(a);
+  return {caps, store, consent, handlers, gui, procs, browser, live, apps, stop() { store.stop(); live.stop(); gui.stop(); browser.stop(); procs.stopAll(); }};
 }
 
 export function printCapabilities(cfg) {
   cfg.runtime ||= createRuntime(cfg);
   const c = cfg.runtime.store.get();
-  const on = ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser'].map(k => `${k}=${c[k] ? 'ON' : 'off'}`).join(' ');
+  const on = ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser', 'live_view'].map(k => `${k}=${c[k] ? 'ON' : 'off'}`).join(' ');
   console.log(`Capabilities (${cfg.capabilitiesFile || 'env'}): ${on}`);
   console.log(`Input apps: ${c.inputApps.join(', ') || '-'}; tasks: ${Object.keys(c.tasks).join(', ') || '-'}`);
   console.log('Capabilities are re-read live (no restart needed); gui_input can be switched from chat via set_capability.');
@@ -134,7 +135,25 @@ export function diagnostics(cfg) {
       cloudflaredAlive: t.alive ?? null, lastEvents: (t.events || []).slice(-20)} : 'not started by nexus.mjs',
     capabilitiesFileError: cfg.runtime?.store?.status().fileError ?? null,
     pendingConsents: cfg.runtime?.consent?.pendingCount() ?? 0,
+    liveView: cfg.runtime?.live?.status() ?? null,
+    tunnelHealth: t ? tunnelHealth(t.events || []) : null,
   };
+}
+
+/**
+ * 0.5.0: classify recent cloudflared events (evidence on the owner's PC: «datagram manager error: timeout: no recent
+ * network activity» followed by a quick reconnect). Pure function, unit-tested.
+ */
+export function tunnelHealth(events, now = Date.now()) {
+  const recent = events.filter(e => now - Date.parse(e.t) < 15 * 60_000);
+  const count = re => recent.filter(e => re.test(e.msg || '') || re.test(e.kind || '')).length;
+  const idleTimeouts = count(/no recent network activity|datagram manager error/i);
+  const lost = count(/Unregistered tunnel connection|Lost connection|Connection\b.*\b(?:lost|terminated)|Retrying/i);
+  const registered = count(/Registered tunnel connection/i);
+  const exited = recent.some(e => e.kind === 'cloudflared_exit');
+  const lastReconnect = [...recent].reverse().find(e => /Registered tunnel connection/i.test(e.msg || ''))?.t || null;
+  const verdict = exited ? 'tunnel_process_exited' : lost > registered ? 'tunnel_reconnecting' : idleTimeouts ? 'idle_timeouts_recovered' : 'ok';
+  return {window: '15m', idleTimeouts, connectionLost: lost, reconnects: registered, lastReconnect, verdict};
 }
 
 /** Audit never stores typed text or file content — only their length. */
@@ -174,22 +193,22 @@ export async function handleRpc(msg, cfg, deps = {}) {
       if (!TOOLS.some(t => t.name === name)) return rpcError(id, -32602, 'unknown_tool');
       const started = Date.now();
       try {
-        const {principal: _p, accessVerifier: _v, runtime: _r, procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, ...execDeps} = deps;
+        const {principal: _p, accessVerifier: _v, runtime: _r, procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, appsDeps: _ad, trace: _t, ...execDeps} = deps;
         const rt = deps.runtime || (cfg.runtime ||= createRuntime(cfg, deps));
         rt.store?.refresh('file');
         let out;
         if (name === 'list_windows') out = await listWindows(args, {tmpDir: path.join(cfg.home, 'tmp'), ...execDeps});
         else if (rt.handlers[name]) out = await rt.handlers[name](args);
         else out = await executeJob(name, args, {workspace: cfg.workspace, ...execDeps});
-        audit(cfg, {by: deps.principal, tool: name, ok: true, ms: Date.now() - started, args: auditArgs(args)});
+        if (name !== 'live_frame') audit(cfg, {by: deps.principal, trace: deps.trace, tool: name, ok: true, ms: Date.now() - started, args: auditArgs(args)});
         if (out && Array.isArray(out.content) && Object.hasOwn(out, 'structured')) {
           return rpcResult(id, {content: out.content, structuredContent: out.structured, isError: false});
         }
         return rpcResult(id, {content: [{type: 'text', text: JSON.stringify(out)}], structuredContent: out, isError: false});
       } catch (e) {
         const code = e?.code === 'ENOENT' ? 'not_found' : /^[a-z0-9_]+(?:: [\w -]+)?$/.test(e?.message) ? e.message : 'internal_error';
-        audit(cfg, {by: deps.principal, tool: name, ok: false, error: code, detail: e?.detail, args: auditArgs(args)});
-        return rpcResult(id, {content: [{type: 'text', text: `error: ${code}`}], isError: true});
+        audit(cfg, {by: deps.principal, trace: deps.trace, tool: name, ok: false, error: code, detail: e?.detail, args: auditArgs(args)});
+        return rpcResult(id, {content: [{type: 'text', text: `error: ${code}${deps.trace ? ` [trace: ${deps.trace}]` : ''}`}], isError: true});
       }
     }
     default: return rpcError(id, -32601, 'method_not_found');
@@ -249,6 +268,8 @@ export function createServer(cfg, deps = {}) {
   const verifyAccess = cfg.access ? (deps.accessVerifier || createAccessVerifier(cfg.access)) : null;
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
+    // 0.5.0: unauthenticated liveness probe for the gateway's connection_status (no secrets, no state beyond "alive").
+    if (url.pathname === '/healthz' && req.method === 'GET') return send(res, 200, {ok: true, service: 'nexus-host', version: VERSION});
     if (url.pathname !== '/mcp') return send(res, 404, {error: 'not_found'});
     const origin = req.headers.origin;
     if (origin && !cfg.allowedOrigins.includes(origin)) { audit(cfg, {denied: 'origin', origin}); return send(res, 403, {error: 'origin_denied'}); }
@@ -268,7 +289,8 @@ export function createServer(cfg, deps = {}) {
       let msg;
       try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(res, 400, rpcError(null, -32700, 'parse_error')); }
       if (Array.isArray(msg)) return send(res, 400, rpcError(null, -32600, 'batch_not_supported'));
-      const out = await handleRpc(msg, cfg, {...deps, principal});
+      const tr = String(req.headers['x-nexus-trace'] || '');
+      const out = await handleRpc(msg, cfg, {...deps, principal, ...(/^[a-f0-9]{8,32}$/.test(tr) ? {trace: tr} : {})});
       if (out === null) { res.writeHead(202); return res.end(); }
       send(res, 200, out);
     });

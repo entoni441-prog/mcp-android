@@ -18,8 +18,8 @@ function fresh() {
 }
 const rewrite = (file, patch) => { const j = JSON.parse(fs.readFileSync(file, 'utf8')); fs.writeFileSync(file, JSON.stringify({...j, ...patch}, null, 2)); bump(file); };
 
-test('only gui_input is switchable from chat', () => {
-  assert.deepEqual(SETTABLE, ['gui_input']);
+test('only gui_input and live_view are switchable from chat', () => {
+  assert.deepEqual(SETTABLE, ['gui_input', 'live_view']);
   const {store} = fresh();
   for (const [k, v] of [['browser', true], ['run_task', true], ['process_control', true], ['inputApps', ['cmd']], ['gui_input', 'yes'], ['gui_input', 1]]) {
     assert.throws(() => store.set(k, v), /invalid_args/, k);

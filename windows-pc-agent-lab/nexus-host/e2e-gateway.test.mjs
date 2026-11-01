@@ -41,7 +41,8 @@ test('gateway → host: real JSON-RPC round-trip with token check', async () => 
 
     // Gateway holding a wrong token gets 401 from the host, never results.
     const {env: badEnv} = kvEnv('w'.repeat(43)); badEnv.OAUTH_KV.put('tunnel', JSON.stringify({url: 'https://abc-def.trycloudflare.com'}));
-    assert.equal((await call({jsonrpc: '2.0', id: 3, method: 'tools/call', params: {name: 'get_status', arguments: {}}}, badEnv)).status, 401);
+    const bad = await (await call({jsonrpc: '2.0', id: 3, method: 'tools/call', params: {name: 'get_status', arguments: {}}}, badEnv)).json();
+    assert.equal(bad.result.isError, true); assert.match(bad.result.content[0].text, /host_401_token_mismatch/); // 0.5.0: explicit reason, never results
 
     // The catalog the gateway serves while the PC is offline must equal the real host's tools/list.
     const hostList = await (await fetch(local + '/mcp', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + cfg.token}, body: JSON.stringify({jsonrpc: '2.0', id: 9, method: 'tools/list'})})).json();

@@ -16,7 +16,9 @@ export const DEFAULT_CAPABILITIES = Object.freeze({
   process_control: false,    // process_action — DANGEROUS
   run_task: false,           // run_task/task_status/task_cancel — DANGEROUS
   browser: false,            // browser_* (separate Edge profile) — DANGEROUS
+  live_view: false,          // 0.5.0: live screen stream (watch_nexus widget, gateway /live) — shows everything on screen
   inputApps: ['Notepad', 'CalculatorApp'],
+  launchApps: {},            // 0.5.0: owner-approved launchable apps {name: absolute exe path}; added via manage_app_access
   tasks: {},
   javaPath: null,
   edgePath: null,
@@ -30,19 +32,29 @@ export const HARD_DENY = Object.freeze([
   'explorer', 'searchhost', 'startmenuexperiencehost', 'shellexperiencehost', 'applicationframehost', 'dwm', 'csrss',
   'lsass', 'services', 'svchost', 'smss', 'wininit', 'sihost', 'securityhealthsystray', 'msmpeng', 'secinit', 'sc',
   'schtasks', 'netsh', 'bcdedit', 'diskpart', 'format', 'takeown', 'icacls', 'certutil', 'bitsadmin', 'node', 'java', 'javaw',
-  'python', 'pythonw', 'py', 'cloudflared', 'code', 'cursor', 'git-bash', 'mintty', 'ssh', 'putty', 'claude', 'bitwarden',
+  'python', 'pythonw', 'py', 'cloudflared', 'code', 'cursor', 'git-bash', 'mintty', 'ssh', 'putty', 'claude', 'bitwarden', 'keepass', 'keepassxc', '1password', 'lastpass', 'dashlane', 'keeper',
 ]);
 
 const norm = s => String(s).toLowerCase().replace(/\.exe$/i, '');
 export const isHardDenied = name => HARD_DENY.includes(norm(name));
 
-const BOOL_KEYS = ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser'];
+const BOOL_KEYS = ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser', 'live_view'];
+export const APP_NAME = /^[A-Za-z0-9._-]{1,60}$/;
+export const LAUNCH_NAME = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 const TASK_NAME = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 const BAD_TASK_EXT = /\.(cmd|bat|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|hta|lnk|scr|com|msi|reg)$/i;
 
+/** Launchable exe: absolute local path (no UNC), .exe only, not a script host / shell / HARD_DENY process. */
+export function launchExeOk(exe) {
+  if (typeof exe !== 'string' || exe.length > 400 || exe.includes('\0') || exe.startsWith('\\\\') || exe.startsWith('//')) return false;
+  if (!(path.win32.isAbsolute(exe) && /^[a-zA-Z]:\\/.test(exe)) && !path.posix.isAbsolute(exe)) return false;
+  if (!/\.exe$/i.test(exe) || BAD_TASK_EXT.test(exe)) return false;
+  return !isHardDenied(path.win32.basename(exe));
+}
+
 export function validateCapabilities(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw Error('invalid_capabilities');
-  const c = {...DEFAULT_CAPABILITIES, inputApps: [...DEFAULT_CAPABILITIES.inputApps], tasks: {}};
+  const c = {...DEFAULT_CAPABILITIES, inputApps: [...DEFAULT_CAPABILITIES.inputApps], tasks: {}, launchApps: {}};
   for (const k of Object.keys(raw)) if (!Object.hasOwn(DEFAULT_CAPABILITIES, k) && !k.startsWith('_')) throw Error('invalid_capabilities: unknown key ' + k);
   for (const k of BOOL_KEYS) if (Object.hasOwn(raw, k)) {
     if (typeof raw[k] !== 'boolean') throw Error('invalid_capabilities: ' + k);
@@ -55,6 +67,16 @@ export function validateCapabilities(raw) {
   for (const k of ['javaPath', 'edgePath']) if (Object.hasOwn(raw, k) && raw[k] !== null) {
     if (typeof raw[k] !== 'string' || !path.win32.isAbsolute(raw[k]) && !path.posix.isAbsolute(raw[k])) throw Error('invalid_capabilities: ' + k);
     c[k] = raw[k];
+  }
+  if (Object.hasOwn(raw, 'launchApps')) {
+    const L = raw.launchApps;
+    if (!L || typeof L !== 'object' || Array.isArray(L) || Object.keys(L).length > 30) throw Error('invalid_capabilities: launchApps');
+    for (const [name, exe] of Object.entries(L)) {
+      if (!LAUNCH_NAME.test(name) || ['notepad', 'calculator'].includes(name)) throw Error('invalid_capabilities: launchApps name ' + name);
+      if (!launchExeOk(exe)) throw Error('invalid_capabilities: launchApps exe ' + name);
+      c.launchApps[name] = exe;
+    }
+    Object.freeze(c.launchApps);
   }
   if (Object.hasOwn(raw, 'tasks')) {
     if (!raw.tasks || typeof raw.tasks !== 'object' || Array.isArray(raw.tasks) || Object.keys(raw.tasks).length > 30) throw Error('invalid_capabilities: tasks');

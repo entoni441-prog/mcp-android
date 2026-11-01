@@ -29,6 +29,7 @@ import {classifyKeys, classifyClick, createConsent} from './consent.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROBOT_SRC = path.join(HERE, 'NexusRobot.java');
 const MAX_IMAGE_W = 1568;
+const TEXT_CONTROLS = new Set(['Document', 'Edit']);
 const isObj = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const onlyKeys = (a, allowed) => isObj(a) && Object.keys(a).every(k => allowed.includes(k));
 const int = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
@@ -203,6 +204,17 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       } finally { fs.rmSync(file, {force: true}); }
     },
 
+    /** 0.5.0 Live View: one JPEG frame (cursor drawn in). Capability checks are done by live.mjs. */
+    async frameJpeg(maxW, quality) {
+      winOnly();
+      fs.mkdirSync(tmpDir, {recursive: true});
+      const file = path.join(tmpDir, 'frm-' + crypto.randomBytes(8).toString('hex') + '.jpg');
+      try {
+        const r = await getRobot().cmd(`frame ${maxW} ${quality} ${Buffer.from(file).toString('base64')}`);
+        return {jpeg: fs.readFileSync(file), meta: r};
+      } finally { fs.rmSync(file, {force: true}); }
+    },
+
     async window_info(args) {
       requireCap(caps, 'ui_read'); winOnly();
       if (!onlyKeys(args, ['pid']) || !int(args.pid, 1, 2 ** 31)) bad();
@@ -214,14 +226,20 @@ export function createGui({caps, home, workspace, platform = process.platform, r
 
     async inspect_ui(args) {
       requireCap(caps, 'ui_read'); winOnly();
-      if (!onlyKeys(args, ['pid', 'maxDepth', 'maxNodes']) || !int(args.pid, 1, 2 ** 31)) bad();
+      if (!onlyKeys(args, ['pid', 'maxDepth', 'maxNodes', 'includeText']) || !int(args.pid, 1, 2 ** 31)) bad();
       const depth = args.maxDepth ?? 4, max = args.maxNodes ?? 150;
       if (!int(depth, 1, 8) || !int(max, 1, 400)) bad();
+      if (args.includeText !== undefined && typeof args.includeText !== 'boolean') bad();
       const r = await uia({mode: 'tree', pid: args.pid, depth, max});
       if (!allowedApp(caps, r.target?.process)) throw Error('app_not_allowed');
       const m = mapping(await info(), r.root);
-      const fix = n => ({...n, rect: m ? m.rectToScreen(n.rect) : null, ...(n.children ? {children: n.children.map(fix)} : {})});
-      return {pid: args.pid, process: r.target.process, nodes: r.nodes, coordinateMapping: !!m, tree: (r.tree || []).map(fix)};
+      // 0.5.0 data protection: the Name of a Document/Edit control IS the document text (e.g. a password file open in
+      // Notepad). Redacted unless includeText=true; only the length is returned.
+      const redact = n => !args.includeText && TEXT_CONTROLS.has(n.type) && typeof n.name === 'string' && n.name ? `<text ${n.name.length}+ chars, includeText=true to read>` : n.name;
+      let redacted = 0;
+      const fix = n => { const name = redact(n); if (name !== n.name) redacted++; return {...n, name, rect: m ? m.rectToScreen(n.rect) : null, ...(n.children ? {children: n.children.map(fix)} : {})}; };
+      const tree = (r.tree || []).map(fix);
+      return {pid: args.pid, process: r.target.process, nodes: r.nodes, coordinateMapping: !!m, textRedacted: redacted, tree};
     },
 
     async focus_window(args) {
@@ -231,11 +249,11 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       if (!w.windows?.length) throw Error('window_not_found');
       const hwnds = new Set(w.windows.filter(x => x.hwnd).map(x => String(x.hwnd)));
       const isOn = f => f?.ok === true && (f.pid === args.pid || (!!f.topHwnd && hwnds.has(String(f.topHwnd))));
-      if (isOn(w.focused)) return {focused: true, already: true, method: 'none'};
+      if (isOn(w.focused)) return {focused: true, already: true, method: 'none', hwnd: w.focused.topHwnd ?? null};
       const attempts = [];
       const r = await uia({mode: 'activate', pid: args.pid, title: String(w.windows[0].name || '').slice(0, 200)});
       attempts.push({method: 'AppActivate', byPid: !!r.appActivateByPid, byTitle: !!r.appActivateByTitle, foreground: r.focused?.process || null});
-      if (isOn(r.focused)) return {focused: true, method: r.appActivateByPid ? 'AppActivate(pid)' : 'AppActivate(title)', attempts};
+      if (isOn(r.focused)) return {focused: true, method: r.appActivateByPid ? 'AppActivate(pid)' : 'AppActivate(title)', hwnd: r.focused.topHwnd ?? null, attempts};
       // Fallback (only with gui_input): click an EMPTY spot of the target window's own title bar. Each candidate point
       // is checked with UIA first: it must belong to the target window and must not be a button/tab/menu — so the click
       // can never land in someone else's window and never presses Close.
@@ -257,12 +275,12 @@ export function createGui({caps, home, workspace, platform = process.platform, r
             await sleep(300);
             const f = (await uia({mode: 'focused'})).focused;
             attempts.push({method: 'titlebar_click', foreground: f?.process || null});
-            if (isOn(f)) return {focused: true, method: 'titlebar_click', attempts};
+            if (isOn(f)) return {focused: true, method: 'titlebar_click', hwnd: f.topHwnd ?? null, attempts};
             break;
           }
         }
       }
-      return {focused: false, method: 'none', foregroundProcess: r.focused?.process || null, attempts,
+      return {focused: false, method: 'none', foregroundProcess: r.focused?.process || null, foregroundHwnd: r.focused?.topHwnd ?? null, windows: [...hwnds], attempts,
         hint: caps.gui_input ? 'Window not reachable (covered or minimised?). No input was sent to other windows.' : 'Enable gui_input to allow the safe title-bar fallback.'};
     },
 

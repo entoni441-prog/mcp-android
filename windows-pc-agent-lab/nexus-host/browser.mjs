@@ -88,9 +88,20 @@ const SNAPSHOT_JS = `(() => {
 const KEYS = {Enter: 13, Tab: 9, Escape: 27, Backspace: 8, ArrowDown: 40, ArrowUp: 38, ArrowLeft: 37, ArrowRight: 39, PageDown: 34, PageUp: 33, Home: 36, End: 35, Space: 32};
 
 /** allowPrivate and proxyOptions are TEST-ONLY injections; production callers (server.mjs) never pass them. */
-export function createBrowser({caps, home, platform = process.platform, browserPath, headless = false, allowPrivate = false, proxyOptions = {}, spawnFn = spawn, onOwnedPid = () => {}}) {
+// Words that mark an action as irreversible, financial or sending something out. Matched on the clicked element's
+// accessible text (or, for Enter, on the submit buttons of the focused field's form).
+export const RISKY_RE = /(buy|purchase|pay\b|payment|checkout|place order|order now|submit order|confirm|send|post\b|publish|delete|remove account|transfer|subscribe|sign up|register|купить|оплат|заказ|оформить|подтверд|отправ|опубликов|удали|перевест|перевод|подписа|зарегистр)/i;
+const RISK_JS = (ref, key) => `(() => {
+  const RE = ${RISKY_RE.toString()};
+  const txt = e => String(e && (e.getAttribute('aria-label') || e.value || e.innerText || e.getAttribute('title')) || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
+  ${ref ? `const e = document.querySelector('[data-nexus-ref="' + ${JSON.stringify(ref || '')} + '"]'); if (!e) return null; const t = txt(e); return {risky: RE.test(t), label: t};` :
+    `if (${JSON.stringify(key || '')} !== 'Enter') return null; const f = document.activeElement && document.activeElement.form; if (!f) return null;
+     const b = [...f.querySelectorAll('button,input[type=submit]')].map(txt).find(t => RE.test(t)); return b ? {risky: true, label: b} : null;`}
+})()`;
+
+export function createBrowser({caps, home, consent = null, platform = process.platform, browserPath, headless = false, allowPrivate = false, proxyOptions = {}, spawnFn = spawn, onOwnedPid = () => {}}) {
   const profile = path.join(home, 'edge-profile');
-  let proc = null, page = null, browserWs = null, proxy = null;
+  let proc = null, page = null, browserWs = null, proxy = null, port = null, currentTarget = null;
 
   async function ensure() {
     if (page && !page.closed) return page;
@@ -110,16 +121,26 @@ export function createBrowser({caps, home, platform = process.platform, browserP
     let lines = null;
     for (let i = 0; i < 100 && !lines; i++) { await sleep(150); try { const t = fs.readFileSync(portFile, 'utf8').trim().split(/\r?\n/); if (t.length >= 2) lines = t; } catch { /* not yet */ } }
     if (!lines) throw Error('browser_start_timeout');
-    const port = Number(lines[0]);
+    port = Number(lines[0]);
     browserWs = await Cdp.connect(`ws://127.0.0.1:${port}${lines[1]}`);
     await browserWs.send('Browser.setDownloadBehavior', {behavior: 'deny'}).catch(() => {});
-    const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-    const target = list.find(t => t.type === 'page');
+    const target = (await pages()).find(Boolean);
     if (!target) throw Error('no_page_target');
-    page = await Cdp.connect(target.webSocketDebuggerUrl);
-    await page.send('Page.enable'); await page.send('Runtime.enable');
+    return attach(target);
+  }
+  async function pages() {
+    if (!port) return [];
+    const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+    return list.filter(t => t.type === 'page');
+  }
+  async function attach(target) {
+    const next = await Cdp.connect(target.webSocketDebuggerUrl);
+    await next.send('Page.enable'); await next.send('Runtime.enable');
+    if (page && page !== next) page.close();
+    page = next; currentTarget = target.id;
     return page;
   }
+  const shortId = id => String(id).slice(0, 8).toLowerCase();
   const evaluate = async (expr) => {
     const r = await (await ensure()).send('Runtime.evaluate', {expression: expr, returnByValue: true, awaitPromise: true});
     if (r.exceptionDetails) throw Error('page_script_failed');
@@ -159,12 +180,41 @@ export function createBrowser({caps, home, platform = process.platform, browserP
       const shot = await page.send('Page.captureScreenshot', {format: 'jpeg', quality: 60});
       return {content: [{type: 'image', data: shot.data, mimeType: 'image/jpeg'}, {type: 'text', text: JSON.stringify(snap)}], structured: snap};
     },
-    async browser_action(args) {
+    async browser_action(args, {consented = false} = {}) {
       requireCap(caps, 'browser');
-      if (!onlyKeys(args, ['action', 'ref', 'text', 'key', 'url', 'clear', 'amount'])) bad();
+      if (!onlyKeys(args, ['action', 'ref', 'text', 'key', 'url', 'clear', 'amount', 'value', 'timeoutMs'])) bad();
       if (!page) throw Error('browser_not_open');
       await guardUrl();
+      // 0.5.0: irreversible / financial / outgoing actions need the owner's consent (consent_required → confirm_action allow).
+      if (!consented && consent && ['click', 'press'].includes(args.action)) {
+        const risk = await evaluate(RISK_JS(args.action === 'click' ? args.ref : null, args.key));
+        if (risk && risk.risky) {
+          const host = await evaluate('location.host');
+          return consent.requestGrant({what: 'browser_irreversible', replay: {tool: 'browser_action', args},
+            target: `браузер NEXUS: ${args.action === 'click' ? 'нажать' : 'Enter для'} «${risk.label}» на ${host}`,
+            apply: () => this.browser_action(args, {consented: true})});
+        }
+      }
       switch (args.action) {
+        case 'wait': {
+          const ms = args.timeoutMs ?? 10_000; if (!Number.isInteger(ms) || ms < 100 || ms > 30_000) bad();
+          if (args.text !== undefined && (typeof args.text !== 'string' || !args.text || args.text.length > 200)) bad();
+          const end = Date.now() + ms; let found = args.text === undefined;
+          while (Date.now() < end) {
+            await waitLoad();
+            if (args.text === undefined) break;
+            if (await evaluate(`(document.body ? document.body.innerText : '').includes(${JSON.stringify(args.text)})`)) { found = true; break; }
+            await sleep(300);
+          }
+          const url = await guardUrl();
+          return {done: true, action: 'wait', found, url, title: await evaluate('document.title')};
+        }
+        case 'select': {
+          if (typeof args.value !== 'string' || args.value.length > 200) bad();
+          const ok = await evaluate(`(() => { const e = ${refExpr(args.ref)}; if (!e) return 'missing'; if (e.tagName !== 'SELECT') return 'not_select'; const o = [...e.options].find(o => o.value === ${JSON.stringify(args.value)} || o.text.trim() === ${JSON.stringify(args.value)}); if (!o) return 'no_option'; e.value = o.value; e.dispatchEvent(new Event('input', {bubbles: true})); e.dispatchEvent(new Event('change', {bubbles: true})); return 'ok'; })()`);
+          if (ok !== 'ok') throw Error(ok === 'missing' ? 'ref_not_found' : ok);
+          break;
+        }
         case 'click': {
           const r = await evaluate(`(() => { const e = ${refExpr(args.ref)}; if (!e) return null; e.scrollIntoView({block: 'center'}); const b = e.getBoundingClientRect(); return {x: b.x + b.width / 2, y: b.y + b.height / 2}; })()`);
           if (!r) throw Error('ref_not_found');
@@ -202,6 +252,32 @@ export function createBrowser({caps, home, platform = process.platform, browserP
       }
       const url = await guardUrl();
       return {done: true, action: args.action, url, title: await evaluate('document.title')};
+    },
+    /** 0.5.0: tabs of the NEXUS browser (separate profile — every tab in it belongs to NEXUS). */
+    async browser_tabs(args) {
+      requireCap(caps, 'browser');
+      if (!onlyKeys(args, ['action', 'id', 'url']) || !['list', 'new', 'switch', 'close'].includes(args.action)) bad();
+      if (args.action === 'new') {
+        if (args.url !== undefined && (typeof args.url !== 'string' || !urlAllowed(args.url, {allowPrivate}))) throw Error('url_not_allowed');
+        await ensure();
+        const {targetId} = await browserWs.send('Target.createTarget', {url: 'about:blank'});
+        const t = (await pages()).find(x => x.id === targetId);
+        if (!t) throw Error('tab_not_found');
+        await attach(t);
+        if (args.url) { await page.send('Page.navigate', {url: args.url}); await waitLoad(); await guardUrl(); }
+      } else if (args.action !== 'list') {
+        if (typeof args.id !== 'string' || !/^[0-9a-f]{8}$/i.test(args.id)) bad();
+        if (!browserWs) throw Error('browser_not_open');
+        const t = (await pages()).find(x => shortId(x.id) === args.id.toLowerCase());
+        if (!t) throw Error('tab_not_found');
+        if (args.action === 'switch') { await attach(t); await browserWs.send('Target.activateTarget', {targetId: t.id}).catch(() => {}); }
+        else {
+          await browserWs.send('Target.closeTarget', {targetId: t.id});
+          if (t.id === currentTarget) { page?.close(); page = null; const rest = await pages(); if (rest[0]) await attach(rest[0]); }
+        }
+      } else if (!browserWs) return {tabs: [], open: false};
+      const tabs = (await pages()).map(t => ({id: shortId(t.id), url: String(t.url).slice(0, 200), title: String(t.title).slice(0, 120), current: t.id === currentTarget}));
+      return {tabs, open: true};
     },
     egressStats: () => proxy?.stats ?? null,
     stop() { page?.close(); browserWs?.close(); try { proc?.kill(); } catch { /* gone */ } proxy?.close(); proc = null; page = null; proxy = null; },
