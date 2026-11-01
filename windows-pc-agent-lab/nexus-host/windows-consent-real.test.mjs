@@ -140,5 +140,6 @@ test('Windows 0.5.0: open_app scratch document is owned by token; owner window i
     assert.notEqual(k.status, 'consent_required');
   } finally {
     for (const p of pids) spawnSync(path.join(process.env.SystemRoot, 'System32', 'taskkill.exe'), ['/PID', String(p), '/F']);
+    gui.stop(); // the Java Robot child would otherwise keep the test process alive
   }
 });
