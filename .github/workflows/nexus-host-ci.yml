@@ -29,7 +29,7 @@ jobs:
       - name: Real Windows desktop — Java 17 Robot + PowerShell 5.1 UIA + Notepad
         if: runner.os == 'Windows'
         env: {NEXUS_REAL_GUI: '1'}
-        run: node --test --test-reporter=spec windows-pc-agent-lab/nexus-host/robot-real.test.mjs windows-pc-agent-lab/nexus-host/windows-real.test.mjs windows-pc-agent-lab/nexus-host/windows-consent-real.test.mjs
+        run: node --test --test-concurrency=1 --test-reporter=spec windows-pc-agent-lab/nexus-host/robot-real.test.mjs windows-pc-agent-lab/nexus-host/windows-real.test.mjs windows-pc-agent-lab/nexus-host/windows-consent-real.test.mjs
   gateway:
     runs-on: ubuntu-latest
     defaults:
