@@ -25,6 +25,12 @@ const TTL_MS = 120_000;
 const DISCARD_ARM_MS = 60_000;
 
 const isClickable = t => ['Button', 'MenuItem', 'SplitButton', 'ListItem', 'Hyperlink'].includes(t);
+// Windows TaskDialog (e.g. Notepad «Save changes?») exposes its buttons as Pane — verified on a real runner 01.11.2026.
+// Discard detection therefore also covers Pane/Custom; close detection does not (a document is also a Pane whose
+// Name is its text, so "Закрыть…" typed in a document must not count as a close button).
+const DIALOG_BUTTON = t => ['Button', 'Pane', 'Custom'].includes(t);
+// A document pane's Name is its whole text: only short, exact button-like names count as «Don't save».
+const isDiscardName = n => typeof n === 'string' && n.length <= 30 && DISCARD_RE.test(n);
 
 /** Classify a keyboard chord against the focused context. Returns null (not a close) or {kind, ...}. */
 export function classifyKeys(keys, ctx) {
@@ -32,7 +38,7 @@ export function classifyKeys(keys, ctx) {
   const el = ctx?.elem || {};
   if (WINDOW_KEYS.has(k)) return {kind: 'window', via: k};
   if (TAB_KEYS.has(k)) return (ctx?.window?.tabs?.length ? {kind: 'tab', via: k} : {kind: 'window', via: k});
-  if (el.controlType === 'Button' && DISCARD_RE.test(el.name) && ACTIVATE_KEYS.has(k)) return {kind: 'discard', via: k};
+  if (DIALOG_BUTTON(el.controlType) && isDiscardName(el.name) && ACTIVATE_KEYS.has(k)) return {kind: 'discard', via: k};
   if (el.controlType === 'MenuItem') {
     if (ACTIVATE_KEYS.has(k) && (CLOSE_RE.test(el.name) || TAB_CLOSE_RE.test(el.name))) return {kind: TAB_CLOSE_RE.test(el.name) ? 'tab' : 'window', via: 'menu:' + el.name};
     if (/^[a-z0-9]$/.test(k)) return {kind: 'window', via: 'menu-accelerator:' + k, uncertain: true};
@@ -44,7 +50,7 @@ export function classifyKeys(keys, ctx) {
 export function classifyClick(action, at) {
   if (!['click', 'double_click'].includes(action) || !at?.elem) return null;
   const {controlType, name, id} = at.elem;
-  if (controlType === 'Button' && DISCARD_RE.test(name)) return {kind: 'discard', via: 'click:' + name};
+  if (DIALOG_BUTTON(controlType) && isDiscardName(name)) return {kind: 'discard', via: 'click:' + name};
   if (!isClickable(controlType)) return null;
   if (CLOSE_RE.test(name) || TAB_CLOSE_RE.test(name) || CLOSE_IDS.test(id || '')) {
     const tabClose = TAB_CLOSE_RE.test(name) || (!!at.tab && controlType === 'Button');

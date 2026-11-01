@@ -60,6 +60,11 @@ test('classification: close chords, close/discard buttons, menu items; normal in
   assert.equal(classifyClick('click', {elem: {controlType: 'Document', name: 'Закрыть'}}), null);       // text in a document is not a button
   assert.equal(classifyClick('right_click', {elem: {controlType: 'Button', name: 'Закрыть'}}), null);
   assert.equal(classifyClick('click', {elem: {controlType: 'Button', name: 'Сохранить'}}), null);
+  // real Notepad TaskDialog on Windows: buttons are Pane
+  assert.equal(classifyClick('click', {elem: {controlType: 'Pane', name: "Don't Save"}}).kind, 'discard');
+  assert.equal(classifyKeys('enter', {elem: {controlType: 'Pane', name: 'Не сохранять'}}).kind, 'discard');
+  assert.equal(classifyClick('click', {elem: {controlType: 'Pane', name: 'Close'}}), null);           // close via Pane name not inferred
+  assert.equal(classifyClick('click', {elem: {controlType: 'Pane', name: 'Длинный текст документа, в котором есть слова не сохранять'}}), null);
 });
 
 test('owner tab: ctrl+w → consent_required, nothing sent; confirm with exact target executes once', async () => {
