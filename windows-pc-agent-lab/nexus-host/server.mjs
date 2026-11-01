@@ -19,7 +19,7 @@ import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {executeJob} from '../v3/actions.mjs';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const MAX_BODY = 64 * 1024;
 
@@ -33,8 +33,21 @@ export function loadConfig(env = process.env) {
     token = fs.readFileSync(tokenFile, 'utf8').trim();
   }
   if (token.length < 32) throw Error('token_too_short');
+  // Optional Cloudflare Access mode: %USERPROFILE%\.nexus-host\access.json
+  // {"teamDomain":"<team>.cloudflareaccess.com","aud":"<application AUD tag>","allowedEmails":["owner@example.com"]}
+  let access = null;
+  const accessFile = path.join(home, 'access.json');
+  if (fs.existsSync(accessFile)) {
+    const a = JSON.parse(fs.readFileSync(accessFile, 'utf8'));
+    if (typeof a.teamDomain !== 'string' || !/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(a.teamDomain) ||
+        typeof a.aud !== 'string' || !/^[a-f0-9]{64}$/.test(a.aud) ||
+        !Array.isArray(a.allowedEmails) || a.allowedEmails.length < 1 || !a.allowedEmails.every(e => typeof e === 'string' && e.includes('@'))) {
+      throw Error('invalid_access_json');
+    }
+    access = {teamDomain: a.teamDomain, aud: a.aud, allowedEmails: a.allowedEmails.map(e => e.toLowerCase())};
+  }
   return {
-    home, token, tokenFile,
+    home, token, tokenFile, access,
     port: Number(env.NEXUS_PORT || 8765),
     workspace: env.NEXUS_WORKSPACE || path.join(os.homedir(), 'NEXUS-workspace'),
     auditFile: path.join(home, 'audit.log'),
@@ -81,12 +94,13 @@ export async function handleRpc(msg, cfg, deps = {}) {
       if (!TOOLS.some(t => t.name === name)) return rpcError(id, -32602, 'unknown_tool');
       const started = Date.now();
       try {
-        const out = await executeJob(name, args, {workspace: cfg.workspace, ...deps});
-        audit(cfg, {tool: name, ok: true, ms: Date.now() - started, path: args?.path, app: args?.app});
+        const {principal: _p, accessVerifier: _v, ...execDeps} = deps;
+        const out = await executeJob(name, args, {workspace: cfg.workspace, ...execDeps});
+        audit(cfg, {by: deps.principal, tool: name, ok: true, ms: Date.now() - started, path: args?.path, app: args?.app});
         return rpcResult(id, {content: [{type: 'text', text: JSON.stringify(out)}], structuredContent: out, isError: false});
       } catch (e) {
         const code = /^[a-z_]+$/.test(e?.message) ? e.message : 'internal_error';
-        audit(cfg, {tool: name, ok: false, error: code, path: args?.path, app: args?.app});
+        audit(cfg, {by: deps.principal, tool: name, ok: false, error: code, path: args?.path, app: args?.app});
         return rpcResult(id, {content: [{type: 'text', text: `error: ${code}`}], isError: true});
       }
     }
@@ -102,6 +116,41 @@ function tokenOk(header, token) {
   return crypto.timingSafeEqual(a, b);
 }
 
+const b64urlJson = s => JSON.parse(Buffer.from(s, 'base64url').toString('utf8'));
+
+/** Verifies a Cloudflare Access JWT (RS256) against the team's published keys. Returns the email or null. */
+export function createAccessVerifier(access, {fetcher = fetch, now = () => Date.now()} = {}) {
+  let keys = new Map(), fetchedAt = 0;
+  async function refresh() {
+    if (now() - fetchedAt < 60_000 && keys.size) return;
+    const r = await fetcher(`https://${access.teamDomain}/cdn-cgi/access/certs`);
+    if (!r.ok) throw Error('jwks_unavailable');
+    const body = await r.json();
+    const next = new Map();
+    for (const jwk of body.keys || []) if (jwk.kty === 'RSA' && typeof jwk.kid === 'string') next.set(jwk.kid, crypto.createPublicKey({key: jwk, format: 'jwk'}));
+    keys = next; fetchedAt = now();
+  }
+  return async function verify(jwt) {
+    if (typeof jwt !== 'string' || jwt.length > 8192) return null;
+    const parts = jwt.split('.');
+    if (parts.length !== 3) return null;
+    let header, claims;
+    try { header = b64urlJson(parts[0]); claims = b64urlJson(parts[1]); } catch { return null; }
+    if (header.alg !== 'RS256' || typeof header.kid !== 'string') return null;
+    if (!keys.has(header.kid)) { try { await refresh(); } catch { return null; } }
+    const key = keys.get(header.kid);
+    if (!key) return null;
+    const ok = crypto.verify('RSA-SHA256', Buffer.from(parts[0] + '.' + parts[1]), key, Buffer.from(parts[2], 'base64url'));
+    if (!ok) return null;
+    const t = Math.floor(now() / 1000);
+    const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+    if (claims.iss !== `https://${access.teamDomain}` || !aud.includes(access.aud)) return null;
+    if (!Number.isFinite(claims.exp) || claims.exp <= t || (Number.isFinite(claims.nbf) && claims.nbf > t + 60)) return null;
+    const email = typeof claims.email === 'string' ? claims.email.toLowerCase() : '';
+    return access.allowedEmails.includes(email) ? email : null;
+  };
+}
+
 function send(res, status, body, headers = {}) {
   const data = body === undefined ? '' : JSON.stringify(body);
   res.writeHead(status, {'content-type': 'application/json', 'cache-control': 'no-store', ...headers});
@@ -109,12 +158,19 @@ function send(res, status, body, headers = {}) {
 }
 
 export function createServer(cfg, deps = {}) {
-  return http.createServer((req, res) => {
+  const verifyAccess = cfg.access ? (deps.accessVerifier || createAccessVerifier(cfg.access)) : null;
+  return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname !== '/mcp') return send(res, 404, {error: 'not_found'});
     const origin = req.headers.origin;
     if (origin && !cfg.allowedOrigins.includes(origin)) { audit(cfg, {denied: 'origin', origin}); return send(res, 403, {error: 'origin_denied'}); }
-    if (!tokenOk(req.headers.authorization, cfg.token)) { audit(cfg, {denied: 'auth'}); return send(res, 401, {error: 'unauthorized'}, {'www-authenticate': 'Bearer'}); }
+    // Two ways in: local bearer token, or (when access.json exists) a valid Cloudflare Access JWT for an allowed email.
+    let principal = tokenOk(req.headers.authorization, cfg.token) ? 'local-token' : null;
+    if (!principal && verifyAccess && req.headers['cf-access-jwt-assertion']) {
+      const email = await verifyAccess(String(req.headers['cf-access-jwt-assertion']));
+      if (email) principal = 'access:' + email;
+    }
+    if (!principal) { audit(cfg, {denied: 'auth'}); return send(res, 401, {error: 'unauthorized'}, {'www-authenticate': 'Bearer'}); }
     if (req.method === 'GET' || req.method === 'DELETE') return send(res, 405, {error: 'method_not_allowed'}, {allow: 'POST'});
     if (req.method !== 'POST') return send(res, 405, {error: 'method_not_allowed'}, {allow: 'POST'});
     if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) return send(res, 415, rpcError(null, -32700, 'content_type'));
@@ -124,7 +180,7 @@ export function createServer(cfg, deps = {}) {
       let msg;
       try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(res, 400, rpcError(null, -32700, 'parse_error')); }
       if (Array.isArray(msg)) return send(res, 400, rpcError(null, -32600, 'batch_not_supported'));
-      const out = await handleRpc(msg, cfg, deps);
+      const out = await handleRpc(msg, cfg, {...deps, principal});
       if (out === null) { res.writeHead(202); return res.end(); }
       send(res, 200, out);
     });
