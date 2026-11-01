@@ -6,6 +6,8 @@
  * Bindings: OAUTH_KV (KV: OAuth library + tunnel URL), CONSENT_GUARD (Durable Object: atomic lockout + single-use consent).
  * OAUTH_PROVIDER is injected by workers-oauth-provider.
  */
+import {TOOLS, PROTOCOL_VERSIONS, SERVER_INFO} from './catalog.mjs';
+
 const enc = new TextEncoder();
 // `wrangler secret put` fed from a PowerShell pipe may append CR/LF — normalise once.
 const secret = v => typeof v === 'string' ? v.trim() : v;
@@ -92,18 +94,41 @@ export async function handleTunnel(request, env) {
   return json(200, {ok: true});
 }
 
-/** OAuth apiHandler for /mcp: only reached with a valid OAuth token. Forwards JSON-RPC to the PC. */
+const rpcOk = (id, result) => json(200, {jsonrpc: '2.0', id, result});
+const rpcErr = (id, code, message) => json(200, {jsonrpc: '2.0', id: id ?? null, error: {code, message}});
+const OFFLINE_TEXT = 'pc_offline: NEXUS Host on the Windows PC is not connected. Ask the owner to start nexus.mjs.';
+
+/**
+ * OAuth apiHandler for /mcp: only reached with a valid OAuth token.
+ * initialize / ping / notifications / tools/list are answered here (work while the PC is offline);
+ * only tools/call is forwarded to the PC. Offline tools/call → tool result with isError (not a protocol error).
+ */
 export async function handleMcp(request, env, ctx, {fetcher = fetch} = {}) {
   if (request.method !== 'POST') return json(405, {error: 'method_not_allowed'}, {allow: 'POST'});
   if (ctx?.props?.owner !== true) return json(403, {error: 'forbidden'});
-  const raw = await env.OAUTH_KV.get('tunnel');
-  const offline = id => json(200, {jsonrpc: '2.0', id: id ?? null, error: {code: -32001, message: 'pc_offline: NEXUS Host is not connected'}});
   const body = await request.text();
   if (body.length > 64 * 1024) return json(413, {error: 'too_large'});
-  let id = null; try { id = JSON.parse(body)?.id ?? null; } catch { /* PC will report parse error */ }
-  if (!raw) return offline(id);
+  let msg;
+  try { msg = JSON.parse(body); } catch { return json(400, {jsonrpc: '2.0', id: null, error: {code: -32700, message: 'parse_error'}}); }
+  if (Array.isArray(msg)) return json(400, {jsonrpc: '2.0', id: null, error: {code: -32600, message: 'batch_not_supported'}});
+  if (!msg || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') return rpcErr(msg?.id, -32600, 'invalid_request');
+  if (!Object.hasOwn(msg, 'id')) return new Response(null, {status: 202}); // notifications
+  const {id, method, params = {}} = msg;
+  if (method === 'initialize') {
+    const v = PROTOCOL_VERSIONS.includes(params?.protocolVersion) ? params.protocolVersion : PROTOCOL_VERSIONS[0];
+    return rpcOk(id, {protocolVersion: v, capabilities: {tools: {listChanged: false}}, serverInfo: SERVER_INFO,
+      instructions: 'Owner-approved access to one Windows PC via NEXUS Host. If a tool returns pc_offline, the PC is not connected.'});
+  }
+  if (method === 'ping') return rpcOk(id, {});
+  if (method === 'tools/list') return rpcOk(id, {tools: TOOLS});
+  if (method !== 'tools/call') return rpcErr(id, -32601, 'method_not_found');
+  if (!TOOLS.some(t => t.name === params?.name)) return rpcErr(id, -32602, 'unknown_tool');
+
+  const offline = () => rpcOk(id, {content: [{type: 'text', text: OFFLINE_TEXT}], isError: true});
+  const raw = await env.OAUTH_KV.get('tunnel');
+  if (!raw) return offline();
   const {url} = JSON.parse(raw);
-  if (!TUNNEL_RE.test(url)) return offline(id);
+  if (!TUNNEL_RE.test(url)) return offline();
   let r;
   try {
     r = await fetcher(url + '/mcp', {
@@ -111,8 +136,7 @@ export async function handleMcp(request, env, ctx, {fetcher = fetch} = {}) {
       headers: {'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer ' + secret(env.NEXUS_TOKEN)},
       signal: AbortSignal.timeout(25000),
     });
-  } catch { return offline(id); }
-  if (r.status === 202) return new Response(null, {status: 202});
-  if (r.status >= 500 || r.status === 404 || r.status === 530) return offline(id);
+  } catch { return offline(); }
+  if (r.status >= 500 || r.status === 404 || r.status === 530) return offline();
   return new Response(await r.text(), {status: r.status, headers: {'content-type': r.headers.get('content-type') || 'application/json', 'cache-control': 'no-store'}});
 }

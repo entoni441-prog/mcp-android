@@ -83,16 +83,17 @@ test('tunnel registration requires PC token and a trycloudflare URL', async () =
   assert.ok(!m.kv.has('tunnel'));
 });
 
-const rpc = (method, id = 1) => new Request(BASE + '/mcp', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({jsonrpc: '2.0', id, method})});
+const rpc = (method, id = 1, params) => new Request(BASE + '/mcp', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({jsonrpc: '2.0', id, method, ...(params ? {params} : {})})});
+const callTool = (id = 1) => rpc('tools/call', id, {name: 'get_status', arguments: {}});
 
-test('mcp forwards to PC with Bearer token; offline when no tunnel', async () => {
+test('mcp forwards tools/call to PC with Bearer token; offline → tool error, not protocol error', async () => {
   const m = makeEnv(); const ctx = {props: {owner: true}};
-  const off = await (await handleMcp(rpc('tools/list', 7), m.env, ctx)).json();
-  assert.equal(off.id, 7); assert.match(off.error.message, /pc_offline/);
+  const off = await (await handleMcp(callTool(7), m.env, ctx)).json();
+  assert.equal(off.id, 7); assert.equal(off.error, undefined); assert.equal(off.result.isError, true); assert.match(off.result.content[0].text, /pc_offline/);
   m.kv.set('tunnel', JSON.stringify({url: 'https://abc-def.trycloudflare.com'}));
   let seen;
   const fetcher = async (url, init) => { seen = {url, init}; return new Response('{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}', {status: 200, headers: {'content-type': 'application/json'}}); };
-  const r = await handleMcp(rpc('tools/list'), m.env, ctx, {fetcher});
+  const r = await handleMcp(callTool(), m.env, ctx, {fetcher});
   assert.equal(r.status, 200);
   assert.equal(seen.url, 'https://abc-def.trycloudflare.com/mcp');
   assert.equal(seen.init.headers.authorization, 'Bearer ' + TOKEN);
@@ -107,9 +108,9 @@ test('mcp rejects non-owner props, GET, oversized body; maps tunnel failures to 
   const big = new Request(BASE + '/mcp', {method: 'POST', body: 'x'.repeat(70000)});
   assert.equal((await handleMcp(big, m.env, {props: {owner: true}})).status, 413);
   const down = async () => { throw new Error('ECONNREFUSED'); };
-  assert.match((await (await handleMcp(rpc('ping'), m.env, {props: {owner: true}}, {fetcher: down})).json()).error.message, /pc_offline/);
+  assert.match((await (await handleMcp(callTool(), m.env, {props: {owner: true}}, {fetcher: down})).json()).result.content[0].text, /pc_offline/);
   const cf530 = async () => new Response('tunnel gone', {status: 530});
-  assert.match((await (await handleMcp(rpc('ping'), m.env, {props: {owner: true}}, {fetcher: cf530})).json()).error.message, /pc_offline/);
+  assert.match((await (await handleMcp(callTool(), m.env, {props: {owner: true}}, {fetcher: cf530})).json()).result.content[0].text, /pc_offline/);
 });
 
 test('secrets with trailing CR/LF (PowerShell pipe) still work', async () => {
@@ -117,6 +118,22 @@ test('secrets with trailing CR/LF (PowerShell pipe) still work', async () => {
   assert.equal((await handleTunnel(tunnelReq('POST', {url: 'https://abc-def.trycloudflare.com'}), env)).status, 200);
   const nonce = nonceFrom(await (await handleDefault(new Request(BASE + '/authorize'), env)).text());
   assert.equal((await handleDefault(post(nonce, PASS), env)).status, 302);
-  let auth; await handleMcp(rpc('ping'), env, {props: {owner: true}}, {fetcher: async (u, i) => { auth = i.headers.authorization; return new Response('{}'); }});
+  let auth; await handleMcp(callTool(), env, {props: {owner: true}}, {fetcher: async (u, i) => { auth = i.headers.authorization; return new Response('{}'); }});
   assert.equal(auth, 'Bearer ' + TOKEN);
+});
+
+test('PC offline: initialize, notifications, ping and tools/list still work (connector can register)', async () => {
+  const m = makeEnv(); const ctx = {props: {owner: true}};
+  let forwarded = 0; const fetcher = async () => { forwarded++; return new Response('{}'); };
+  const init = await (await handleMcp(rpc('initialize', 1, {protocolVersion: '2025-06-18', capabilities: {}, clientInfo: {name: 'chatgpt', version: '1'}}), m.env, ctx, {fetcher})).json();
+  assert.equal(init.result.protocolVersion, '2025-06-18');
+  assert.equal(init.result.serverInfo.name, 'nexus-host');
+  assert.equal((await handleMcp(new Request(BASE + '/mcp', {method: 'POST', body: JSON.stringify({jsonrpc: '2.0', method: 'notifications/initialized'})}), m.env, ctx, {fetcher})).status, 202);
+  assert.deepEqual((await (await handleMcp(rpc('ping', 2), m.env, ctx, {fetcher})).json()).result, {});
+  const list = await (await handleMcp(rpc('tools/list', 3), m.env, ctx, {fetcher})).json();
+  assert.deepEqual(list.result.tools.map(t => t.name), ['get_status', 'list_dir', 'read_text', 'make_dir', 'write_text', 'open_app']);
+  assert.equal(forwarded, 0, 'nothing forwarded to the PC');
+  assert.equal((await (await handleMcp(rpc('resources/list', 4), m.env, ctx)).json()).error.code, -32601);
+  assert.equal((await (await handleMcp(rpc('tools/call', 5, {name: 'run_shell', arguments: {}}), m.env, ctx)).json()).error.message, 'unknown_tool');
+  assert.equal((await handleMcp(new Request(BASE + '/mcp', {method: 'POST', body: '{bad'}), m.env, ctx)).status, 400);
 });

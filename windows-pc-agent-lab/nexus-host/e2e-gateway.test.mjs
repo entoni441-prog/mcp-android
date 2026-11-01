@@ -9,6 +9,7 @@ import {fileURLToPath} from 'node:url';
 import {loadConfig, createServer} from './server.mjs';
 import {findCloudflared, loadGateway, registerTunnel} from './nexus.mjs';
 import {handleMcp, handleTunnel} from '../nexus-gateway/src/handlers.mjs';
+import {TOOLS as GATEWAY_TOOLS} from '../nexus-gateway/src/catalog.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -40,7 +41,11 @@ test('gateway → host: real JSON-RPC round-trip with token check', async () => 
 
     // Gateway holding a wrong token gets 401 from the host, never results.
     const {env: badEnv} = kvEnv('w'.repeat(43)); badEnv.OAUTH_KV.put('tunnel', JSON.stringify({url: 'https://abc-def.trycloudflare.com'}));
-    assert.equal((await call({jsonrpc: '2.0', id: 3, method: 'tools/list'}, badEnv)).status, 401);
+    assert.equal((await call({jsonrpc: '2.0', id: 3, method: 'tools/call', params: {name: 'get_status', arguments: {}}}, badEnv)).status, 401);
+
+    // The catalog the gateway serves while the PC is offline must equal the real host's tools/list.
+    const hostList = await (await fetch(local + '/mcp', {method: 'POST', headers: {'content-type': 'application/json', authorization: 'Bearer ' + cfg.token}, body: JSON.stringify({jsonrpc: '2.0', id: 9, method: 'tools/list'})})).json();
+    assert.deepEqual(GATEWAY_TOOLS, hostList.result.tools);
   } finally { host.close(); }
 });
 

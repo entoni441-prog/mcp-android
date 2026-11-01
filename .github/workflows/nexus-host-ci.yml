@@ -28,6 +28,15 @@ jobs:
         with: {node-version: 22}
       - run: npm install --no-audit --no-fund
       - run: node --test test/handlers.test.mjs test/guard-core.test.mjs
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
+      - name: Real MCP client (official Python SDK) against gateway with PC offline
+        run: |
+          pip install -q mcp
+          node test/real-client/serve.mjs 8899 > serve.log 2>&1 &
+          for i in $(seq 50); do grep -q ready serve.log && break; sleep 0.2; done
+          python test/real-client/client.py http://127.0.0.1:8899/mcp | tee client.log
+          grep -q REAL_CLIENT_OFFLINE_PASS client.log
       - name: Bundle Worker with real workers-oauth-provider (dry run, no deploy, no credentials)
         run: npx wrangler deploy --dry-run --outdir dist
       - run: ls -la dist && grep -c "ConsentGuard" dist/index.js
