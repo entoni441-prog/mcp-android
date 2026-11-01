@@ -82,7 +82,7 @@ switch ($a.mode) {
       if ($script:count -ge $max) { return $null }
       $script:count++
       $nm = $e.Current.Name; if ($nm.Length -gt 80) { $nm = $nm.Substring(0, 80) }
-      $node = @{ type = $e.Current.ControlType.ProgrammaticName.Replace('ControlType.', ''); name = $nm; id = $e.Current.AutomationId; rect = (NxRect $e); enabled = $e.Current.IsEnabled }
+      $node = @{ type = $e.Current.ControlType.ProgrammaticName.Replace('ControlType.', ''); name = $nm; id = $e.Current.AutomationId; className = $e.Current.ClassName; rect = (NxRect $e); enabled = $e.Current.IsEnabled }
       if ($d -lt $depthMax) {
         $kids = New-Object System.Collections.ArrayList
         $k = $TW.GetFirstChild($e)

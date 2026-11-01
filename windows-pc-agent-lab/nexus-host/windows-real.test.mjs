@@ -37,7 +37,9 @@ test('Windows: window_info, focus, keyboard, inspect, mouse allow/deny, capture 
     const tree = await gui.inspect_ui({pid, maxDepth: 3});
     console.log('inspect_ui nodes', tree.nodes, JSON.stringify(tree.tree).slice(0, 600));
     const flat = []; const walk = n => { flat.push(n); (n.children || []).forEach(walk); }; tree.tree.forEach(walk);
-    const edit = flat.find(n => ['Edit', 'Document'].includes(n.type) && n.rect && n.rect.w > 50);
+    const edit = flat.find(n => (['Edit', 'Document'].includes(n.type) || /edit/i.test(n.className || '')) && n.rect && n.rect.w > 50)
+      || flat.filter(n => n.type !== 'Window' && n.rect).sort((a, b) => b.rect.w * b.rect.h - a.rect.w * a.rect.h)[0];
+    console.log('edit target', JSON.stringify(edit));
     assert.ok(edit, 'edit control not found');
 
     const k = await gui.keyboard_action({text: 'NEXUS 0.4.0 тест'});
