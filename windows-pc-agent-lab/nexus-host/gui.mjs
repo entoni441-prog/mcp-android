@@ -168,7 +168,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
   return {
     consent,
     /** Snapshot all windows+tabs of a process name (used around open_app / new-tab keys to record NEXUS-created ones). */
-    async snapshotApp(name) { if (platform !== 'win32') return []; try { return await apps(name); } catch { return []; } },
+    async snapshotApp(name) { if (platform !== 'win32') return []; try { return await apps(name); } catch { return null; } },
     warm() { if (caps.gui_input || caps.screen_capture) getRobot().start().catch(() => {}); },
     stop() { daemon?.stop(); },
 
@@ -323,12 +323,12 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         if (g) return g;
       }
       const creating = hasKeys && NEW_KEYS.has(args.keys) && before.window?.process;
-      const snap = creating ? await apps(before.window.process) : null;
+      const snap = creating ? await apps(before.window.process).catch(() => null) : null;
       const R = getRobot();
       const r = hasText ? await R.cmd('paste ' + Buffer.from(args.text, 'utf8').toString('base64')) : await R.cmd('key ' + args.keys);
       if (c && consented && decision === 'close_discard') consent.armDiscard(before.window?.hwnd);
       let created;
-      if (creating) { await sleep(700); created = consent.recordCreated(snap, await apps(before.window.process), 'keys:' + args.keys); }
+      if (creating) { await sleep(700); created = consent.recordCreated(snap, await apps(before.window.process).catch(() => null), 'keys:' + args.keys); }
       const after = await uia({mode: 'focused'});
       return {done: true, target: before.focused.process, foregroundAfter: after.focused?.process || null,
         ...(hasText ? {chars: args.text.length, clipboardRestored: r.clipboardRestored} : {keys: args.keys}),

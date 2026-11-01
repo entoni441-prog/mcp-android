@@ -214,3 +214,47 @@ test('focus fallback is not used without gui_input', async () => {
   assert.equal(r.focused, false); assert.match(r.hint, /gui_input/);
   assert.deepEqual(sent(st), []);
 });
+
+// 0.4.3 — regression from owner's PC 01.11.2026: cold start of Win11 Notepad restored 3 owner tabs, all marked createdByNexus.
+const W = (hwnd, tabs) => ({hwnd, pid: 9, process: 'Notepad', name: 'n', tabs: tabs.map((r, i) => ({rid: r, name: r, selected: i === 0}))});
+test('0.4.3: cold start with restored session tabs owns nothing', () => {
+  const c = createConsent();
+  const r = c.recordCreated([], [W(1, ['wrangler', 'doc', 'pass'])], 'open_app:notepad');
+  assert.deepEqual([r.windows, r.tabs, r.reason], [[], [], 'cold_start_session_restore_possible']);
+  assert.notEqual(c.gate({kind: 'tab', via: 'ctrl+w'}, W(1, ['wrangler', 'doc', 'pass']), null, {}), null);
+  assert.notEqual(c.gate({kind: 'window', via: 'alt+f4'}, W(1, ['wrangler', 'doc', 'pass']), null, {}), null);
+});
+test('0.4.3: cold start with a single tab also owns nothing (could be one restored tab)', () => {
+  const c = createConsent();
+  assert.equal(c.recordCreated([], [W(1, ['x'])], 't').ownership, 'none');
+});
+test('0.4.3: snapshot failure (null) owns nothing', () => {
+  const c = createConsent();
+  assert.equal(c.recordCreated(null, [W(1, [])], 't').reason, 'snapshot_failed');
+  assert.equal(c.recordCreated([], null, 't').reason, 'snapshot_failed');
+});
+test('0.4.3: warm start adding one tab to owner window owns only that tab', () => {
+  const c = createConsent();
+  const r = c.recordCreated([W(1, ['own1', 'own2'])], [W(1, ['own1', 'own2', 'nx'])], 't');
+  assert.deepEqual([r.windows, r.tabs], [[], ['nx']]);
+  const win = {...W(1, ['own1', 'own2', 'nx'])}; win.tabs.forEach(t => { t.selected = t.rid === 'nx'; });
+  assert.equal(c.gate({kind: 'tab', via: 'ctrl+w'}, win, null, {}), null);
+  win.tabs.forEach(t => { t.selected = t.rid === 'own1'; });
+  assert.notEqual(c.gate({kind: 'tab', via: 'ctrl+w'}, win, null, {}), null);
+  assert.notEqual(c.gate({kind: 'window', via: 'alt+f4'}, win, null, {}), null);
+});
+test('0.4.3: several new tabs at once are ambiguous → nothing owned', () => {
+  const c = createConsent();
+  assert.equal(c.recordCreated([W(1, ['a'])], [W(1, ['a', 'b', 'c'])], 't').reason, 'multiple_new_tabs_ambiguous');
+});
+test('0.4.3: classic Notepad (no tabs) cold start still owns its window', () => {
+  const c = createConsent();
+  const r = c.recordCreated([], [W(5, [])], 't');
+  assert.deepEqual(r.windows, ['n']);
+  assert.equal(c.gate({kind: 'window', via: 'alt+f4'}, W(5, []), null, {}), null);
+});
+test('0.4.3: warm ctrl+shift+n new window with one new tab is owned', () => {
+  const c = createConsent();
+  const r = c.recordCreated([W(1, ['a'])], [W(1, ['a']), W(2, ['nx'])], 't');
+  assert.deepEqual([r.windows, r.tabs], [['n'], ['nx']]);
+});

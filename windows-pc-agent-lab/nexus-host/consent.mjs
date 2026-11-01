@@ -1,5 +1,5 @@
 /**
- * NEXUS Host 0.4.2 — ownership of windows/tabs and owner consent for closing.
+ * NEXUS Host 0.4.3 — ownership of windows/tabs and owner consent for closing.
  *
  * Principle (owner, 01.11.2026): autonomy by default, consent for risky actions — no blanket ban.
  *  - Windows/tabs/processes created by NEXUS in this Host session are "owned": closing them is autonomous.
@@ -90,15 +90,31 @@ export function createConsent({audit = () => {}, now = () => Date.now()} = {}) {
 
   return {
     owned,
-    /** Record windows/tabs that appeared between two snapshots (open_app, ctrl+n, ctrl+t…). */
+    /**
+     * Record windows/tabs that appeared between two snapshots (open_app, ctrl+n, ctrl+t…). FAIL-CLOSED (0.4.3):
+     *  - before === null (snapshot failed) → nothing is owned;
+     *  - cold start (no window of the app existed before) and the new window has tabs → Windows 11 Notepad may have
+     *    RESTORED the owner's previous session into it → nothing is owned (closing needs consent);
+     *  - a new window without tabs (classic Notepad, Calculator) → owned;
+     *  - otherwise at most ONE new tab may be owned; several new tabs at once are ambiguous → nothing is owned.
+     */
     recordCreated(before = [], after = [], source) {
+      const created = {windows: [], tabs: []};
+      const refuse = reason => { created.ownership = 'none'; created.reason = reason;
+        audit({event: 'nexus_created_refused', source, reason, windows: (after || []).length}); return created; };
+      if (!Array.isArray(before) || !Array.isArray(after)) return refuse('snapshot_failed');
       const prevW = new Set(before.map(w => String(w.hwnd)));
       const prevT = new Set(before.flatMap(w => tabsOf(w).map(t => t.rid)));
-      const created = {windows: [], tabs: []};
-      for (const w of after) {
-        if (!prevW.has(String(w.hwnd))) { owned.windows.add(String(w.hwnd)); created.windows.push(w.name); if (w.pid) owned.pids.add(w.pid); }
-        for (const t of tabsOf(w)) if (!prevT.has(t.rid)) { owned.tabs.add(t.rid); created.tabs.push(t.name); }
+      const cold = before.length === 0;
+      const newWins = after.filter(w => !prevW.has(String(w.hwnd)));
+      const newTabs = after.flatMap(w => tabsOf(w).filter(t => !prevT.has(t.rid)).map(t => ({w, t})));
+      if (cold && newWins.some(w => tabsOf(w).length)) return refuse('cold_start_session_restore_possible');
+      if (newTabs.length > 1) return refuse('multiple_new_tabs_ambiguous');
+      for (const w of newWins) {
+        if (tabsOf(w).some(t => prevT.has(t.rid))) continue; // a window holding pre-existing tabs is not ours
+        owned.windows.add(String(w.hwnd)); created.windows.push(w.name); if (w.pid) owned.pids.add(w.pid);
       }
+      for (const {t} of newTabs) { owned.tabs.add(t.rid); created.tabs.push(t.name); }
       if (created.windows.length || created.tabs.length) audit({event: 'nexus_created', source, ...created});
       return created;
     },

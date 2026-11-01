@@ -108,7 +108,7 @@ export function createRuntime(cfg, deps = {}) {
     const out = await executeJob('open_app', a, {workspace: cfg.workspace, ...execDeps});
     if (!name || process.platform !== 'win32') return out;
     let after = before;
-    for (let i = 0; i < 5; i++) { await new Promise(r => setTimeout(r, 400)); after = await gui.snapshotApp(name); if (JSON.stringify(after) !== JSON.stringify(before)) break; }
+    for (let i = 0; i < 5; i++) { await new Promise(r => setTimeout(r, 400)); after = await gui.snapshotApp(name); if (before !== null && after !== null && JSON.stringify(after) !== JSON.stringify(before)) break; }
     return {...out, createdByNexus: consent.recordCreated(before, after, 'open_app:' + a.app),
       note: 'Only windows/tabs listed in createdByNexus may be closed without asking the owner.'};
   };
