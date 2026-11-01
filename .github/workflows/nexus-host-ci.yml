@@ -1,0 +1,19 @@
+name: nexus-host-ci
+on:
+  push:
+    branches: [experiment/nexus-host-mcp-20261101]
+    paths: ['windows-pc-agent-lab/nexus-host/**', 'windows-pc-agent-lab/v3/actions.mjs', '.github/workflows/nexus-host-ci.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - run: node --test windows-pc-agent-lab/nexus-host/server.test.mjs
