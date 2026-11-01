@@ -1,8 +1,8 @@
 /**
- * NEXUS 0.4.0 tool catalog — SINGLE SOURCE. nexus-gateway/src/catalog.mjs must be a byte-identical copy
+ * NEXUS 0.4.1 tool catalog — SINGLE SOURCE. nexus-gateway/src/catalog.mjs must be a byte-identical copy
  * (the gateway answers tools/list while the PC is offline); enforced by catalog.test.mjs.
  */
-export const VERSION = '0.4.0';
+export const VERSION = '0.4.1';
 export const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 export const SERVER_INFO = {name: 'nexus-host', version: VERSION};
 const str = (description) => ({type: 'string', description});
@@ -39,6 +39,9 @@ export const TOOLS = [
   // ── 0.4.0 workspace files ──
   {name: 'search_files', description: 'Find files/folders by name substring inside the workspace.', inputSchema: obj({query: str('Name substring'), path: str('Start folder, "" = root'), maxResults: int('Default 100', 1, 200)}, ['query']), annotations: RO},
   {name: 'file_action', description: 'copy / move / rename / delete inside the workspace. Never overwrites. delete moves into .nexus-trash (recoverable). rename: "to" is a new name in the same folder.', inputSchema: obj({action: {type: 'string', enum: ['copy', 'move', 'rename', 'delete']}, path: str('Relative source path'), to: str('Relative destination path (copy/move) or new name (rename)')}, ['action', 'path'])},
+  // ── 0.4.1 permission switches (live, no restart) ──
+  {name: 'get_capabilities', description: 'Current NEXUS permission switches (screen_capture, ui_read, gui_input, process_control, run_task, browser), allowlisted input apps, task names, and whether capabilities.json has an error.', inputSchema: obj({}), annotations: RO},
+  {name: 'set_capability', description: 'Switch mouse/keyboard control (gui_input) on or off immediately, without restarting NEXUS. Call ONLY when the owner explicitly asked for it in this chat ("включи ввод" / "выключи ввод"). Every change is recorded in the audit log. Other permissions can only be changed by the owner on the PC.', inputSchema: obj({capability: {type: 'string', enum: ['gui_input']}, enabled: {type: 'boolean'}}, ['capability', 'enabled'])},
   // ── 0.4.0 browser (separate Edge profile) ──
   {name: 'browser_open', description: 'Open a public http(s) URL in NEXUS\'s own Edge window (separate profile, no owner cookies). Local/private addresses refused. Requires capability browser.', inputSchema: obj({url: str('http(s) URL')}, ['url'])},
   {name: 'browser_snapshot', description: 'Current page: url, title, visible text (≤6000 chars) and interactive elements with refs (e1, e2…) for browser_action. Optional JPEG screenshot.', inputSchema: obj({screenshot: {type: 'boolean'}}), annotations: RO},

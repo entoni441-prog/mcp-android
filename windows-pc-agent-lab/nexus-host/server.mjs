@@ -25,6 +25,7 @@ import {createGui} from './gui.mjs';
 import {createProcs} from './procs.mjs';
 import {createBrowser} from './browser.mjs';
 import {searchFiles, fileAction} from './files.mjs';
+import {createCapStore} from './capstore.mjs';
 const MAX_BODY = 64 * 1024;
 
 export function loadConfig(env = process.env) {
@@ -65,7 +66,9 @@ export function loadConfig(env = process.env) {
 
 /** One runtime per host process: Java daemon, browser, task table. Tests inject fakes via deps.runtime. */
 export function createRuntime(cfg, deps = {}) {
-  const caps = cfg.caps || validateCapabilities(DEFAULT_CAPABILITIES);
+  const store = createCapStore({file: cfg.capabilitiesFile || null, initial: cfg.caps || validateCapabilities(DEFAULT_CAPABILITIES), audit: e => audit(cfg, e)});
+  store.watch();
+  const caps = store.view;
   const procs = createProcs({caps, cfg, ...(deps.procsDeps || {})});
   const gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, ...(deps.guiDeps || {})});
   const browser = createBrowser({caps, home: cfg.home, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
@@ -76,17 +79,24 @@ export function createRuntime(cfg, deps = {}) {
     list_processes: a => procs.list_processes(a), process_action: a => procs.process_action(a), run_task: a => procs.run_task(a),
     task_status: a => procs.task_status(a), task_cancel: a => procs.task_cancel(a), read_audit_log: a => procs.read_audit_log(a),
     search_files: a => searchFiles(a, ws), file_action: a => fileAction(a, ws),
+    get_capabilities: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return store.status(); },
+    set_capability: a => {
+      if (!a || typeof a !== 'object' || Object.keys(a).some(k => !['capability', 'enabled'].includes(k))) throw Error('invalid_args');
+      return {...store.set(a.capability, a.enabled, 'tool'), note: 'Applied immediately, no restart. Recorded in audit log.'};
+    },
     browser_open: a => browser.browser_open(a), browser_snapshot: a => browser.browser_snapshot(a), browser_action: a => browser.browser_action(a),
   };
-  return {caps, handlers, gui, procs, browser, stop() { gui.stop(); browser.stop(); procs.stopAll(); }};
+  return {caps, store, handlers, gui, procs, browser, stop() { store.stop(); gui.stop(); browser.stop(); procs.stopAll(); }};
 }
 
 export function printCapabilities(cfg) {
-  const c = cfg.caps;
+  cfg.runtime ||= createRuntime(cfg);
+  const c = cfg.runtime.store.get();
   const on = ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser'].map(k => `${k}=${c[k] ? 'ON' : 'off'}`).join(' ');
   console.log(`Capabilities (${cfg.capabilitiesFile || 'env'}): ${on}`);
   console.log(`Input apps: ${c.inputApps.join(', ') || '-'}; tasks: ${Object.keys(c.tasks).join(', ') || '-'}`);
-  if (process.platform === 'win32') { cfg.runtime ||= createRuntime(cfg); cfg.runtime.gui.warm(); }
+  console.log('Capabilities are re-read live (no restart needed); gui_input can be switched from chat via set_capability.');
+  if (process.platform === 'win32') cfg.runtime.gui.warm();
 }
 
 /** Audit never stores typed text or file content — only their length. */
@@ -116,7 +126,7 @@ export async function handleRpc(msg, cfg, deps = {}) {
         protocolVersion: PROTOCOL_VERSIONS.includes(requested) ? requested : PROTOCOL_VERSIONS[0],
         capabilities: {tools: {listChanged: false}},
         serverInfo: {name: 'nexus-host', version: VERSION},
-        instructions: 'Owner-approved access to one Windows PC. File tools are confined to the NEXUS workspace folder. GUI input, process control, tasks and browser are off unless the owner enabled them in capabilities.json.',
+        instructions: 'Owner-approved access to one Windows PC. File tools are confined to the NEXUS workspace folder. GUI input, process control, tasks and browser are off unless the owner enabled them. Use get_capabilities to see current switches; call set_capability ONLY when the owner explicitly asked in this chat.',
       });
     }
     case 'ping': return rpcResult(id, {});
@@ -128,6 +138,7 @@ export async function handleRpc(msg, cfg, deps = {}) {
       try {
         const {principal: _p, accessVerifier: _v, runtime: _r, procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, ...execDeps} = deps;
         const rt = deps.runtime || (cfg.runtime ||= createRuntime(cfg, deps));
+        rt.store?.refresh('file');
         let out;
         if (name === 'list_windows') out = await listWindows(args, {tmpDir: path.join(cfg.home, 'tmp'), ...execDeps});
         else if (rt.handlers[name]) out = await rt.handlers[name](args);
@@ -138,7 +149,7 @@ export async function handleRpc(msg, cfg, deps = {}) {
         }
         return rpcResult(id, {content: [{type: 'text', text: JSON.stringify(out)}], structuredContent: out, isError: false});
       } catch (e) {
-        const code = /^[a-z0-9_]+(?:: [\w -]+)?$/.test(e?.message) ? e.message : 'internal_error';
+        const code = e?.code === 'ENOENT' ? 'not_found' : /^[a-z0-9_]+(?:: [\w -]+)?$/.test(e?.message) ? e.message : 'internal_error';
         audit(cfg, {by: deps.principal, tool: name, ok: false, error: code, detail: e?.detail, args: auditArgs(args)});
         return rpcResult(id, {content: [{type: 'text', text: `error: ${code}`}], isError: true});
       }
