@@ -1,0 +1,106 @@
+// REAL Windows (CI runner, classic Notepad): 0.4.2 owner consent for closing. win32 + NEXUS_REAL_GUI=1 only.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {spawn, spawnSync} from 'node:child_process';
+import {createGui} from './gui.mjs';
+import {createConsent} from './consent.mjs';
+import {listWindows} from './windows.mjs';
+import {validateCapabilities} from './capabilities.mjs';
+
+const RUN = process.platform === 'win32' && process.env.NEXUS_REAL_GUI === '1';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const NOTEPAD = () => path.join(process.env.SystemRoot, 'System32', 'notepad.exe');
+
+async function newNotepad(home, known) {
+  spawn(NOTEPAD(), [], {detached: true, stdio: 'ignore'}).unref();
+  for (let i = 0; i < 30; i++) {
+    await sleep(500);
+    const w = (await listWindows({}, {tmpDir: home})).windows.find(x => /^notepad$/i.test(x.process) && !known.has(x.pid));
+    if (w) { known.add(w.pid); return w.pid; }
+  }
+  throw Error('notepad not found');
+}
+const alive = async (home, pid) => (await listWindows({}, {tmpDir: home})).windows.some(w => w.pid === pid);
+const flat = tree => { const out = []; const walk = n => { out.push(n); (n.children || []).forEach(walk); }; tree.forEach(walk); return out; };
+async function waitGone(home, pid) { for (let i = 0; i < 20; i++) { if (!(await alive(home, pid))) return true; await sleep(300); } return false; }
+
+test('Windows: closing a window NEXUS did not open needs consent; own window closes autonomously; «Don\'t Save» gated', {skip: !RUN && 'win32 + NEXUS_REAL_GUI=1 only', timeout: 300_000}, async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-consent-real-'));
+  const log = [];
+  const consent = createConsent({audit: e => log.push(e)});
+  const gui = createGui({caps: validateCapabilities({gui_input: true}), home, workspace: path.join(home, 'ws'), platform: 'win32', consent});
+  const known = new Set((await listWindows({}, {tmpDir: home})).windows.map(w => w.pid));
+  const pids = [];
+  try {
+    // 1) FOREIGN Notepad (started outside NEXUS, like the owner's own window).
+    const foreign = await newNotepad(home, known); pids.push(foreign);
+    assert.equal((await gui.focus_window({pid: foreign})).focused, true);
+    const k = await gui.keyboard_action({keys: 'alt+f4'});
+    console.log('foreign alt+f4', JSON.stringify(k));
+    assert.equal(k.status, 'consent_required');
+    await sleep(800);
+    assert.equal(await alive(home, foreign), true, 'foreign window must still be open');
+
+    const tree = flat((await gui.inspect_ui({pid: foreign, maxDepth: 4, maxNodes: 300})).tree);
+    const closeBtn = tree.find(n => n.type === 'Button' && /^(close|закрыть)$/i.test(n.name) && n.rect);
+    console.log('close button', JSON.stringify(closeBtn));
+    if (closeBtn) {
+      const m = await gui.mouse_action({action: 'click', x: closeBtn.rect.x + Math.floor(closeBtn.rect.w / 2), y: closeBtn.rect.y + Math.floor(closeBtn.rect.h / 2)});
+      console.log('foreign click Close', JSON.stringify(m));
+      assert.equal(m.status, 'consent_required');
+      await sleep(800);
+      assert.equal(await alive(home, foreign), true);
+    }
+    // owner agrees → exact replay closes it (empty document: no save prompt)
+    const p = consent.take(k.consentId, 'close_discard', k.target);
+    await gui.focus_window({pid: foreign});
+    const done = await gui.keyboard_action(p.replay.args, {consented: p, decision: 'close_discard'});
+    console.log('foreign confirmed', JSON.stringify(done));
+    assert.equal(await waitGone(home, foreign), true, 'consented close must close the window');
+
+    // 2) OWN Notepad (recorded as NEXUS-created), with typed text → autonomous close, «Don't Save» allowed.
+    const before = await gui.snapshotApp('notepad');
+    const own = await newNotepad(home, known); pids.push(own);
+    await sleep(500);
+    const created = consent.recordCreated(before, await gui.snapshotApp('notepad'), 'test');
+    console.log('created', JSON.stringify(created));
+    assert.equal(created.windows.length, 1);
+    await gui.focus_window({pid: own});
+    await gui.keyboard_action({text: 'NEXUS test text'});
+    const c = await gui.keyboard_action({keys: 'alt+f4'});
+    console.log('own alt+f4', JSON.stringify(c));
+    assert.equal(c.done, true); assert.equal(c.consented, false);
+    await sleep(1200);
+    const dlg = flat((await gui.inspect_ui({pid: own, maxDepth: 6, maxNodes: 400})).tree);
+    const dontSave = dlg.find(n => n.type === 'Button' && /don.?t save|не сохранять/i.test(n.name) && n.rect);
+    console.log('dont save', JSON.stringify(dontSave));
+    assert.ok(dontSave, 'save prompt expected');
+    const ds = await gui.mouse_action({action: 'click', x: dontSave.rect.x + Math.floor(dontSave.rect.w / 2), y: dontSave.rect.y + Math.floor(dontSave.rect.h / 2)});
+    console.log('own dont save', JSON.stringify(ds));
+    assert.equal(ds.done, true);
+    assert.equal(await waitGone(home, own), true);
+
+    // 3) FOREIGN Notepad with text: «Don't Save» without an armed close → consent.
+    const f2 = await newNotepad(home, known); pids.push(f2);
+    await gui.focus_window({pid: f2});
+    await gui.keyboard_action({text: 'owner text'});
+    const k2 = await gui.keyboard_action({keys: 'alt+f4'});
+    assert.equal(k2.status, 'consent_required');
+    const p2 = consent.take(k2.consentId, 'close_save', k2.target);            // owner wants to KEEP the text
+    await gui.keyboard_action(p2.replay.args, {consented: p2, decision: 'close_save'});
+    await sleep(1200);
+    const dlg2 = flat((await gui.inspect_ui({pid: f2, maxDepth: 6, maxNodes: 400})).tree);
+    const ds2 = dlg2.find(n => n.type === 'Button' && /don.?t save|не сохранять/i.test(n.name) && n.rect);
+    const r2 = await gui.mouse_action({action: 'click', x: ds2.rect.x + Math.floor(ds2.rect.w / 2), y: ds2.rect.y + Math.floor(ds2.rect.h / 2)});
+    console.log('foreign dont save after close_save', JSON.stringify(r2));
+    assert.equal(r2.status, 'consent_required', 'discard must not be possible when the owner chose save');
+    assert.equal(await alive(home, f2), true);
+    console.log('audit events', JSON.stringify(log.map(e => e.event)));
+  } finally {
+    for (const p of pids) spawnSync(path.join(process.env.SystemRoot, 'System32', 'taskkill.exe'), ['/pid', String(p), '/f']);
+    gui.stop();
+  }
+});

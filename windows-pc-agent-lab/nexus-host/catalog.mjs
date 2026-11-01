@@ -1,8 +1,8 @@
 /**
- * NEXUS 0.4.1 tool catalog — SINGLE SOURCE. nexus-gateway/src/catalog.mjs must be a byte-identical copy
+ * NEXUS 0.4.2 tool catalog — SINGLE SOURCE. nexus-gateway/src/catalog.mjs must be a byte-identical copy
  * (the gateway answers tools/list while the PC is offline); enforced by catalog.test.mjs.
  */
-export const VERSION = '0.4.1';
+export const VERSION = '0.4.2';
 export const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 export const SERVER_INFO = {name: 'nexus-host', version: VERSION};
 const str = (description) => ({type: 'string', description});
@@ -19,7 +19,7 @@ export const TOOLS = [
   {name: 'read_text', description: 'Read a small UTF-8 text file (≤8 KiB) inside the workspace. Returns text and sha256.', inputSchema: obj({path: str('Relative path')}, ['path']), annotations: RO},
   {name: 'make_dir', description: 'Create one folder inside the workspace.', inputSchema: obj({path: str('Relative path')}, ['path'])},
   {name: 'write_text', description: 'Create (expectedSha256=null) or replace (expectedSha256=current sha256) a small text file inside the workspace.', inputSchema: obj({path: str('Relative path'), content: str('UTF-8 text ≤8 KiB'), expectedSha256: {type: ['string', 'null']}}, ['path', 'content', 'expectedSha256'])},
-  {name: 'open_app', description: 'Open an allowlisted Windows app on the owner\'s desktop.', inputSchema: obj({app: {type: 'string', enum: ['notepad', 'calculator']}}, ['app'])},
+  {name: 'open_app', description: 'Open an allowlisted Windows app on the owner\'s desktop. Windows 11 Notepad may add a TAB to the owner\'s existing window: the result lists createdByNexus — only those may be closed without asking.', inputSchema: obj({app: {type: 'string', enum: ['notepad', 'calculator']}}, ['app'])},
   {name: 'list_windows', description: 'List top-level windows open on the owner\'s Windows desktop (read-only). Returns pid and process name; window titles only when includeTitles=true (titles may contain personal data).', inputSchema: obj({includeTitles: {type: 'boolean', description: 'Also return window titles. Default false.'}}), annotations: RO},
   // ── 0.4.0 GUI ──
   {name: 'image_selftest', description: 'Diagnostic: returns a 64x64 test PNG (four coloured squares) to check that images reach the model.', inputSchema: obj({}), annotations: RO},
@@ -27,11 +27,11 @@ export const TOOLS = [
   {name: 'focus_window', description: 'Bring an allowlisted app window (default: Notepad, Calculator) to the foreground and confirm it really is focused.', inputSchema: obj({pid: PID}, ['pid'])},
   {name: 'window_info', description: 'Windows of an allowlisted app: name, class, rectangle in screen points, whether focused.', inputSchema: obj({pid: PID}, ['pid']), annotations: RO},
   {name: 'inspect_ui', description: 'UI Automation control tree of an allowlisted app window: type, name, automation id, rectangle (screen points), enabled.', inputSchema: obj({pid: PID, maxDepth: int('Default 4', 1, 8), maxNodes: int('Default 150', 1, 400)}, ['pid']), annotations: RO},
-  {name: 'mouse_action', description: `Mouse in an allowlisted app only (refused if the element under the point belongs to another app). ${SP}. Requires owner capability gui_input.`, inputSchema: obj({action: {type: 'string', enum: ['move', 'click', 'double_click', 'right_click', 'scroll', 'drag']}, x: int('X', -20000, 20000), y: int('Y', -20000, 20000), x2: int('Drag end X', -20000, 20000), y2: int('Drag end Y', -20000, 20000), amount: int('Scroll notches (+down)', -20, 20)}, ['action', 'x', 'y'])},
-  {name: 'keyboard_action', description: 'Type text (via clipboard paste) or press one key chord (e.g. "ctrl+s", "enter") into the focused allowlisted app. Exactly one of text/keys. Windows key and Ctrl+Alt chords are refused. Requires capability gui_input.', inputSchema: obj({text: str('Text to paste, ≤4000 chars'), keys: str('Chord: [ctrl+][shift+][alt+]key; key = a-z 0-9 enter tab esc backspace delete space arrows home end pageup pagedown f1-f12')})},
+  {name: 'mouse_action', description: `Mouse in an allowlisted app only (refused if the element under the point belongs to another app). ${SP}. Requires owner capability gui_input. Clicking Close / «Don\'t save» on a window or tab NEXUS did not open returns consent_required (ask the owner, then confirm_action).`, inputSchema: obj({action: {type: 'string', enum: ['move', 'click', 'double_click', 'right_click', 'scroll', 'drag']}, x: int('X', -20000, 20000), y: int('Y', -20000, 20000), x2: int('Drag end X', -20000, 20000), y2: int('Drag end Y', -20000, 20000), amount: int('Scroll notches (+down)', -20, 20)}, ['action', 'x', 'y'])},
+  {name: 'keyboard_action', description: 'Type text (via clipboard paste) or press one key chord (e.g. "ctrl+s", "enter") into the focused allowlisted app. Exactly one of text/keys. Windows key and Ctrl+Alt chords are refused. Requires capability gui_input. Closing chords (ctrl+w, ctrl+f4, alt+f4…) on windows/tabs NEXUS did not open return consent_required.', inputSchema: obj({text: str('Text to paste, ≤4000 chars'), keys: str('Chord: [ctrl+][shift+][alt+]key; key = a-z 0-9 enter tab esc backspace delete space arrows home end pageup pagedown f1-f12')})},
   // ── 0.4.0 processes / tasks / audit ──
   {name: 'list_processes', description: 'Running processes (name, pid, memory). Read-only.', inputSchema: obj({nameFilter: str('Substring filter'), limit: int('Default 200', 1, 500)}), annotations: RO},
-  {name: 'process_action', description: 'close = polite close of an allowlisted app or NEXUS-started process; kill = force stop, only processes NEXUS started. Requires capability process_control.', inputSchema: obj({pid: PID, action: {type: 'string', enum: ['close', 'kill']}}, ['pid', 'action'])},
+  {name: 'process_action', description: 'close = polite close (an allowlisted app NEXUS did not start returns consent_required); kill = force stop, only processes NEXUS started. Requires capability process_control.', inputSchema: obj({pid: PID, action: {type: 'string', enum: ['close', 'kill']}}, ['pid', 'action'])},
   {name: 'run_task', description: 'Start a task the owner predefined in capabilities.json (fixed program + arguments). No arbitrary commands. Returns an id; poll task_status.', inputSchema: obj({task: str('Task name')}, ['task'])},
   {name: 'task_status', description: 'Without id: list tasks and available task names. With id: state, exit code, output tail.', inputSchema: obj({id: str('Task id')}), annotations: RO},
   {name: 'task_cancel', description: 'Stop a running task started by run_task.', inputSchema: obj({id: str('Task id')}, ['id'])},
@@ -42,6 +42,9 @@ export const TOOLS = [
   // ── 0.4.1 permission switches (live, no restart) ──
   {name: 'get_capabilities', description: 'Current NEXUS permission switches (screen_capture, ui_read, gui_input, process_control, run_task, browser), allowlisted input apps, task names, and whether capabilities.json has an error.', inputSchema: obj({}), annotations: RO},
   {name: 'set_capability', description: 'Switch mouse/keyboard control (gui_input) on or off immediately, without restarting NEXUS. Call ONLY when the owner explicitly asked for it in this chat ("включи ввод" / "выключи ввод"). Every change is recorded in the audit log. Other permissions can only be changed by the owner on the PC.', inputSchema: obj({capability: {type: 'string', enum: ['gui_input']}, enabled: {type: 'boolean'}}, ['capability', 'enabled'])},
+  // ── 0.4.2 owner consent + diagnostics ──
+  {name: 'confirm_action', description: 'Execute a close that returned consent_required, ONLY after the owner agreed in this chat. decision: close_discard (close; «Don\'t save» allowed if asked), close_save (close; save if asked), cancel. target must repeat the consent_required target text exactly. Single use, expires in 120 s.', inputSchema: obj({consentId: str('consentId from consent_required'), decision: {type: 'string', enum: ['close_discard', 'close_save', 'cancel']}, target: str('Exact target text from consent_required')}, ['consentId', 'decision', 'target'])},
+  {name: 'host_diagnostics', description: 'NEXUS Host health for connection problems: version, uptime, tunnel registration time and recent tunnel events (no URLs/IPs), pending consents.', inputSchema: obj({}), annotations: RO},
   // ── 0.4.0 browser (separate Edge profile) ──
   {name: 'browser_open', description: 'Open a public http(s) URL in NEXUS\'s own Edge window (separate profile, no owner cookies). Local/private addresses refused. Requires capability browser.', inputSchema: obj({url: str('http(s) URL')}, ['url'])},
   {name: 'browser_snapshot', description: 'Current page: url, title, visible text (≤6000 chars) and interactive elements with refs (e1, e2…) for browser_action. Optional JPEG screenshot.', inputSchema: obj({screenshot: {type: 'boolean'}}), annotations: RO},

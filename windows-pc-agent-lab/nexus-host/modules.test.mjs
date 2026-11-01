@@ -19,7 +19,7 @@ test('gateway catalog is a byte-identical copy of the host catalog', () => {
   const a = fs.readFileSync(path.join(HERE, 'catalog.mjs'));
   const b = fs.readFileSync(path.join(HERE, '..', 'nexus-gateway', 'src', 'catalog.mjs'));
   assert.ok(a.equals(b), 'run: cp nexus-host/catalog.mjs nexus-gateway/src/catalog.mjs');
-  assert.equal(VERSION, '0.4.1');
+  assert.equal(VERSION, '0.4.2');
 });
 
 test('every catalog tool has an implementation and a strict input schema', () => {

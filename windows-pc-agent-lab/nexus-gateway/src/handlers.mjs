@@ -105,6 +105,7 @@ export async function handleTunnel(request, env) {
 
 const rpcOk = (id, result) => json(200, {jsonrpc: '2.0', id, result});
 const rpcErr = (id, code, message) => json(200, {jsonrpc: '2.0', id: id ?? null, error: {code, message}});
+const TOOL_TIMEOUT_MS = 55_000;
 const OFFLINE_TEXT = 'pc_offline: NEXUS Host on the Windows PC is not connected. Ask the owner to start nexus.mjs.';
 
 /**
@@ -133,19 +134,39 @@ export async function handleMcp(request, env, ctx, {fetcher = fetch} = {}) {
   if (method !== 'tools/call') return rpcErr(id, -32601, 'method_not_found');
   if (!TOOLS.some(t => t.name === params?.name)) return rpcErr(id, -32602, 'unknown_tool');
 
-  const offline = () => rpcOk(id, {content: [{type: 'text', text: OFFLINE_TEXT}], isError: true});
+  // 0.4.2: every "PC not reachable" answer carries a reason code (no secrets, no tunnel URL) for pc_offline diagnosis;
+  // also printed to the Worker log (visible in `wrangler tail`).
+  const offline = reason => {
+    console.log(JSON.stringify({nexus: 'pc_offline', reason, tool: params?.name}));
+    return rpcOk(id, {content: [{type: 'text', text: `${OFFLINE_TEXT} [reason: ${reason}]`}], isError: true});
+  };
   const raw = await env.OAUTH_KV.get('tunnel');
-  if (!raw) return offline();
-  const {url} = JSON.parse(raw);
-  if (!TUNNEL_RE.test(url)) return offline();
+  if (!raw) return offline('no_tunnel_registered');
+  const {url, registeredAt} = JSON.parse(raw);
+  if (!TUNNEL_RE.test(url)) return offline('bad_tunnel_url');
+  const readOnly = TOOLS.find(t => t.name === params?.name)?.annotations?.readOnlyHint === true;
+  const forward = () => fetcher(url + '/mcp', {
+    method: 'POST', body,
+    headers: {'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer ' + secret(env.NEXUS_TOKEN)},
+    signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
+  });
   let r;
-  try {
-    r = await fetcher(url + '/mcp', {
-      method: 'POST', body,
-      headers: {'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer ' + secret(env.NEXUS_TOKEN)},
-      signal: AbortSignal.timeout(25000),
-    });
-  } catch { return offline(); }
-  if (r.status >= 500 || r.status === 404 || r.status === 530) return offline();
+  for (let attempt = 1; ; attempt++) {
+    try { r = await forward(); }
+    catch (e) {
+      if (e?.name === 'TimeoutError') {
+        console.log(JSON.stringify({nexus: 'pc_timeout', tool: params?.name}));
+        return rpcOk(id, {content: [{type: 'text', text: `pc_timeout: NEXUS Host did not answer within ${TOOL_TIMEOUT_MS / 1000} s. The action may still have run — check before repeating. [tool: ${params?.name}]`}], isError: true});
+      }
+      if (readOnly && attempt === 1) { await new Promise(res => setTimeout(res, 1500)); continue; } // safe to repeat
+      return offline('tunnel_unreachable');
+    }
+    // 530/502/504 from Cloudflare edge = tunnel down/reconnecting; a read-only call may be retried once.
+    if ([502, 503, 504, 530].includes(r.status) && readOnly && attempt === 1) { await new Promise(res => setTimeout(res, 1500)); continue; }
+    break;
+  }
+  if (r.status === 530 || r.status === 502 || r.status === 503 || r.status === 504) return offline(`edge_${r.status}${registeredAt ? '_registered_' + Math.round((Date.now() - registeredAt) / 1000) + 's_ago' : ''}`);
+  if (r.status >= 500) return offline(`host_${r.status}`);
+  if (r.status === 404) return offline('host_404');
   return new Response(await r.text(), {status: r.status, headers: {'content-type': r.headers.get('content-type') || 'application/json', 'cache-control': 'no-store'}});
 }

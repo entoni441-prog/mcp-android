@@ -24,6 +24,7 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {UIA_SCRIPT} from './uia-script.mjs';
 import {requireCap, isHardDenied} from './capabilities.mjs';
+import {classifyKeys, classifyClick, createConsent} from './consent.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROBOT_SRC = path.join(HERE, 'NexusRobot.java');
@@ -139,7 +140,7 @@ export function testPng(size = 64) {
 }
 
 // ───────────── tools ─────────────
-export function createGui({caps, home, workspace, platform = process.platform, runUia, robot}) {
+export function createGui({caps, home, workspace, platform = process.platform, runUia, robot, consent = createConsent(), sleep = ms => new Promise(r => setTimeout(r, ms))}) {
   const tmpDir = path.join(home, 'tmp');
   const uia = runUia || (args => runUiaReal(args, {tmpDir}));
   let daemon = robot || null;
@@ -161,7 +162,13 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     return r;
   }
 
+  const NEW_KEYS = new Set(['ctrl+n', 'ctrl+t', 'ctrl+shift+n', 'shift+ctrl+n']);
+  const apps = async name => (await uia({mode: 'apps', name})).apps || [];
+
   return {
+    consent,
+    /** Snapshot all windows+tabs of a process name (used around open_app / new-tab keys to record NEXUS-created ones). */
+    async snapshotApp(name) { if (platform !== 'win32') return []; try { return await apps(name); } catch { return []; } },
     warm() { if (caps.gui_input || caps.screen_capture) getRobot().start().catch(() => {}); },
     stop() { daemon?.stop(); },
 
@@ -222,15 +229,44 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       if (!onlyKeys(args, ['pid']) || !int(args.pid, 1, 2 ** 31)) bad();
       const w = await checkPid(args.pid);
       if (!w.windows?.length) throw Error('window_not_found');
-      if (w.focused?.pid === args.pid) return {focused: true, already: true, method: 'none'};
+      const hwnds = new Set(w.windows.filter(x => x.hwnd).map(x => String(x.hwnd)));
+      const isOn = f => f?.ok === true && (f.pid === args.pid || (!!f.topHwnd && hwnds.has(String(f.topHwnd))));
+      if (isOn(w.focused)) return {focused: true, already: true, method: 'none'};
+      const attempts = [];
       const r = await uia({mode: 'activate', pid: args.pid, title: String(w.windows[0].name || '').slice(0, 200)});
-      const ok = r.focused?.ok === true && r.focused.pid === args.pid;
-      return {focused: ok, method: r.appActivateByPid ? 'AppActivate(pid)' : r.appActivateByTitle ? 'AppActivate(title)' : 'none',
-        foregroundProcess: r.focused?.process || null,
-        hint: ok ? undefined : 'Focus not confirmed. Use mouse_action click inside the window (requires gui_input).'};
+      attempts.push({method: 'AppActivate', byPid: !!r.appActivateByPid, byTitle: !!r.appActivateByTitle, foreground: r.focused?.process || null});
+      if (isOn(r.focused)) return {focused: true, method: r.appActivateByPid ? 'AppActivate(pid)' : 'AppActivate(title)', attempts};
+      // Fallback (only with gui_input): click an EMPTY spot of the target window's own title bar. Each candidate point
+      // is checked with UIA first: it must belong to the target window and must not be a button/tab/menu — so the click
+      // can never land in someone else's window and never presses Close.
+      if (caps.gui_input === true) {
+        const inf = await info();
+        const m = mapping(inf, w.root);
+        for (const win of w.windows) {
+          const rc = win.rect; if (!rc || !m) continue;
+          for (const [fx, fy] of [[0.62, 10], [0.5, 10], [0.75, 10]]) {
+            const ux = Math.round(rc.x + rc.w * fx), uy = Math.round(rc.y + fy);
+            const at = await uia({mode: 'at', x: ux, y: uy});
+            const el = at.at?.elem || {};
+            const own = !!win.hwnd && String(at.at?.window?.hwnd) === String(win.hwnd);
+            const passive = ['Window', 'TitleBar', 'Pane', 'Custom', 'Group'].includes(el.controlType) && !classifyClick('click', at.at);
+            attempts.push({method: 'titlebar_probe', ok: own && passive, control: el.controlType || null});
+            if (!own || !passive) continue;
+            const sp = m.rectToScreen({x: ux, y: uy, w: 0, h: 0});
+            await getRobot().cmd(`click ${sp.x} ${sp.y} left 1`);
+            await sleep(300);
+            const f = (await uia({mode: 'focused'})).focused;
+            attempts.push({method: 'titlebar_click', foreground: f?.process || null});
+            if (isOn(f)) return {focused: true, method: 'titlebar_click', attempts};
+            break;
+          }
+        }
+      }
+      return {focused: false, method: 'none', foregroundProcess: r.focused?.process || null, attempts,
+        hint: caps.gui_input ? 'Window not reachable (covered or minimised?). No input was sent to other windows.' : 'Enable gui_input to allow the safe title-bar fallback.'};
     },
 
-    async mouse_action(args) {
+    async mouse_action(args, {consented = null, decision = null} = {}) {
       requireCap(caps, 'gui_input'); winOnly();
       if (!onlyKeys(args, ['action', 'x', 'y', 'x2', 'y2', 'amount'])) bad();
       const A = ['move', 'click', 'double_click', 'right_click', 'scroll', 'drag'];
@@ -241,7 +277,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       if (args.action === 'scroll') { if (!int(args.amount, -20, 20) || args.amount === 0) bad(); } else if (args.amount !== undefined) bad();
       const inf = await info();
       if (inf.screens !== 1) throw Error('multi_monitor_unsupported');
-      let target = null;
+      let target = null, lastAt = null;
       if (!rootCache) rootCache = (await uia({mode: 'focused'})).root;
       for (const [x, y] of pts) {
         const m = mapping(inf, rootCache); if (!m) throw Error('coordinate_mapping_failed');
@@ -249,17 +285,26 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         const at = await uia({mode: 'at', x: u.x, y: u.y});
         if (JSON.stringify(at.root) !== JSON.stringify(rootCache)) { rootCache = at.root; infoCache = null; throw Error('screen_changed_retry'); }
         if (!allowedApp(caps, at.at?.process)) throw Error('target_not_allowed');
-        target = {process: at.at.process, pid: at.at.pid, control: at.at.controlType};
+        target = {process: at.at.process, pid: at.at.pid, control: at.at.controlType, name: at.at.elem?.name};
+        lastAt = at.at;
+      }
+      const c = classifyClick(args.action, lastAt);
+      if (c && consented) {
+        if (String(lastAt.window?.hwnd) !== consented.hwnd || (consented.rid && lastAt.tab?.rid && lastAt.tab.rid !== consented.rid)) throw Error('consent_target_changed');
+      } else if (c) {
+        const g = consent.gate(c, lastAt.window, lastAt.tab, {tool: 'mouse_action', args});
+        if (g) return g;
       }
       const R = getRobot();
       const cmd = {move: `move ${args.x} ${args.y}`, click: `click ${args.x} ${args.y} left 1`, double_click: `click ${args.x} ${args.y} left 2`,
         right_click: `click ${args.x} ${args.y} right 1`, scroll: `scroll ${args.x} ${args.y} ${args.amount}`, drag: `drag ${args.x} ${args.y} ${args.x2} ${args.y2}`}[args.action];
       await R.cmd(cmd);
+      if (c && consented && decision === 'close_discard') consent.armDiscard(lastAt.window?.hwnd);
       const after = await uia({mode: 'focused'});
-      return {done: true, action: args.action, target, foregroundAfter: after.focused?.process || null};
+      return {done: true, action: args.action, target, foregroundAfter: after.focused?.process || null, ...(c ? {closeAction: c.kind, consented: !!consented} : {})};
     },
 
-    async keyboard_action(args) {
+    async keyboard_action(args, {consented = null, decision = null} = {}) {
       requireCap(caps, 'gui_input'); winOnly();
       if (!onlyKeys(args, ['text', 'keys'])) bad();
       const hasText = typeof args.text === 'string', hasKeys = typeof args.keys === 'string';
@@ -267,12 +312,27 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       if (hasText && (args.text.length < 1 || args.text.length > 4000)) bad();
       if (hasKeys && !/^(?:(?:ctrl|shift|alt)\+){0,3}(?:enter|tab|esc|backspace|delete|space|up|down|left|right|home|end|pageup|pagedown|f(?:[1-9]|1[0-2])|[a-z0-9])$/.test(args.keys)) bad();
       if (hasKeys && /^(?=.*ctrl)(?=.*alt)/.test(args.keys)) bad(); // Ctrl+Alt+… = AltGr / system chords: refused
-      const before = await uia({mode: 'focused'});
+      const before = await uia({mode: 'context'});
       if (!before.focused?.ok || !allowedApp(caps, before.focused.process)) throw Error('focus_not_allowed');
+      const c = hasKeys ? classifyKeys(args.keys, before) : null;
+      if (c && consented) {
+        const sel = (before.window?.tabs || []).find(t => t.selected);
+        if (String(before.window?.hwnd) !== consented.hwnd || (consented.rid && sel?.rid !== consented.rid)) throw Error('consent_target_changed');
+      } else if (c) {
+        const g = consent.gate(c, before.window, null, {tool: 'keyboard_action', args});
+        if (g) return g;
+      }
+      const creating = hasKeys && NEW_KEYS.has(args.keys) && before.window?.process;
+      const snap = creating ? await apps(before.window.process) : null;
       const R = getRobot();
       const r = hasText ? await R.cmd('paste ' + Buffer.from(args.text, 'utf8').toString('base64')) : await R.cmd('key ' + args.keys);
+      if (c && consented && decision === 'close_discard') consent.armDiscard(before.window?.hwnd);
+      let created;
+      if (creating) { await sleep(700); created = consent.recordCreated(snap, await apps(before.window.process), 'keys:' + args.keys); }
       const after = await uia({mode: 'focused'});
-      return {done: true, target: before.focused.process, foregroundAfter: after.focused?.process || null, ...(hasText ? {chars: args.text.length, clipboardRestored: r.clipboardRestored} : {keys: args.keys})};
+      return {done: true, target: before.focused.process, foregroundAfter: after.focused?.process || null,
+        ...(hasText ? {chars: args.text.length, clipboardRestored: r.clipboardRestored} : {keys: args.keys}),
+        ...(c ? {closeAction: c.kind, consented: !!consented} : {}), ...(created ? {createdByNexus: created} : {})};
     },
   };
 }

@@ -26,6 +26,7 @@ import {createProcs} from './procs.mjs';
 import {createBrowser} from './browser.mjs';
 import {searchFiles, fileAction} from './files.mjs';
 import {createCapStore} from './capstore.mjs';
+import {createConsent} from './consent.mjs';
 const MAX_BODY = 64 * 1024;
 
 export function loadConfig(env = process.env) {
@@ -66,11 +67,13 @@ export function loadConfig(env = process.env) {
 
 /** One runtime per host process: Java daemon, browser, task table. Tests inject fakes via deps.runtime. */
 export function createRuntime(cfg, deps = {}) {
+  const {procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, principal: _p, accessVerifier: _v, runtime: _r, ...execDeps} = deps;
   const store = createCapStore({file: cfg.capabilitiesFile || null, initial: cfg.caps || validateCapabilities(DEFAULT_CAPABILITIES), audit: e => audit(cfg, e)});
   store.watch();
   const caps = store.view;
-  const procs = createProcs({caps, cfg, ...(deps.procsDeps || {})});
-  const gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, ...(deps.guiDeps || {})});
+  const consent = createConsent({audit: e => audit(cfg, e)});
+  const procs = createProcs({caps, cfg, consent, ...(deps.procsDeps || {})});
+  const gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, ...(deps.guiDeps || {})});
   const browser = createBrowser({caps, home: cfg.home, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
   const ws = {workspace: cfg.workspace};
   const handlers = {
@@ -79,6 +82,17 @@ export function createRuntime(cfg, deps = {}) {
     list_processes: a => procs.list_processes(a), process_action: a => procs.process_action(a), run_task: a => procs.run_task(a),
     task_status: a => procs.task_status(a), task_cancel: a => procs.task_cancel(a), read_audit_log: a => procs.read_audit_log(a),
     search_files: a => searchFiles(a, ws), file_action: a => fileAction(a, ws),
+    confirm_action: async a => {
+      if (!a || typeof a !== 'object' || Object.keys(a).some(k => !['consentId', 'decision', 'target'].includes(k)) ||
+          typeof a.consentId !== 'string' || typeof a.target !== 'string') throw Error('invalid_args');
+      const p = consent.take(a.consentId, a.decision, a.target);
+      if (a.decision === 'cancel') return {cancelled: true, target: p.target};
+      const opts = {consented: p, decision: a.decision};
+      const out = p.replay.tool === 'process_action' ? await procs.process_action(p.replay.args, opts) : await gui[p.replay.tool](p.replay.args, opts);
+      return {confirmed: true, decision: a.decision, target: p.target, result: out,
+        next: a.decision === 'close_discard' ? 'If a save prompt appears, «Don\'t save» is allowed for 60 s.' : 'If a save prompt appears, choose «Save».'};
+    },
+    host_diagnostics: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return diagnostics(cfg); },
     get_capabilities: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return store.status(); },
     set_capability: a => {
       if (!a || typeof a !== 'object' || Object.keys(a).some(k => !['capability', 'enabled'].includes(k))) throw Error('invalid_args');
@@ -86,7 +100,19 @@ export function createRuntime(cfg, deps = {}) {
     },
     browser_open: a => browser.browser_open(a), browser_snapshot: a => browser.browser_snapshot(a), browser_action: a => browser.browser_action(a),
   };
-  return {caps, store, handlers, gui, procs, browser, stop() { store.stop(); gui.stop(); browser.stop(); procs.stopAll(); }};
+  // open_app: record windows/tabs that appear as NEXUS-created (Windows 11 Notepad may open a TAB in the owner's window).
+  const APP_PROC = {notepad: 'notepad', calculator: 'CalculatorApp'};
+  handlers.open_app = async a => {
+    const name = APP_PROC[a?.app];
+    const before = name ? await gui.snapshotApp(name) : [];
+    const out = await executeJob('open_app', a, {workspace: cfg.workspace, ...execDeps});
+    if (!name || process.platform !== 'win32') return out;
+    let after = before;
+    for (let i = 0; i < 5; i++) { await new Promise(r => setTimeout(r, 400)); after = await gui.snapshotApp(name); if (JSON.stringify(after) !== JSON.stringify(before)) break; }
+    return {...out, createdByNexus: consent.recordCreated(before, after, 'open_app:' + a.app),
+      note: 'Only windows/tabs listed in createdByNexus may be closed without asking the owner.'};
+  };
+  return {caps, store, consent, handlers, gui, procs, browser, stop() { store.stop(); gui.stop(); browser.stop(); procs.stopAll(); }};
 }
 
 export function printCapabilities(cfg) {
@@ -97,6 +123,18 @@ export function printCapabilities(cfg) {
   console.log(`Input apps: ${c.inputApps.join(', ') || '-'}; tasks: ${Object.keys(c.tasks).join(', ') || '-'}`);
   console.log('Capabilities are re-read live (no restart needed); gui_input can be switched from chat via set_capability.');
   if (process.platform === 'win32') cfg.runtime.gui.warm();
+}
+
+/** 0.4.2: read-only diagnostics for pc_offline analysis — no secrets, no tunnel URL, no screen content. */
+export function diagnostics(cfg) {
+  const t = cfg.tunnelState || null;
+  return {
+    version: VERSION, hostPid: process.pid, uptimeSec: Math.round(process.uptime()), now: new Date().toISOString(),
+    tunnel: t ? {registeredAt: t.registeredAt || null, registrations: t.registrations || 0, cloudflaredPid: t.cloudflaredPid || null,
+      cloudflaredAlive: t.alive ?? null, lastEvents: (t.events || []).slice(-20)} : 'not started by nexus.mjs',
+    capabilitiesFileError: cfg.runtime?.store?.status().fileError ?? null,
+    pendingConsents: cfg.runtime?.consent?.pendingCount() ?? 0,
+  };
 }
 
 /** Audit never stores typed text or file content — only their length. */

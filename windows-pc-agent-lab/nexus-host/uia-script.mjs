@@ -11,6 +11,10 @@
  *  activate  {pid,title?}      → WScript.Shell.AppActivate(pid), fallback AppActivate(title); result re-read from UIA
  *  windows   {pid}             → top-level windows owned by pid (or ApplicationFrameHost frames hosting it)
  *  tree      {pid,depth,max}   → control tree of those windows (bounded)
+ *  context                     → focused element (type/name/id) + its top-level window (hwnd, tabs)          [0.4.2]
+ *  apps      {name}            → all top-level windows of processes named {name}, each with hwnd and tabs     [0.4.2]
+ * 0.4.2: 'at' also returns element name/automationId, its top-level window hwnd and the TabItem it lies in;
+ *        'activate' also reports the focused top-level window hwnd (focus confirmed by window, not only by pid).
  * Every mode returns `root` = UIA desktop rectangle, used by Node to map UIA coordinates to Java screen points.
  */
 export const UIA_SCRIPT = String.raw`
@@ -28,7 +32,9 @@ function NxFocused() {
   try { $f = $AE::FocusedElement } catch { return @{ ok = $false } }
   if ($null -eq $f) { return @{ ok = $false } }
   $fpid = $f.Current.ProcessId
-  return @{ ok = $true; pid = $fpid; process = (NxPName $fpid) }
+  $top = $null; try { $top = NxTopOf $f } catch { }
+  $th = 0; if ($null -ne $top) { $th = [int64]$top.Current.NativeWindowHandle }
+  return @{ ok = $true; pid = $fpid; process = (NxPName $fpid); topHwnd = $th }
 }
 function NxTopWindows($procId) {
   $out = New-Object System.Collections.ArrayList
@@ -46,6 +52,51 @@ function NxTopWindows($procId) {
   }
   return ,$out
 }
+
+function NxStr($v, $n) { $t = [string]$v; if ($t.Length -gt $n) { return $t.Substring(0, $n) }; return $t }
+function NxRid($e) { try { return (($e.GetRuntimeId()) -join '.') } catch { return '' } }
+function NxTopOf($e) {
+  $root = $AE::RootElement; $cur = $e; $n = 0
+  while ($null -ne $cur -and $n -lt 60) {
+    $n++
+    $p = $TW.GetParent($cur)
+    if ($null -eq $p) { return $null }
+    if ([System.Windows.Automation.Automation]::Compare($p, $root)) { return $cur }
+    $cur = $p
+  }
+  return $null
+}
+function NxTabOf($e) {
+  $cur = $e; $n = 0
+  while ($null -ne $cur -and $n -lt 10) {
+    $n++
+    if ($cur.Current.ControlType -eq [System.Windows.Automation.ControlType]::TabItem) { return $cur }
+    $cur = $TW.GetParent($cur)
+  }
+  return $null
+}
+function NxTabs($w) {
+  $out = New-Object System.Collections.ArrayList
+  if ($null -eq $w) { return ,$out }
+  $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::TabItem)
+  try { $all = $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond) } catch { return ,$out }
+  $i = 0
+  foreach ($t in $all) {
+    if ($i -ge 100) { break }; $i++
+    $sel = $false
+    try { $sel = $t.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected } catch { }
+    [void]$out.Add(@{ rid = (NxRid $t); name = (NxStr $t.Current.Name 120); selected = [bool]$sel })
+  }
+  return ,$out
+}
+function NxWin($w) {
+  if ($null -eq $w) { return $null }
+  $wpid = $w.Current.ProcessId
+  return @{ hwnd = [int64]$w.Current.NativeWindowHandle; pid = $wpid; process = (NxPName $wpid); name = (NxStr $w.Current.Name 200); className = $w.Current.ClassName; tabs = @(NxTabs $w) }
+}
+function NxElem($e) {
+  return @{ controlType = $e.Current.ControlType.ProgrammaticName.Replace('ControlType.', ''); name = (NxStr $e.Current.Name 120); id = (NxStr $e.Current.AutomationId 80) }
+}
 $res = @{ mode = $a.mode; root = (NxRect $AE::RootElement) }
 if ($null -ne $a.pid) { $res.target = @{ pid = [int]$a.pid; process = (NxPName ([int]$a.pid)) } }
 switch ($a.mode) {
@@ -54,7 +105,10 @@ switch ($a.mode) {
     $pt = New-Object System.Windows.Point ([double]$a.x), ([double]$a.y)
     $e = $AE::FromPoint($pt)
     $epid = $e.Current.ProcessId
-    $res.at = @{ pid = $epid; process = (NxPName $epid); controlType = $e.Current.ControlType.ProgrammaticName }
+    $res.at = @{ pid = $epid; process = (NxPName $epid); controlType = $e.Current.ControlType.ProgrammaticName; elem = (NxElem $e) }
+    $tab = NxTabOf $e
+    if ($null -ne $tab) { $res.at.tab = @{ rid = (NxRid $tab); name = (NxStr $tab.Current.Name 120) } }
+    $res.at.window = NxWin (NxTopOf $e)
     $res.focused = NxFocused
   }
   'activate' {
@@ -72,7 +126,7 @@ switch ($a.mode) {
   }
   'windows' {
     $ws = NxTopWindows ([int]$a.pid)
-    $res.windows = @($ws | ForEach-Object { @{ name = $_.Current.Name; className = $_.Current.ClassName; rect = (NxRect $_); pid = $_.Current.ProcessId } })
+    $res.windows = @($ws | ForEach-Object { @{ name = $_.Current.Name; className = $_.Current.ClassName; rect = (NxRect $_); pid = $_.Current.ProcessId; hwnd = [int64]$_.Current.NativeWindowHandle } })
     $res.focused = NxFocused
   }
   'tree' {
@@ -93,6 +147,26 @@ switch ($a.mode) {
     }
     $res.tree = @((NxTopWindows ([int]$a.pid)) | ForEach-Object { NxWalk $_ 0 })
     $res.nodes = $script:count
+  }
+  'context' {
+    $res.focused = NxFocused
+    try {
+      $f = $AE::FocusedElement
+      $res.elem = NxElem $f
+      $res.window = NxWin (NxTopOf $f)
+    } catch { }
+  }
+  'apps' {
+    $want = ([string]$a.name).ToLowerInvariant()
+    $out = New-Object System.Collections.ArrayList
+    $c = $TW.GetFirstChild($AE::RootElement); $n = 0
+    while ($null -ne $c -and $n -lt 400) {
+      $n++
+      $pn = (NxPName $c.Current.ProcessId).ToLowerInvariant()
+      if ($pn -eq $want) { [void]$out.Add((NxWin $c)) }
+      $c = $TW.GetNextSibling($c)
+    }
+    $res.apps = @($out)
   }
   default { throw 'bad_mode' }
 }

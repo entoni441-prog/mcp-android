@@ -11,6 +11,8 @@ import {fileURLToPath} from 'node:url';
 import {loadConfig, createServer, printCapabilities} from './server.mjs';
 
 const TUNNEL_RE = /https:\/\/[a-z0-9-]{3,80}\.trycloudflare\.com/;
+const TUNNEL_EVENT_RE = /(Registered tunnel connection|Unregistered tunnel connection|Connection .* (?:lost|terminated)|Retrying|ERR |error|failed|Lost connection|Initiating graceful shutdown)/i;
+export const sanitize = s => String(s).replace(/https?:\/\/\S+/g, '<url>').replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, '<ip>').replace(/\[[0-9a-f:]+\](?::\d+)?/gi, '<ip>').slice(0, 300);
 
 export function findCloudflared(env = process.env, exists = fs.existsSync) {
   const candidates = [
@@ -51,19 +53,35 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   printCapabilities(cfg);
 
   const tunnel = spawn(exe, ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${cfg.port}`], {stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true});
-  let registered = false, stopping = false;
-  const onOutput = async chunk => {
-    const m = TUNNEL_RE.exec(String(chunk));
-    if (!m || registered) return;
-    registered = true;
+  // 0.4.2 diagnostics: tunnel lifecycle events (sanitised — no URLs, no IPs) in memory (host_diagnostics) and tunnel.log.
+  const state = cfg.tunnelState = {registeredAt: null, registrations: 0, cloudflaredPid: tunnel.pid, alive: true, events: []};
+  const logFile = path.join(cfg.home, 'tunnel.log');
+  const note = (kind, msg = '') => {
+    const e = {t: new Date().toISOString(), kind, msg: sanitize(msg)};
+    state.events.push(e); if (state.events.length > 200) state.events.shift();
+    try { if (fs.existsSync(logFile) && fs.statSync(logFile).size > 512 * 1024) fs.renameSync(logFile, logFile + '.1'); fs.appendFileSync(logFile, JSON.stringify(e) + '\n'); } catch { /* diagnostics must not crash host */ }
+  };
+  let tunnelUrl = null, registered = false, stopping = false;
+  const register = async why => {
     for (let i = 1; i <= 5; i++) {
-      try { await registerTunnel(gateway, cfg.token, m[0]); console.log(`Tunnel registered with gateway (${new URL(gateway).host}). ChatGPT access: ON`); return; }
-      catch (e) { console.error(`register attempt ${i} failed: ${e.message}`); await new Promise(r => setTimeout(r, 3000 * i)); }
+      try { await registerTunnel(gateway, cfg.token, tunnelUrl); state.registeredAt = new Date().toISOString(); state.registrations++; note('registered', why); return true; }
+      catch (e) { note('register_failed', `${why} attempt ${i}: ${e.message}`); await new Promise(r => setTimeout(r, 3000 * i)); }
     }
-    console.error('BLOCKED: gateway registration failed; stopping.'); stop(1);
+    return false;
+  };
+  const onOutput = async chunk => {
+    const text = String(chunk);
+    for (const line of text.split(/\r?\n/)) if (TUNNEL_EVENT_RE.test(line)) note('cloudflared', line);
+    const m = TUNNEL_RE.exec(text);
+    if (!m || registered) return;
+    registered = true; tunnelUrl = m[0];
+    if (await register('startup')) console.log(`Tunnel registered with gateway (${new URL(gateway).host}). ChatGPT access: ON`);
+    else { console.error('BLOCKED: gateway registration failed; stopping.'); stop(1); }
   };
   tunnel.stdout.on('data', onOutput); tunnel.stderr.on('data', onOutput);
-  tunnel.on('exit', code => { if (!stopping) { console.error(`cloudflared exited (${code}); stopping.`); stop(1); } });
+  tunnel.on('exit', code => { state.alive = false; note('cloudflared_exit', String(code)); if (!stopping) { console.error(`cloudflared exited (${code}); stopping.`); stop(1); } });
+  // Idempotent re-registration every 10 min: heals a lost/overwritten gateway entry without restart.
+  setInterval(() => { if (tunnelUrl && !stopping) register('refresh'); }, 10 * 60_000).unref();
 
   async function stop(code = 0) {
     if (stopping) return; stopping = true;

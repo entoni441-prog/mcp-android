@@ -38,7 +38,7 @@ function runCapture(exe, args, timeoutMs = 15_000) {
   });
 }
 
-export function createProcs({caps, cfg, platform = process.platform, systemRoot = process.env.SystemRoot, exec = runCapture, spawnFn = spawn}) {
+export function createProcs({caps, cfg, platform = process.platform, systemRoot = process.env.SystemRoot, exec = runCapture, spawnFn = spawn, consent = null}) {
   const sys32 = exe => {
     if (typeof systemRoot !== 'string' || !/^[a-zA-Z]:\\/.test(systemRoot)) throw Error('invalid_windows_system_root');
     return path.win32.join(systemRoot, 'System32', exe);
@@ -66,14 +66,22 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
       return {count: all.length, truncated: all.length > limit, processes: all.slice(0, limit).map(p => ({...p, ownedByNexus: owned.has(p.pid)}))};
     },
 
-    async process_action(args) {
+    async process_action(args, {consented = null} = {}) {
       requireCap(caps, 'process_control');
       if (!onlyKeys(args, ['pid', 'action']) || !int(args.pid, 1, 2 ** 31) || !['close', 'kill'].includes(args.action)) bad();
       const p = (await listAll()).find(x => x.pid === args.pid);
       if (!p) throw Error('process_not_found');
-      const isOwned = owned.has(p.pid);
+      const isOwned = owned.has(p.pid) || !!consent?.owned.pids.has(p.pid);
       const isAllowedApp = !isHardDenied(p.process) && caps.inputApps.some(a => a.toLowerCase() === p.process.toLowerCase());
       if (args.action === 'kill' ? !isOwned : !(isOwned || isAllowedApp)) throw Error('process_not_allowed');
+      // 0.4.2: closing an allowlisted app NEXUS did not start (it may hold the owner's documents) needs owner consent.
+      if (args.action === 'close' && !isOwned && consent) {
+        if (consented) { if (String(consented.pid) !== String(p.pid)) throw Error('consent_target_changed'); }
+        else {
+          const g = consent.gate({kind: 'process', via: 'process_action'}, {process: p.process, pid: p.pid, hwnd: 'pid:' + p.pid, name: ''}, null, {tool: 'process_action', args});
+          if (g) return g;
+        }
+      }
       const r = await exec(sys32('taskkill.exe'), args.action === 'kill' ? ['/pid', String(p.pid), '/t', '/f'] : ['/pid', String(p.pid)]);
       return {pid: p.pid, process: p.process, action: args.action, requested: r.code === 0, note: args.action === 'close' ? 'Close request sent; the app may ask to save.' : undefined};
     },

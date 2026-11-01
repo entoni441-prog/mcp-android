@@ -18,6 +18,8 @@ function fakes({at = {pid: 50, process: 'Notepad'}, focused = {ok: true, pid: 50
     uiaCalls.push(a);
     const base = {root};
     if (a.mode === 'focused') return {...base, focused};
+    if (a.mode === 'context') return {...base, focused, elem: {controlType: 'Document', name: '', id: ''}, window: {hwnd: 500, pid: focused.pid, process: focused.process, name: 'Untitled - Notepad', tabs: []}};
+    if (a.mode === 'apps') return {...base, apps: []};
     if (a.mode === 'at') return {...base, at: {...at, controlType: 'ControlType.Document'}, focused};
     if (a.mode === 'windows') return {...base, target: {pid: a.pid, process: a.pid === 50 ? 'Notepad' : a.pid === 66 ? 'powershell' : 'Other'}, windows: [{name: 'Untitled - Notepad', className: 'Notepad', rect: {x: 300, y: 150, w: 900, h: 600}}], focused};
     if (a.mode === 'activate') return {...base, target: {pid: a.pid, process: 'Notepad'}, appActivateByPid: true, focused: activateFocus ?? {ok: true, pid: a.pid, process: 'Notepad'}};
@@ -126,7 +128,7 @@ test('focus_window: only allowlisted apps; success is confirmed by UIA, not by t
   const g2 = gui(fakes({focused: {ok: true, pid: 1, process: 'explorer'}, activateFocus: {ok: true, pid: 1, process: 'explorer'}}));
   const r = await g2.focus_window({pid: 50});
   assert.equal(r.focused, false);
-  assert.equal(r.method, 'AppActivate(pid)');
+  assert.equal(r.attempts[0].method, 'AppActivate'); assert.equal(r.attempts[0].byPid, true);
 });
 
 test('inspect_ui / window_info map rectangles to screen points and refuse other apps', async () => {
