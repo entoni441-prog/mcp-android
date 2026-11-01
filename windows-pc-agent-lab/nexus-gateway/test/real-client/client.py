@@ -11,7 +11,7 @@ async def main(url):
                 print('initialize:', init.server_info.name if hasattr(init, 'server_info') else init.serverInfo.name)
                 tools = [t.name for t in (await s.list_tools()).tools]
                 print('tools/list:', tools)
-                assert tools == ['get_status', 'list_dir', 'read_text', 'make_dir', 'write_text', 'open_app'], tools
+                assert tools == ['get_status', 'list_dir', 'read_text', 'make_dir', 'write_text', 'open_app', 'list_windows'], tools
                 res = await s.call_tool('get_status', {})
                 err = getattr(res, 'is_error', getattr(res, 'isError', None))
                 print('tools/call offline: isError=%s text=%s' % (err, res.content[0].text[:40]))
