@@ -18,8 +18,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {executeJob} from '../v3/actions.mjs';
+import {listWindows, LIST_WINDOWS_TOOL} from './windows.mjs';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const MAX_BODY = 64 * 1024;
 
@@ -63,6 +64,7 @@ const TOOLS = [
   {name: 'make_dir', description: 'Create one folder inside the workspace.', inputSchema: {type: 'object', properties: {path: str('Relative path')}, required: ['path'], additionalProperties: false}},
   {name: 'write_text', description: 'Create (expectedSha256=null) or replace (expectedSha256=current sha256) a small text file inside the workspace.', inputSchema: {type: 'object', properties: {path: str('Relative path'), content: str('UTF-8 text ≤8 KiB'), expectedSha256: {type: ['string', 'null']}}, required: ['path', 'content', 'expectedSha256'], additionalProperties: false}},
   {name: 'open_app', description: 'Open an allowlisted Windows app on the owner\'s desktop.', inputSchema: {type: 'object', properties: {app: {type: 'string', enum: ['notepad', 'calculator']}}, required: ['app'], additionalProperties: false}},
+  LIST_WINDOWS_TOOL,
 ];
 
 function audit(cfg, entry) {
@@ -95,12 +97,14 @@ export async function handleRpc(msg, cfg, deps = {}) {
       const started = Date.now();
       try {
         const {principal: _p, accessVerifier: _v, ...execDeps} = deps;
-        const out = await executeJob(name, args, {workspace: cfg.workspace, ...execDeps});
-        audit(cfg, {by: deps.principal, tool: name, ok: true, ms: Date.now() - started, path: args?.path, app: args?.app});
+        const out = name === 'list_windows'
+          ? await listWindows(args, {tmpDir: path.join(cfg.home, 'tmp'), ...execDeps})
+          : await executeJob(name, args, {workspace: cfg.workspace, ...execDeps});
+        audit(cfg, {by: deps.principal, tool: name, ok: true, ms: Date.now() - started, path: args?.path, app: args?.app, titles: args?.includeTitles});
         return rpcResult(id, {content: [{type: 'text', text: JSON.stringify(out)}], structuredContent: out, isError: false});
       } catch (e) {
         const code = /^[a-z_]+$/.test(e?.message) ? e.message : 'internal_error';
-        audit(cfg, {by: deps.principal, tool: name, ok: false, error: code, path: args?.path, app: args?.app});
+        audit(cfg, {by: deps.principal, tool: name, ok: false, error: code, detail: e?.detail, path: args?.path, app: args?.app});
         return rpcResult(id, {content: [{type: 'text', text: `error: ${code}`}], isError: true});
       }
     }

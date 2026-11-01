@@ -39,7 +39,7 @@ test('MCP handshake and tool discovery', async () => {
   assert.equal(init.body.result.serverInfo.name, 'nexus-host');
   assert.equal((await rpc(null, {jsonrpc: '2.0', method: 'notifications/initialized'})).status, 202);
   const tools = (await rpc('tools/list', {})).body.result.tools.map(t => t.name);
-  assert.deepEqual(tools, ['get_status', 'list_dir', 'read_text', 'make_dir', 'write_text', 'open_app']);
+  assert.deepEqual(tools, ['get_status', 'list_dir', 'read_text', 'make_dir', 'write_text', 'open_app', 'list_windows']);
 });
 
 test('workspace file round-trip with optimistic sha', async () => {
@@ -63,6 +63,10 @@ test('escape attempts and unknown tools are refused', async () => {
   assert.equal((await rpc('tools/call', {name: 'run_shell', arguments: {cmd: 'whoami'}})).body.error.message, 'unknown_tool');
   assert.equal((await call('open_app', {app: 'cmd'})).isError, true);
 });
+
+test('list_windows is refused off-Windows and rejects unknown args', async () => {
+  assert.equal((await call('list_windows', {cmd: 'whoami'})).isError, true);
+})
 
 test('open_app resolves absolute System32 path only', async () => {
   assert.equal((await call('open_app', {app: 'notepad'})).isError, false);
