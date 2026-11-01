@@ -65,7 +65,8 @@ export function createConsent({audit = () => {}, now = () => Date.now()} = {}) {
     return `${app}: окно «${win?.name || '?'}»`;
   };
 
-  function selectedTab(win) { return (win?.tabs || []).find(t => t.selected) || null; }
+  const tabsOf = win => (Array.isArray(win?.tabs) ? win.tabs : []).filter(t => t && typeof t.rid === 'string' && t.rid);
+  function selectedTab(win) { return tabsOf(win).find(t => t.selected) || null; }
 
   /** Is the close of this target autonomous (everything in it was created by NEXUS)? */
   function isOwned(c, win, tab) {
@@ -75,7 +76,7 @@ export function createConsent({audit = () => {}, now = () => Date.now()} = {}) {
     }
     if (c.kind === 'window') {
       if (!win || !owned.windows.has(String(win.hwnd))) return false;
-      return (win.tabs || []).every(t => owned.tabs.has(t.rid));
+      return tabsOf(win).every(t => owned.tabs.has(t.rid));
     }
     if (c.kind === 'discard') return (armed.get(String(win?.hwnd)) || 0) > now();
     return false;
@@ -86,17 +87,17 @@ export function createConsent({audit = () => {}, now = () => Date.now()} = {}) {
     /** Record windows/tabs that appeared between two snapshots (open_app, ctrl+n, ctrl+t…). */
     recordCreated(before = [], after = [], source) {
       const prevW = new Set(before.map(w => String(w.hwnd)));
-      const prevT = new Set(before.flatMap(w => (w.tabs || []).map(t => t.rid)));
+      const prevT = new Set(before.flatMap(w => tabsOf(w).map(t => t.rid)));
       const created = {windows: [], tabs: []};
       for (const w of after) {
         if (!prevW.has(String(w.hwnd))) { owned.windows.add(String(w.hwnd)); created.windows.push(w.name); if (w.pid) owned.pids.add(w.pid); }
-        for (const t of w.tabs || []) if (t.rid && !prevT.has(t.rid)) { owned.tabs.add(t.rid); created.tabs.push(t.name); }
+        for (const t of tabsOf(w)) if (!prevT.has(t.rid)) { owned.tabs.add(t.rid); created.tabs.push(t.name); }
       }
       if (created.windows.length || created.tabs.length) audit({event: 'nexus_created', source, ...created});
       return created;
     },
     ownPid(pid) { owned.pids.add(pid); },
-    forget(win) { if (win) { owned.windows.delete(String(win.hwnd)); for (const t of win.tabs || []) owned.tabs.delete(t.rid); } },
+    forget(win) { if (win) { owned.windows.delete(String(win.hwnd)); for (const t of tabsOf(win)) owned.tabs.delete(t.rid); } },
 
     /**
      * Gate. Returns null when the action may run now; otherwise a consent_required result.
