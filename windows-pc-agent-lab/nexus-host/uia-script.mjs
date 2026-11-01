@@ -15,20 +15,22 @@
  */
 export const UIA_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $a = $env:NEXUS_UIA_ARGS | ConvertFrom-Json
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName WindowsBase
 $AE = [System.Windows.Automation.AutomationElement]
 $TW = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-function R($e) { $r = $e.Current.BoundingRectangle; if ($r.IsEmpty) { return $null }; return @{ x = [int]$r.X; y = [int]$r.Y; w = [int]$r.Width; h = [int]$r.Height } }
-function PName($procId) { try { return (Get-Process -Id $procId -ErrorAction Stop).ProcessName } catch { return '' } }
-function Focused() {
+function NxRect($e) { $r = $e.Current.BoundingRectangle; if ($r.IsEmpty) { return $null }; return @{ x = [int]$r.X; y = [int]$r.Y; w = [int]$r.Width; h = [int]$r.Height } }
+function NxPName($procId) { try { return (Get-Process -Id $procId -ErrorAction Stop).ProcessName } catch { return '' } }
+function NxFocused() {
   try { $f = $AE::FocusedElement } catch { return @{ ok = $false } }
   if ($null -eq $f) { return @{ ok = $false } }
   $fpid = $f.Current.ProcessId
-  return @{ ok = $true; pid = $fpid; process = (PName $fpid) }
+  return @{ ok = $true; pid = $fpid; process = (NxPName $fpid) }
 }
-function TopWindows($procId) {
+function NxTopWindows($procId) {
   $out = New-Object System.Collections.ArrayList
   $c = $TW.GetFirstChild($AE::RootElement)
   $n = 0
@@ -36,7 +38,7 @@ function TopWindows($procId) {
     $n++
     $cpid = $c.Current.ProcessId
     if ($cpid -eq $procId) { [void]$out.Add($c) }
-    elseif ((PName $cpid) -eq 'ApplicationFrameHost') {
+    elseif ((NxPName $cpid) -eq 'ApplicationFrameHost') {
       $k = $TW.GetFirstChild($c); $m = 0
       while ($null -ne $k -and $m -lt 50) { $m++; if ($k.Current.ProcessId -eq $procId) { [void]$out.Add($c); break }; $k = $TW.GetNextSibling($k) }
     }
@@ -44,52 +46,52 @@ function TopWindows($procId) {
   }
   return ,$out
 }
-$res = @{ mode = $a.mode; root = (R $AE::RootElement) }
-if ($null -ne $a.pid) { $res.target = @{ pid = [int]$a.pid; process = (PName ([int]$a.pid)) } }
+$res = @{ mode = $a.mode; root = (NxRect $AE::RootElement) }
+if ($null -ne $a.pid) { $res.target = @{ pid = [int]$a.pid; process = (NxPName ([int]$a.pid)) } }
 switch ($a.mode) {
-  'focused' { $res.focused = Focused }
+  'focused' { $res.focused = NxFocused }
   'at' {
     $pt = New-Object System.Windows.Point ([double]$a.x), ([double]$a.y)
     $e = $AE::FromPoint($pt)
     $epid = $e.Current.ProcessId
-    $res.at = @{ pid = $epid; process = (PName $epid); controlType = $e.Current.ControlType.ProgrammaticName }
-    $res.focused = Focused
+    $res.at = @{ pid = $epid; process = (NxPName $epid); controlType = $e.Current.ControlType.ProgrammaticName }
+    $res.focused = NxFocused
   }
   'activate' {
     $ws = New-Object -ComObject WScript.Shell
     $r1 = $false; $r2 = $false
     try { $r1 = $ws.AppActivate([int]$a.pid) } catch { }
     Start-Sleep -Milliseconds 400
-    $f = Focused
+    $f = NxFocused
     if (-not ($f.ok -and $f.pid -eq [int]$a.pid) -and $a.title) {
       try { $r2 = $ws.AppActivate([string]$a.title) } catch { }
       Start-Sleep -Milliseconds 400
-      $f = Focused
+      $f = NxFocused
     }
     $res.appActivateByPid = [bool]$r1; $res.appActivateByTitle = [bool]$r2; $res.focused = $f
   }
   'windows' {
-    $ws = TopWindows ([int]$a.pid)
-    $res.windows = @($ws | ForEach-Object { @{ name = $_.Current.Name; className = $_.Current.ClassName; rect = (R $_); pid = $_.Current.ProcessId } })
-    $res.focused = Focused
+    $ws = NxTopWindows ([int]$a.pid)
+    $res.windows = @($ws | ForEach-Object { @{ name = $_.Current.Name; className = $_.Current.ClassName; rect = (NxRect $_); pid = $_.Current.ProcessId } })
+    $res.focused = NxFocused
   }
   'tree' {
     $max = [int]$a.max; $depthMax = [int]$a.depth
     $script:count = 0
-    function Walk($e, $d) {
+    function NxWalk($e, $d) {
       if ($script:count -ge $max) { return $null }
       $script:count++
       $nm = $e.Current.Name; if ($nm.Length -gt 80) { $nm = $nm.Substring(0, 80) }
-      $node = @{ type = $e.Current.ControlType.ProgrammaticName.Replace('ControlType.', ''); name = $nm; id = $e.Current.AutomationId; rect = (R $e); enabled = $e.Current.IsEnabled }
+      $node = @{ type = $e.Current.ControlType.ProgrammaticName.Replace('ControlType.', ''); name = $nm; id = $e.Current.AutomationId; rect = (NxRect $e); enabled = $e.Current.IsEnabled }
       if ($d -lt $depthMax) {
         $kids = New-Object System.Collections.ArrayList
         $k = $TW.GetFirstChild($e)
-        while ($null -ne $k -and $script:count -lt $max) { $w = Walk $k ($d + 1); if ($null -ne $w) { [void]$kids.Add($w) }; $k = $TW.GetNextSibling($k) }
+        while ($null -ne $k -and $script:count -lt $max) { $w = NxWalk $k ($d + 1); if ($null -ne $w) { [void]$kids.Add($w) }; $k = $TW.GetNextSibling($k) }
         if ($kids.Count -gt 0) { $node.children = @($kids) }
       }
       return $node
     }
-    $res.tree = @((TopWindows ([int]$a.pid)) | ForEach-Object { Walk $_ 0 })
+    $res.tree = @((NxTopWindows ([int]$a.pid)) | ForEach-Object { NxWalk $_ 0 })
     $res.nodes = $script:count
   }
   default { throw 'bad_mode' }
