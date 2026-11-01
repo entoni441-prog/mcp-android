@@ -1,0 +1,2 @@
+$ExecutionContext.SessionState.LanguageMode
+try { $s = New-Object -ComObject WScript.Shell; "WScript.Shell=ok" } catch { "WScript.Shell=BLOCKED: " + $_.Exception.Message }
