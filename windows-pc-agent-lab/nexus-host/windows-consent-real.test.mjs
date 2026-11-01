@@ -77,7 +77,9 @@ test('Windows: closing a window NEXUS did not open needs consent; own window clo
     console.log('own alt+f4', JSON.stringify(c));
     assert.equal(c.done, true); assert.equal(c.consented, false);
     await sleep(1200);
-    const dlg = flat((await gui.inspect_ui({pid: own, maxDepth: 6, maxNodes: 400})).tree);
+    const dlg = flat((await gui.inspect_ui({pid: own, maxDepth: 8, maxNodes: 400})).tree);
+    console.log('dialog nodes', JSON.stringify(dlg.slice(0, 80).map(n => `${n.type}:${n.name}`)));
+    console.log('own alive', await alive(home, own), JSON.stringify((await listWindows({includeTitles: true}, {tmpDir: home})).windows.filter(w => w.pid === own)));
     const dontSave = dlg.find(n => n.type === 'Button' && /don.?t save|не сохранять/i.test(n.name) && n.rect);
     console.log('dont save', JSON.stringify(dontSave));
     assert.ok(dontSave, 'save prompt expected');
@@ -95,7 +97,7 @@ test('Windows: closing a window NEXUS did not open needs consent; own window clo
     const p2 = consent.take(k2.consentId, 'close_save', k2.target);            // owner wants to KEEP the text
     await gui.keyboard_action(p2.replay.args, {consented: p2, decision: 'close_save'});
     await sleep(1200);
-    const dlg2 = flat((await gui.inspect_ui({pid: f2, maxDepth: 6, maxNodes: 400})).tree);
+    const dlg2 = flat((await gui.inspect_ui({pid: f2, maxDepth: 8, maxNodes: 400})).tree);
     const ds2 = dlg2.find(n => n.type === 'Button' && /don.?t save|не сохранять/i.test(n.name) && n.rect);
     const r2 = await gui.mouse_action({action: 'click', x: ds2.rect.x + Math.floor(ds2.rect.w / 2), y: ds2.rect.y + Math.floor(ds2.rect.h / 2)});
     console.log('foreign dont save after close_save', JSON.stringify(r2));
