@@ -108,3 +108,12 @@ test('mcp rejects non-owner props, GET, oversized body; maps tunnel failures to 
   const cf530 = async () => new Response('tunnel gone', {status: 530});
   assert.match((await (await handleMcp(rpc('ping'), m.env, {props: {owner: true}}, {fetcher: cf530})).json()).error.message, /pc_offline/);
 });
+
+test('secrets with trailing CR/LF (PowerShell pipe) still work', async () => {
+  const m = makeEnv(); const env = {...m.env, NEXUS_TOKEN: TOKEN + '\r\n', OWNER_PASSPHRASE_SHA256: (await sha256hex(PASS)).toUpperCase() + '\n'};
+  assert.equal((await handleTunnel(tunnelReq('POST', {url: 'https://abc-def.trycloudflare.com'}), env)).status, 200);
+  const nonce = nonceFrom(await (await handleDefault(new Request(BASE + '/authorize'), env)).text());
+  assert.equal((await handleDefault(post(nonce, PASS), env)).status, 302);
+  let auth; await handleMcp(rpc('ping'), env, {props: {owner: true}}, {fetcher: async (u, i) => { auth = i.headers.authorization; return new Response('{}'); }});
+  assert.equal(auth, 'Bearer ' + TOKEN);
+});

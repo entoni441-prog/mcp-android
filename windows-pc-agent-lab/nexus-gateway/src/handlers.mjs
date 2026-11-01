@@ -6,6 +6,8 @@
  * Binding: OAUTH_KV (KV namespace). OAUTH_PROVIDER is injected by workers-oauth-provider.
  */
 const enc = new TextEncoder();
+// `wrangler secret put` fed from a PowerShell pipe may append CR/LF — normalise once.
+const secret = v => typeof v === 'string' ? v.trim() : v;
 const TUNNEL_RE = /^https:\/\/[a-z0-9-]{3,80}\.trycloudflare\.com$/;
 const MAX_FAILS = 5, LOCK_SECONDS = 900, CONSENT_TTL = 300;
 
@@ -37,7 +39,7 @@ export async function handleDefault(request, env) {
   if (url.pathname === '/health') return json(200, {ok: true, service: 'nexus-gateway'});
   if (url.pathname === '/tunnel') return handleTunnel(request, env);
   if (url.pathname !== '/authorize') return new Response('Not found', {status: 404});
-  if (!env.OAUTH_KV || !env.OAUTH_PROVIDER || !/^[a-f0-9]{64}$/.test(env.OWNER_PASSPHRASE_SHA256 || '')) return new Response('Gateway not configured', {status: 503});
+  if (!env.OAUTH_KV || !env.OAUTH_PROVIDER || !/^[a-f0-9]{64}$/.test(secret(env.OWNER_PASSPHRASE_SHA256 || '').toLowerCase())) return new Response('Gateway not configured', {status: 503});
 
   if (request.method === 'GET') {
     let auth;
@@ -67,7 +69,7 @@ export async function handleDefault(request, env) {
   const {auth, issuedAt} = JSON.parse(raw);
   if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > CONSENT_TTL * 1000) return page('Ошибка', '<p>Сессия истекла.</p>', 400);
   const given = await sha256hex(String(form.get('passphrase') || ''));
-  if (!timingSafeEqualHex(given, env.OWNER_PASSPHRASE_SHA256)) {
+  if (!timingSafeEqualHex(given, secret(env.OWNER_PASSPHRASE_SHA256).toLowerCase())) {
     await env.OAUTH_KV.put('consent-fails', String(lock + 1), {expirationTtl: LOCK_SECONDS});
     return page('Ошибка', '<p>Неверный пароль.</p>', 403);
   }
@@ -86,7 +88,7 @@ export async function handleDefault(request, env) {
 /** PC registers / removes its current quick-tunnel URL. Auth: Bearer NEXUS_TOKEN. */
 export async function handleTunnel(request, env) {
   if (!env.OAUTH_KV) return json(503, {error: 'not_configured'});
-  if (!(await bearerOk(request, env.NEXUS_TOKEN))) return json(401, {error: 'unauthorized'});
+  if (!(await bearerOk(request, secret(env.NEXUS_TOKEN)))) return json(401, {error: 'unauthorized'});
   if (request.method === 'DELETE') { await env.OAUTH_KV.delete('tunnel'); return json(200, {ok: true, removed: true}); }
   if (request.method !== 'POST') return json(405, {error: 'method_not_allowed'});
   let body; try { body = await request.json(); } catch { return json(400, {error: 'bad_json'}); }
@@ -111,7 +113,7 @@ export async function handleMcp(request, env, ctx, {fetcher = fetch} = {}) {
   try {
     r = await fetcher(url + '/mcp', {
       method: 'POST', body,
-      headers: {'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer ' + env.NEXUS_TOKEN},
+      headers: {'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer ' + secret(env.NEXUS_TOKEN)},
       signal: AbortSignal.timeout(25000),
     });
   } catch { return offline(id); }
