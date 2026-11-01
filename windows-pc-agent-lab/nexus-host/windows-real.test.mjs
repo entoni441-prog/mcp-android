@@ -19,7 +19,7 @@ test('Windows: window_info, focus, keyboard, inspect, mouse allow/deny, capture 
   const gui = createGui({caps, home, workspace: path.join(home, 'ws'), platform: 'win32'});
   const before = new Set((await listWindows({}, {tmpDir: home})).windows.map(w => w.pid));
   spawn(path.join(process.env.SystemRoot, 'System32', 'notepad.exe'), [], {detached: true, stdio: 'ignore'}).unref();
-  let pid = null;
+  let pid = null, pid2 = null;
   for (let i = 0; i < 30 && !pid; i++) {
     await sleep(500);
     pid = (await listWindows({}, {tmpDir: home})).windows.find(w => /^notepad$/i.test(w.process) && !before.has(w.pid))?.pid ?? null;
@@ -30,9 +30,15 @@ test('Windows: window_info, focus, keyboard, inspect, mouse allow/deny, capture 
     console.log('window_info', JSON.stringify(info));
     assert.ok(info.windows.length >= 1 && info.coordinateMapping === true);
 
+    // Second Notepad takes the foreground; focus_window must switch back to the first one via AppActivate.
+    spawn(path.join(process.env.SystemRoot, 'System32', 'notepad.exe'), [], {detached: true, stdio: 'ignore'}).unref();
+    for (let i = 0; i < 30 && !pid2; i++) { await sleep(500); pid2 = (await listWindows({}, {tmpDir: home})).windows.find(w => /^notepad$/i.test(w.process) && !before.has(w.pid) && w.pid !== pid)?.pid ?? null; }
+    await sleep(800);
+    console.log('second notepad', pid2, 'first is foreground:', (await gui.window_info({pid})).foreground);
     const f = await gui.focus_window({pid});
     console.log('focus_window', JSON.stringify(f));
     assert.equal(f.focused, true, 'focus not confirmed: ' + JSON.stringify(f));
+    assert.equal((await gui.window_info({pid})).foreground, true);
 
     const tree = await gui.inspect_ui({pid, maxDepth: 3});
     console.log('inspect_ui nodes', tree.nodes, JSON.stringify(tree.tree).slice(0, 600));
@@ -65,7 +71,7 @@ test('Windows: window_info, focus, keyboard, inspect, mouse allow/deny, capture 
     assert.equal(cap.content[0].type, 'image');
     assert.ok(cap.structured.distinctColours > 1);
   } finally {
-    spawnSync(path.join(process.env.SystemRoot, 'System32', 'taskkill.exe'), ['/pid', String(pid), '/f']);
+    for (const p of [pid, pid2]) if (p) spawnSync(path.join(process.env.SystemRoot, 'System32', 'taskkill.exe'), ['/pid', String(p), '/f']);
     gui.stop();
   }
 });
