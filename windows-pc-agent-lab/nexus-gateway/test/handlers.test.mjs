@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {handleDefault, handleTunnel, handleMcp, sha256hex} from '../src/handlers.mjs';
+import {fakeGuardNamespace} from './fake-guard.mjs';
 
 const BASE = 'https://nexus-gateway.example.workers.dev';
 const TOKEN = 't'.repeat(43);
@@ -13,6 +14,7 @@ function makeEnv() {
     kv, completed,
     env: {
       NEXUS_TOKEN: TOKEN,
+      CONSENT_GUARD: fakeGuardNamespace().ns,
       OAUTH_KV: {
         get: async k => kv.has(k) ? kv.get(k) : null,
         put: async (k, v) => { kv.set(k, v); },
@@ -56,6 +58,7 @@ test('wrong passphrase rejected and lockout after 5 failures', async () => {
   }
   const nonce = nonceFrom(await (await handleDefault(new Request(BASE + '/authorize'), env)).text());
   assert.equal((await handleDefault(post(nonce, PASS), env)).status, 429, 'locked even with correct pass');
+  assert.equal(m.kv.has('consent-fails'), false, 'no KV counter any more');
   assert.equal(m.completed.length, 0);
 });
 

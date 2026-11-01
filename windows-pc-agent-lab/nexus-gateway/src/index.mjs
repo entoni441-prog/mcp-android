@@ -1,5 +1,6 @@
 import OAuthProvider from '@cloudflare/workers-oauth-provider';
 import {handleDefault, handleMcp} from './handlers.mjs';
+export {ConsentGuard} from './guard.mjs';
 
 export default new OAuthProvider({
   apiRoute: '/mcp',

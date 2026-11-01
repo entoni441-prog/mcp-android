@@ -3,13 +3,13 @@
  * ChatGPT ──OAuth (workers-oauth-provider)──▶ /mcp ──Bearer NEXUS_TOKEN──▶ quick tunnel ──▶ NEXUS Host on the owner's PC.
  *
  * Secrets (wrangler secret put): NEXUS_TOKEN (same as PC token.txt), OWNER_PASSPHRASE_SHA256 (hex sha256 of owner passphrase).
- * Binding: OAUTH_KV (KV namespace). OAUTH_PROVIDER is injected by workers-oauth-provider.
+ * Bindings: OAUTH_KV (KV: OAuth library + tunnel URL), CONSENT_GUARD (Durable Object: atomic lockout + single-use consent).
+ * OAUTH_PROVIDER is injected by workers-oauth-provider.
  */
 const enc = new TextEncoder();
 // `wrangler secret put` fed from a PowerShell pipe may append CR/LF — normalise once.
 const secret = v => typeof v === 'string' ? v.trim() : v;
 const TUNNEL_RE = /^https:\/\/[a-z0-9-]{3,80}\.trycloudflare\.com$/;
-const MAX_FAILS = 5, LOCK_SECONDS = 900, CONSENT_TTL = 300;
 
 const hex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 export const sha256hex = async s => hex(await crypto.subtle.digest('SHA-256', enc.encode(s)));
@@ -22,7 +22,6 @@ async function bearerOk(request, secret) {
   const m = /^Bearer (\S{32,256})$/.exec(request.headers.get('authorization') || '');
   return !!m && typeof secret === 'string' && secret.length >= 32 && timingSafeEqualHex(await sha256hex(m[1]), await sha256hex(secret));
 }
-const randomId = () => { const b = new Uint8Array(32); crypto.getRandomValues(b); return hex(b); };
 const json = (status, body, extra = {}) => new Response(JSON.stringify(body), {status, headers: {'content-type': 'application/json', 'cache-control': 'no-store', ...extra}});
 const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 const HTML_HEADERS = {
@@ -39,15 +38,16 @@ export async function handleDefault(request, env) {
   if (url.pathname === '/health') return json(200, {ok: true, service: 'nexus-gateway'});
   if (url.pathname === '/tunnel') return handleTunnel(request, env);
   if (url.pathname !== '/authorize') return new Response('Not found', {status: 404});
-  if (!env.OAUTH_KV || !env.OAUTH_PROVIDER || !/^[a-f0-9]{64}$/.test(secret(env.OWNER_PASSPHRASE_SHA256 || '').toLowerCase())) return new Response('Gateway not configured', {status: 503});
+  const expected = secret(env.OWNER_PASSPHRASE_SHA256 || '').toLowerCase();
+  if (!env.OAUTH_PROVIDER || !env.CONSENT_GUARD || !/^[a-f0-9]{64}$/.test(expected)) return new Response('Gateway not configured', {status: 503});
+  const guard = env.CONSENT_GUARD.get(env.CONSENT_GUARD.idFromName('owner'));
 
   if (request.method === 'GET') {
     let auth;
     try { auth = await env.OAUTH_PROVIDER.parseAuthRequest(request); } catch { return page('Ошибка', '<p>Некорректный запрос авторизации.</p>', 400); }
     const client = auth?.clientId ? await env.OAUTH_PROVIDER.lookupClient(auth.clientId) : null;
     if (!client) return page('Ошибка', '<p>Неизвестный клиент.</p>', 400);
-    const nonce = randomId();
-    await env.OAUTH_KV.put('consent:' + nonce, JSON.stringify({auth, issuedAt: Date.now()}), {expirationTtl: CONSENT_TTL});
+    const nonce = await guard.issue(auth);
     const name = escapeHtml(client.clientName || client.client_name || 'MCP client');
     return page('NEXUS — доступ к ПК',
       `<h1>Разрешить доступ к Windows-ПК?</h1><p><b>${name}</b> запрашивает управление NEXUS Host на твоём компьютере.</p>` +
@@ -57,23 +57,18 @@ export async function handleDefault(request, env) {
   }
   if (request.method !== 'POST') return new Response('Method not allowed', {status: 405});
 
-  const lock = Number(await env.OAUTH_KV.get('consent-fails') || 0);
-  if (lock >= MAX_FAILS) return page('Заблокировано', '<p>Слишком много неверных попыток. Подожди 15 минут.</p>', 429);
   const form = await request.formData();
   const nonce = String(form.get('nonce') || '');
   if (!/^[a-f0-9]{64}$/.test(nonce)) return page('Ошибка', '<p>Сессия недействительна.</p>', 400);
-  const raw = await env.OAUTH_KV.get('consent:' + nonce);
-  await env.OAUTH_KV.delete('consent:' + nonce); // single use
-  if (!raw) return page('Ошибка', '<p>Сессия истекла. Начни подключение заново.</p>', 400);
-  if (form.get('decision') !== 'approve') return page('Отклонено', '<p>Доступ не выдан.</p>', 403);
-  const {auth, issuedAt} = JSON.parse(raw);
-  if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > CONSENT_TTL * 1000) return page('Ошибка', '<p>Сессия истекла.</p>', 400);
-  const given = await sha256hex(String(form.get('passphrase') || ''));
-  if (!timingSafeEqualHex(given, secret(env.OWNER_PASSPHRASE_SHA256).toLowerCase())) {
-    await env.OAUTH_KV.put('consent-fails', String(lock + 1), {expirationTtl: LOCK_SECONDS});
-    return page('Ошибка', '<p>Неверный пароль.</p>', 403);
-  }
-  await env.OAUTH_KV.delete('consent-fails');
+  // Hash here, outside the Durable Object: the guard call itself only does storage I/O.
+  const passphraseSha256 = await sha256hex(String(form.get('passphrase') || ''));
+  const r = await guard.attempt({nonce, passphraseSha256, approve: form.get('decision') === 'approve', expectedSha256: expected});
+  if (r.status === 'locked') return page('Заблокировано', `<p>Слишком много неверных попыток. Повтори через ${Math.ceil(r.retryAfterMs / 60000)} мин.</p>`, 429);
+  if (r.status === 'invalid') return page('Ошибка', '<p>Сессия истекла или уже использована. Начни подключение заново.</p>', 400);
+  if (r.status === 'denied') return page('Отклонено', '<p>Доступ не выдан.</p>', 403);
+  if (r.status === 'bad_passphrase') return page('Ошибка', `<p>Неверный пароль. Осталось попыток: ${r.remaining}.</p>`, 403);
+  if (r.status !== 'ok') return page('Ошибка', '<p>Отказ.</p>', 403);
+  const auth = r.auth;
   const {redirectTo} = await env.OAUTH_PROVIDER.completeAuthorization({
     request: auth, userId: 'owner', scope: auth.scope || [], props: {owner: true}, metadata: {label: 'NEXUS owner'},
   });

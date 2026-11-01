@@ -27,7 +27,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: 22}
       - run: npm install --no-audit --no-fund
-      - run: node --test test/handlers.test.mjs
+      - run: node --test test/handlers.test.mjs test/guard-core.test.mjs
       - name: Bundle Worker with real workers-oauth-provider (dry run, no deploy, no credentials)
         run: npx wrangler deploy --dry-run --outdir dist
-      - run: ls -la dist && grep -c "OAuthProvider\|oauth" dist/index.js
+      - run: ls -la dist && grep -c "ConsentGuard" dist/index.js
