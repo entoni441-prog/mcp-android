@@ -78,3 +78,33 @@ test('production defaults: no injection → every private destination refused ev
     assert.match(await connect(pport, '169.254.169.254:443'), /403/);
   } finally { proxy.close(); }
 });
+
+// 0.5.2 (Windows CI 41479530163): a CONNECT tunnel must not outlive its browser side, and close() must end every tunnel —
+// otherwise upstream sockets keep the Host process alive after the NEXUS browser was killed.
+test('CONNECT tunnel: client reset destroys upstream; close() ends all open tunnels', async () => {
+  const net = await import('node:net');
+  const upstreamClosed = [];
+  const up = net.createServer(s => { s.on('close', () => upstreamClosed.push(Date.now())); s.on('error', () => {}); });
+  await new Promise(r => up.listen(0, '127.0.0.2', r));
+  const port = up.address().port;
+  const proxy = createEgressProxy({lookup: (h, o, cb) => cb(null, [{address: '127.0.0.2', family: 4}]), ports: [port], isPublic: ip => ip === '127.0.0.2'});
+  const pport = await proxy.listen();
+  const open = () => new Promise((res, rej) => {
+    const c = net.connect(pport, '127.0.0.1', () => c.write(`CONNECT example.com:${port} HTTP/1.1\r\nHost: example.com:${port}\r\n\r\n`));
+    c.once('data', d => (/200/.test(String(d)) ? res(c) : rej(Error(String(d)))));
+    c.on('error', () => {});
+  });
+  const c1 = await open();
+  assert.equal(proxy.openTunnels(), 2);
+  c1.resetAndDestroy();
+  for (let i = 0; i < 50 && upstreamClosed.length < 1; i++) await new Promise(r => setTimeout(r, 20));
+  assert.equal(upstreamClosed.length, 1, 'upstream closed after the browser side was reset');
+  assert.equal(proxy.openTunnels(), 0);
+  const c2 = await open();
+  assert.equal(proxy.openTunnels(), 2);
+  proxy.close();
+  for (let i = 0; i < 50 && upstreamClosed.length < 2; i++) await new Promise(r => setTimeout(r, 20));
+  assert.equal(upstreamClosed.length, 2, 'close() tears down the remaining tunnel');
+  assert.equal(proxy.openTunnels(), 0);
+  c2.destroy(); up.close();
+});

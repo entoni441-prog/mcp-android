@@ -91,6 +91,15 @@ export function createEgressProxy({allowPrivate = false, lookup = dns.lookup, po
   });
 
   // HTTPS / WSS: CONNECT host:port → raw TCP tunnel to the checked IP.
+  // 0.5.2: every tunnel socket is tracked and torn down in pairs. Windows CI 41479530163: after the NEXUS Edge was
+  // killed, upstream TCP connections of its CONNECT tunnels stayed open (pipe does not destroy the other side on
+  // error/reset) and close() only stopped listening — the process could not exit for minutes or at all.
+  const tunnels = new Set();
+  const pair = (a, b) => {
+    tunnels.add(a); tunnels.add(b);
+    const kill = () => { a.destroy(); b.destroy(); tunnels.delete(a); tunnels.delete(b); };
+    for (const s of [a, b]) { s.once('close', kill); s.once('error', kill); }
+  };
   server.on('connect', async (req, client, head) => {
     const m = /^(\[[0-9a-fA-F:.]+\]|[^:\s]+):(\d{1,5})$/.exec(req.url || '');
     client.on('error', () => {});
@@ -99,19 +108,22 @@ export function createEgressProxy({allowPrivate = false, lookup = dns.lookup, po
     const r = await resolveChecked(host, port);
     if (r.error) { deny(host, r.error); client.end(`HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\n\r\nnexus_egress_denied: ${r.error}`); return; }
     stats.allowed++;
+    if (client.destroyed) return;
     const up = net.connect({host: r.ip, port}, () => {
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       if (head?.length) up.write(head);
       up.pipe(client); client.pipe(up);
     });
-    up.on('error', () => client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'));
+    up.on('error', () => { if (client.writable) client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'); });
+    pair(client, up);
   });
   server.on('clientError', (e, s) => s.destroy());
 
   return {
     stats,
     listen: () => new Promise(res => server.listen(0, '127.0.0.1', () => res(server.address().port))),
-    close: () => server.close(),
+    close: () => { server.close(); server.closeAllConnections?.(); for (const s of tunnels) s.destroy(); tunnels.clear(); },
+    openTunnels: () => tunnels.size,
     resolveChecked,
   };
 }
