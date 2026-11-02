@@ -41,23 +41,28 @@ test('Windows R-01: real MessageBox «permanently delete» → Yes = consent, No
     const act = await runUiaReal({mode: 'activate', hwnd: Number(win.hwnd), pid: win.pid}, opt);
     console.log('r01 activate', JSON.stringify({windowFound: act.windowFound, setFocus: act.setFocus, focused: act.focused}));
     await sleep(400);
-    const r = win.rect; let atYes = null, atNo = null; const seen = [], probes = [];
-    for (let y = r.y + r.h - 12; y > r.y + r.h / 2 && !(atYes && atNo); y -= 8) {
-      for (let x = r.x + 10; x < r.x + r.w - 10 && !(atYes && atNo); x += 12) {
+    // Product requirement (fail-closed): wherever a click lands in the button row of a deletion confirmation, the Host
+    // must NOT let it through silently — consent (affirmative), refusal (unidentified) or free only for a recognised
+    // negative button / the message text. CI 41474838530 showed FromPoint returns the dialog Window there.
+    const r = win.rect; const probes = []; let withText = null;
+    for (let y = r.y + r.h - 12; y >= r.y + r.h - 52; y -= 10) {
+      for (let x = r.x + 10; x < r.x + r.w - 10; x += 24) {
         const at = (await runUiaReal({mode: 'at', x, y}, opt)).at;
-        const nm = String(at?.elem?.name || '').replace(/&/g, '');
-        if (probes.length < 4) probes.push({x, y, process: at?.process, ct: at?.elem?.controlType, win: at?.window?.name});
-        if (at?.elem?.controlType === 'Button') { seen.push(nm); if (/^yes$/i.test(nm)) atYes = at; if (/^no$/i.test(nm)) atNo = at; }
+        if (at?.dialog && (at.dialog.text || []).some(t => /permanently delete/i.test(t))) withText ||= at.dialog;
+        probes.push({x, y, ct: at?.elem?.controlType, name: String(at?.elem?.name || '').replace(/&/g, '').slice(0, 40), cls: classifyDestructiveClick(at, 'click')});
       }
     }
-    if (!(atYes && atNo)) console.log('r01: buttons seen', JSON.stringify([...new Set(seen)]), 'probes', JSON.stringify(probes));
-    assert.ok(atYes && atNo, 'Yes/No buttons found under points of the dialog');
-    console.log('r01 at(yes)', JSON.stringify({elem: atYes.elem, parentType: atYes.parentType, dialog: atYes.dialog}));
-    assert.ok(atYes.dialog, 'UIA reports the dialog (modal or #32770)');
-    assert.ok((atYes.dialog.text || []).some(s => /permanently delete/i.test(s)), 'dialog text visible to the Host');
-    const cy = classifyDestructiveClick(atYes, 'click');
-    assert.equal(cy?.what, 'destructive_action', JSON.stringify(cy));
-    assert.equal(classifyDestructiveClick(atNo, 'click'), null);
+    const kinds = {}; for (const q of probes) { const k = `${q.ct}:${q.name}:${q.cls ? (q.cls.refuse ? 'refuse' : 'consent') : 'free'}`; kinds[k] = (kinds[k] || 0) + 1; }
+    console.log('r01 probes', JSON.stringify(kinds));
+    console.log('r01 dialog as seen by Host', JSON.stringify(withText));
+    assert.ok(withText, 'UIA reports the dialog and its «permanently delete» text to the Host');
+    const leaks = probes.filter(q => !q.cls && !['Text', 'Image'].includes(q.ct) && !/^(no|cancel)$/i.test(q.name));
+    assert.deepEqual(leaks, [], 'no click in the confirmation button row passes without consent/refusal');
+    // keyboard path: the message box focuses its default button; Enter must need consent
+    const ctx = await runUiaReal({mode: 'context'}, opt);
+    console.log('r01 focused in box', JSON.stringify({elem: ctx.elem, parentType: ctx.parentType, dialog: !!ctx.dialog}));
+    const ek = classifyDestructiveKeys('enter', ctx);
+    assert.ok(ek && (ek.what === 'destructive_action' || ek.refuse), 'Enter in the confirmation is not free: ' + JSON.stringify(ek));
   } finally {
     spawnSync(path.join(process.env.SystemRoot, 'System32', 'taskkill.exe'), ['/PID', String(p.pid), '/T', '/F']);
   }

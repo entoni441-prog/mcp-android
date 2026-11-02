@@ -46,6 +46,9 @@ test('R-01 confirmation dialogs: affirmative → consent, negative/Save → free
   assert.equal(C(B('OK', 'Button', {dialog: PLAIN})), null);
   // the dialog text itself (Text control) is not a button
   assert.equal(C(B('Are you sure?', 'Text', {dialog: DLG})), null);
+  // real Windows: FromPoint over a MessageBox button returned the dialog Window → button unknown → refused, never free
+  assert.equal(C(B('NEXUS R01 Delete File', 'Window', {dialog: DLG})).refuse, true);
+  assert.equal(C(B('', 'Group', {dialog: DLG})).refuse, true);
 });
 
 test('R-01 keys: Del/Shift+Del only on selected items; free in text; Ctrl+Shift+Del always; Enter in a confirmation', () => {

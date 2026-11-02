@@ -388,6 +388,13 @@ function byName(elem, parentType) {
 export function classifyDestructiveClick(at, action = 'click') {
   if (!['click', 'double_click'].includes(action) || !at?.elem) return null;
   const t = at.elem.controlType, n = clean(at.elem.name);
+  // Windows CI 41474838530: on a real MessageBox, UIA FromPoint returned the dialog WINDOW itself for every point of
+  // the button row — the button under the cursor was not identifiable. Inside a deletion confirmation, a click whose
+  // target is not a recognisable element is therefore refused (fail-closed); only Text/Image (the message) is free.
+  if (isConfirmDialog(at.dialog) && !DLG_BTN_TYPES.has(t)) {
+    if (['Text', 'Image'].includes(t)) return null;
+    return {refuse: true, reason: 'destructive_confirm_target_unidentified'};
+  }
   if (isConfirmDialog(at.dialog) && DLG_BTN_TYPES.has(t)) {
     if (n && n.length <= 40 && NEGATE_RE.test(n)) return null;
     if (n && n.length <= 40 && AFFIRM_RE.test(n)) return {level: 2, what: 'destructive_action', via: 'confirm:' + n};
