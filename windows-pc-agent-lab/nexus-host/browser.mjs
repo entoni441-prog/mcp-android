@@ -438,6 +438,8 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
         if (args.action === 'switch') { await attach(t); await browserWs.send('Target.activateTarget', {targetId: t.id}).catch(() => {}); }
         else {
           await browserWs.send('Target.closeTarget', {targetId: t.id});
+          // 0.5.2: Edge answers closeTarget before the target is gone (Windows CI 41466231727: list still had 2 tabs).
+          for (let i = 0; i < 20 && (await pages()).some(x => x.id === t.id); i++) await new Promise(r => setTimeout(r, 100));
           if (t.id === currentTarget) { page?.close(); page = null; const rest = await pages(); if (rest[0]) await attach(rest[0]); }
         }
       } else if (!browserWs) return {tabs: [], open: false};
