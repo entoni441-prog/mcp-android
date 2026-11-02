@@ -30,9 +30,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 export function createApps({caps, store, consent, gui, workspace, platform = process.platform, systemRoot = process.env.SystemRoot,
   launcher = spawn, exists = fs.existsSync, wait = sleep, execDeps = {}}) {
 
-  async function settle(proc, before, opts, source) {
+  async function settle(proc, before, opts, source, rounds = 8) {
     let after = before;
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < rounds; i++) {
       await wait(400);
       after = await gui.snapshotApp(proc);
       if (before !== null && after !== null && JSON.stringify(after) !== JSON.stringify(before)) {
@@ -64,10 +64,28 @@ export function createApps({caps, store, consent, gui, workspace, platform = pro
           note: 'NEXUS opened its own scratch document. Only windows/tabs listed in createdByNexus may be closed without asking the owner.'};
       }
       if (args.app === 'calculator') {
+        // 0.5.1: Calculator is a UWP app — its visible window is an ApplicationFrameHost frame (the 'apps' snapshot now
+        // reports such frames under CalculatorApp). It also appears asynchronously: wait up to ~6 s, then keep
+        // watching in the background for up to ~10 s more and record the window when exactly one new one appears.
         const before = await gui.snapshotApp('CalculatorApp');
         const out = await executeJob('open_app', {app: 'calculator'}, {workspace, ...execDeps});
-        return {...out, createdByNexus: await settle('CalculatorApp', before, {}, 'open_app:calculator'),
-          note: 'Only windows/tabs listed in createdByNexus may be closed without asking the owner.'};
+        const created = await settle('CalculatorApp', before, {}, 'open_app:calculator', 15);
+        if (!created.windows.length && Array.isArray(before)) {
+          created.pending = 'watching_async';
+          (async () => {
+            for (let i = 0; i < 10; i++) {
+              await wait(1000);
+              const now = await gui.snapshotApp('CalculatorApp');
+              if (!Array.isArray(now)) return;
+              const prev = new Set(before.map(w => String(w.hwnd)));
+              const fresh = now.filter(w => !prev.has(String(w.hwnd)));
+              if (fresh.length === 1) { consent.recordCreated(before, now, 'open_app:calculator:async'); return; }
+              if (fresh.length > 1) return; // ambiguous (owner opened another one too) → not owned
+            }
+          })().catch(() => {});
+        }
+        return {...out, createdByNexus: created,
+          note: 'Only windows/tabs listed in createdByNexus may be closed without asking the owner.' + (created.pending ? ' The window was still opening; NEXUS keeps watching for ~10 s and will own it when it appears.' : '')};
       }
       const exe = caps.launchApps?.[args.app];
       if (!exe) throw Error('app_not_granted: use manage_app_access request');

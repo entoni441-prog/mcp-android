@@ -82,16 +82,16 @@ export function createRuntime(cfg, deps = {}) {
   const live = createLive({caps, store, session, capture: (w, q) => gui.frameJpeg(w, q), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
   // End of every session: stream off at the source first, then clean up what NEXUS itself opened.
   session.onEnd(async () => { live.sessionEnded(); return {liveActive: false}; });
+  session.onEnd(async (reason, s) => (typeof procs.cancelSession === 'function' ? {tasks: await procs.cancelSession(reason, s)} : {}));
   session.onEnd(async reason => (typeof gui.cleanupOwned === 'function' ? {windows: await gui.cleanupOwned(reason)} : {}));
   session.onEnd(async reason => (typeof browser.cleanupSession === 'function' ? {browser: await browser.cleanupSession(reason)} : {}));
-  session.onEnd(async reason => (typeof procs.cancelSession === 'function' ? {tasks: await procs.cancelSession(reason)} : {}));
   const apps = createApps({caps, store, consent, gui, workspace: cfg.workspace, execDeps,
     ...(execDeps.platform ? {platform: execDeps.platform} : {}), ...(execDeps.systemRoot ? {systemRoot: execDeps.systemRoot} : {}),
     ...(execDeps.launcher ? {launcher: execDeps.launcher} : {}), ...(deps.appsDeps || {})});
   const ws = {workspace: cfg.workspace};
   const handlers = {
     image_selftest: a => gui.image_selftest(a), capture_screen: a => gui.capture_screen(a), focus_window: a => gui.focus_window(a),
-    window_info: a => gui.window_info(a), inspect_ui: a => gui.inspect_ui(a), mouse_action: a => gui.mouse_action(a), keyboard_action: a => gui.keyboard_action(a),
+    window_info: a => gui.window_info(a), close_window: a => gui.close_window(a), inspect_ui: a => gui.inspect_ui(a), mouse_action: a => gui.mouse_action(a), keyboard_action: a => gui.keyboard_action(a),
     list_processes: a => procs.list_processes(a), process_action: a => procs.process_action(a), run_task: a => procs.run_task(a),
     task_status: a => procs.task_status(a), task_cancel: a => procs.task_cancel(a), read_audit_log: a => procs.read_audit_log(a),
     search_files: a => searchFiles(a, ws), file_action: a => fileAction(a, ws),

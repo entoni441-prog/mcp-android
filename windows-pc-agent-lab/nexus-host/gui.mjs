@@ -165,12 +165,150 @@ export function createGui({caps, home, workspace, platform = process.platform, r
 
   const NEW_KEYS = new Set(['ctrl+n', 'ctrl+t', 'ctrl+shift+n', 'shift+ctrl+n']);
   const apps = async name => (await uia({mode: 'apps', name})).apps || [];
+  const tabsOf = w => (Array.isArray(w?.tabs) ? w.tabs : []).filter(t => t && typeof t.rid === 'string' && t.rid);
+
+  /** Press a prompt button that UIA could not Invoke: click its centre, only if UIA confirms the point is that button. */
+  async function clickPromptButton(rect, hwnd, pid, role) {
+    if (caps.gui_input !== true || !rect) return false;
+    const inf = await info(), root = (await uia({mode: 'focused'})).root, m = mapping(inf, root);
+    if (!m) return false;
+    const ux = Math.round(rect.x + rect.w / 2), uy = Math.round(rect.y + rect.h / 2);
+    const at = (await uia({mode: 'at', x: ux, y: uy})).at;
+    const re = {save: /^(save|сохранить)$/i, discard: /^(don.?t save|do not save|не сохранять)$/i, cancel: /^(cancel|отмена)$/i}[role];
+    if (!re?.test(at?.elem?.name || '')) return false;
+    // in-window prompt (same hwnd) or the app's own dialog window (same process as the target window)
+    if (!(String(at?.window?.hwnd) === String(hwnd) || (Number.isInteger(pid) && at?.pid === pid && at?.window?.pid === pid))) return false;
+    const sp = m.rectToScreen({x: ux, y: uy, w: 0, h: 0});
+    await getRobot().cmd(`click ${sp.x} ${sp.y} left 1`);
+    return true;
+  }
+
+  /**
+   * 0.5.1: close ONE window or tab by identity (hwnd + UIA runtime id), via UI Automation — no keystrokes, so nothing
+   * can be typed into another window. Then handle a save prompt by `onPrompt`: 'save' | 'discard' | 'cancel'.
+   * Caller decides the policy; this only executes it and verifies the result by a fresh snapshot.
+   */
+  async function closeTarget({process, hwnd, pid = null, rid = null, onPrompt}) {
+    const r = await uia({mode: 'close', hwnd: Number(hwnd), ...(rid ? {rid} : {})});
+    if (!r.found) return {closed: true, method: 'already_gone'};
+    if (!r.invoked) return {closed: false, method: r.method || 'not_invokable'};
+    let prompt = null;
+    for (let i = 0; i < 4; i++) {
+      await sleep(400);
+      const d = await uia({mode: 'dialog', hwnd: Number(hwnd)});
+      if (d.dialog) { prompt = d; break; }
+      if (await gone(process, hwnd, rid)) return {closed: true, method: r.method, prompt: null};
+    }
+    let answered = null;
+    if (prompt) {
+      const d = await uia({mode: 'dialog', hwnd: Number(hwnd), choice: onPrompt});
+      answered = d.invoked ? onPrompt : (await clickPromptButton(d.rect, hwnd, pid, onPrompt)) ? onPrompt + ':click' : null;
+      if (!answered) return {closed: false, method: r.method, prompt: 'shown', answered: null, note: 'prompt button could not be pressed'};
+      await sleep(600);
+    }
+    return {closed: await gone(process, hwnd, rid), method: r.method, prompt: prompt ? 'shown' : null, answered};
+  }
+  async function gone(process, hwnd, rid) {
+    let wins; try { wins = await apps(process); } catch { return false; }
+    const w = wins.find(x => String(x.hwnd) === String(hwnd));
+    return !w || (!!rid && !tabsOf(w).some(t => t.rid === rid));
+  }
 
   return {
     consent,
     /** Snapshot all windows+tabs of a process name (used around open_app / new-tab keys to record NEXUS-created ones). */
     async snapshotApp(name) { if (platform !== 'win32') return []; try { return await apps(name); } catch { return null; } },
     warm() { if (caps.gui_input || caps.screen_capture) getRobot().start().catch(() => {}); },
+
+    /**
+     * 0.5.1 session end: close every window/tab NEXUS itself opened (never the owner's). Scratch documents: a save prompt
+     * is answered «Save» (into the NEXUS scratch file — no data loss, no hanging dialog). Other NEXUS-opened windows
+     * with unsaved changes: prompt answered «Cancel», window left open, reported (the owner decides).
+     */
+    async cleanupOwned(reason) {
+      const o = consent.owned;
+      const report = {closed: [], left: []};
+      if (platform !== 'win32' || (!o.windows.size && !o.tabs.size)) return report;
+      // Snapshot every app first; prune only when all snapshots succeeded (a failed snapshot must not drop ownership).
+      const snaps = new Map(); let allOk = true;
+      for (const proc of [...o.apps]) { try { snaps.set(proc, await apps(proc)); } catch { allOk = false; report.left.push({app: proc, why: 'snapshot_failed'}); } }
+      if (allOk) consent.prune([...snaps.values()].flat());
+      for (const [proc, wins] of snaps) {
+        for (const w of wins) {
+          const ownedTabs = tabsOf(w).filter(t => o.tabs.has(t.rid));
+          const whole = o.windows.has(String(w.hwnd)) && tabsOf(w).every(t => o.tabs.has(t.rid));
+          const items = whole ? [{rid: null, name: w.name, scratch: o.scratch.has(String(w.hwnd)) || (ownedTabs.length > 0 && ownedTabs.every(t => o.scratch.has(t.rid)))}]
+            : ownedTabs.map(t => ({rid: t.rid, name: t.name, scratch: o.scratch.has(t.rid)}));
+          for (const it of items) {
+            let r;
+            try { r = await closeTarget({process: proc, hwnd: w.hwnd, pid: w.pid, rid: it.rid, onPrompt: it.scratch ? 'save' : 'cancel'}); }
+            catch (e) { r = {closed: false, error: String(e?.message || e).slice(0, 80)}; }
+            const rec = {app: proc, name: String(it.name || '').slice(0, 120), kind: it.rid ? 'tab' : 'window', ...r};
+            if (r.closed) { report.closed.push(rec); if (it.rid) consent.forgetTab(it.rid); else consent.forget(w); }
+            else report.left.push({...rec, why: r.answered === 'cancel' ? 'unsaved_changes_owner_decides' : 'close_failed'});
+          }
+        }
+      }
+      return report;
+    },
+
+    /**
+     * 0.5.1 D5: close a window or tab by name. Autonomous when NEXUS opened it, or when the owner asked for exactly this
+     * in chat (ownerRequested) and the owner's switch grantsFromChat is on. Otherwise consent_required. Unsaved changes in
+     * an owner document are never discarded silently: onUnsaved 'ask' (default) cancels the prompt and returns
+     * unsaved_choice_required — ask the owner «Save / Don't save / Cancel», then call again with that choice.
+     */
+    async close_window(args, {consented = null, decision = null} = {}) {
+      requireCap(caps, 'gui_input'); winOnly();
+      if (!onlyKeys(args, ['pid', 'title', 'tab', 'onUnsaved', 'ownerRequested']) || !int(args.pid, 1, 2 ** 31)) bad();
+      for (const k of ['title', 'tab']) if (args[k] !== undefined && (typeof args[k] !== 'string' || !args[k] || args[k].length > 200)) bad();
+      if (args.onUnsaved !== undefined && !['ask', 'save', 'discard', 'cancel'].includes(args.onUnsaved)) bad();
+      if (args.ownerRequested !== undefined && typeof args.ownerRequested !== 'boolean') bad();
+      const t = await checkPid(args.pid);
+      const proc = t.target.process;
+      const hw = new Set((t.windows || []).map(w => String(w.hwnd)));
+      const lc = x => String(x || '').toLowerCase();
+      let wins = (await apps(proc)).filter(w => hw.has(String(w.hwnd)));
+      if (args.title) wins = wins.filter(w => lc(w.name).includes(lc(args.title)));
+      if (args.tab) wins = wins.filter(w => tabsOf(w).some(x => lc(x.name).includes(lc(args.tab))));
+      if (wins.length !== 1) return {status: wins.length ? 'ambiguous' : 'not_found', candidates: wins.slice(0, 10).map(w => w.name),
+        instruction: wins.length ? 'Several windows match. Ask the owner which one, then call again with a more exact title/tab.' : 'No such window/tab of this process.'};
+      const win = wins[0];
+      let tab = null;
+      if (args.tab) {
+        const m = tabsOf(win).filter(x => lc(x.name).includes(lc(args.tab)));
+        if (m.length !== 1) return {status: 'ambiguous', candidates: m.map(x => x.name), instruction: 'Several tabs match. Ask the owner which one.'};
+        tab = m[0];
+      }
+      const kind = tab ? 'tab' : 'window';
+      const c = {kind, via: 'close_window'};
+      const own = consent.isOwned(c, win, tab);
+      const byOwner = !own && args.ownerRequested === true && caps.grantsFromChat !== false;
+      if (consented) {
+        if (String(win.hwnd) !== consented.hwnd || (consented.rid && tab?.rid !== consented.rid)) throw Error('consent_target_changed');
+      } else if (!own && !byOwner) {
+        const g = consent.gate(c, win, tab, {tool: 'close_window', args});
+        if (g) return g;
+      }
+      // What to answer if the app asks to save. Discarding the OWNER's text needs an explicit owner choice.
+      const scratch = tab ? consent.owned.scratch.has(tab.rid) : consent.owned.scratch.has(String(win.hwnd));
+      let onPrompt;
+      if (scratch) onPrompt = 'save';
+      else if (consented) onPrompt = decision === 'close_discard' ? 'discard' : 'save';
+      else if (args.onUnsaved === 'discard' && (own || byOwner)) onPrompt = 'discard';
+      else if (args.onUnsaved === 'save') onPrompt = 'save';
+      else onPrompt = 'cancel';
+      const r = await closeTarget({process: proc, hwnd: win.hwnd, pid: win.pid, rid: tab?.rid || null, onPrompt});
+      if (r.closed) { if (tab) consent.forgetTab(tab.rid); else consent.forget(win); }
+      const out = {target: `${proc}: ${tab ? 'вкладка «' + tab.name + '»' : 'окно «' + win.name + '»'}`, kind, closed: r.closed,
+        by: own ? 'nexus_owned' : consented ? 'confirm_action' : 'owner_request', prompt: r.prompt, answered: r.answered};
+      if (!r.closed && r.prompt && r.answered === 'cancel' && (args.onUnsaved ?? 'ask') !== 'cancel') {
+        return {...out, status: 'unsaved_choice_required', options: ['save', 'discard', 'cancel'],
+          instruction: 'The document has unsaved changes; nothing was lost. Ask the owner exactly: Save, Don\'t save, or Cancel. Then call close_window again with onUnsaved = save | discard (or stop on cancel).'};
+      }
+      if (!r.closed && r.answered === 'save') out.note = 'Save may have opened a «Save as» dialog (document never saved before) — the owner should pick a location.';
+      return out;
+    },
     stop() { daemon?.stop(); },
 
     async image_selftest(args) {
@@ -251,9 +389,13 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       const isOn = f => f?.ok === true && (f.pid === args.pid || (!!f.topHwnd && hwnds.has(String(f.topHwnd))));
       if (isOn(w.focused)) return {focused: true, already: true, method: 'none', hwnd: w.focused.topHwnd ?? null};
       const attempts = [];
-      const r = await uia({mode: 'activate', pid: args.pid, title: String(w.windows[0].name || '').slice(0, 200)});
-      attempts.push({method: 'AppActivate', byPid: !!r.appActivateByPid, byTitle: !!r.appActivateByTitle, foreground: r.focused?.process || null});
-      if (isOn(r.focused)) return {focused: true, method: r.appActivateByPid ? 'AppActivate(pid)' : 'AppActivate(title)', hwnd: r.focused.topHwnd ?? null, attempts};
+      const main = w.windows.find(x => x.hwnd) || w.windows[0];
+      const r = await uia({mode: 'activate', pid: args.pid, ...(main.hwnd ? {hwnd: Number(main.hwnd)} : {}), title: String(main.name || '').slice(0, 200)});
+      // 0.5.1 diagnostics: which step worked, and why not (minimised / off-screen / Windows foreground lock).
+      const diag = {windowFound: r.windowFound ?? null, wasMinimized: !!r.wasMinimized, offscreen: r.offscreen ?? null, uiaSetFocus: !!r.setFocus,
+        ...(r.setFocusError ? {setFocusError: r.setFocusError} : {}), foregroundBefore: r.foregroundBefore?.process || null};
+      attempts.push({method: 'UIA.SetFocus+AppActivate', ...diag, byPid: !!r.appActivateByPid, byTitle: !!r.appActivateByTitle, foreground: r.focused?.process || null});
+      if (isOn(r.focused)) return {focused: true, method: r.appActivateByPid ? 'AppActivate(pid)' : r.appActivateByTitle ? 'AppActivate(title)' : 'UIA.SetFocus', hwnd: r.focused.topHwnd ?? null, attempts};
       // Fallback (only with gui_input): click an EMPTY spot of the target window's own title bar. Each candidate point
       // is checked with UIA first: it must belong to the target window and must not be a button/tab/menu — so the click
       // can never land in someone else's window and never presses Close.
@@ -280,7 +422,11 @@ export function createGui({caps, home, workspace, platform = process.platform, r
           }
         }
       }
-      return {focused: false, method: 'none', foregroundProcess: r.focused?.process || null, foregroundHwnd: r.focused?.topHwnd ?? null, windows: [...hwnds], attempts,
+      // Most likely cause when the window exists, is not minimised and every call "succeeded": Windows foreground lock
+      // (a background process may not take the foreground). A real click on the title bar is the input that unlocks it.
+      const cause = !main.hwnd || r.windowFound === false ? 'window_not_found_by_hwnd' : r.offscreen ? 'window_offscreen_or_covered'
+        : (r.setFocus || r.appActivateByPid) ? 'foreground_lock_likely' : 'activation_refused';
+      return {focused: false, method: 'none', cause, foregroundProcess: r.focused?.process || null, foregroundHwnd: r.focused?.topHwnd ?? null, windows: [...hwnds], attempts,
         hint: caps.gui_input ? 'Window not reachable (covered or minimised?). No input was sent to other windows.' : 'Enable gui_input to allow the safe title-bar fallback.'};
     },
 

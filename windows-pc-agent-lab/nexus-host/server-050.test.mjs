@@ -29,8 +29,8 @@ function host(capsJson = {}, extra = {}) {
 }
 const auditOf = h => fs.readFileSync(h.cfg.auditFile, 'utf8');
 
-test('catalog 0.5.1: 36 tools; live_frame is app-only; widget tools point at the ui:// resource', () => {
-  assert.equal(TOOLS.length, 36);
+test('catalog 0.5.1: 37 tools; live_frame is app-only; widget tools point at the ui:// resource', () => {
+  assert.equal(TOOLS.length, 37);
   const lf = TOOLS.find(t => t.name === 'live_frame');
   assert.deepEqual(lf._meta.ui.visibility, ['app']);
   assert.equal(lf._meta.ui.resourceUri, LIVE_UI);

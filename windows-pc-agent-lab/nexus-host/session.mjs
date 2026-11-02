@@ -24,7 +24,7 @@ import crypto from 'node:crypto';
 
 /** Tools that act on (or open things on) the real desktop. Read-only tools do not start a session. */
 export const WORK_TOOLS = Object.freeze(new Set([
-  'mouse_action', 'keyboard_action', 'focus_window', 'open_app', 'confirm_action',
+  'mouse_action', 'keyboard_action', 'focus_window', 'open_app', 'confirm_action', 'close_window',
   'browser_open', 'browser_action', 'browser_tabs', 'process_action', 'run_task',
 ]));
 /** Tools that may run during a session and renew it, but never start one. */

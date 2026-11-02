@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: '17'}
       - name: Unit + integration tests (fake GUI, real files/tasks/HTTP)
-        run: node --test windows-pc-agent-lab/nexus-host/server.test.mjs windows-pc-agent-lab/nexus-host/access.test.mjs windows-pc-agent-lab/nexus-host/e2e-gateway.test.mjs windows-pc-agent-lab/nexus-host/windows.test.mjs windows-pc-agent-lab/nexus-host/gui.test.mjs windows-pc-agent-lab/nexus-host/modules.test.mjs windows-pc-agent-lab/nexus-host/capstore.test.mjs windows-pc-agent-lab/nexus-host/consent.test.mjs windows-pc-agent-lab/nexus-host/server-042.test.mjs windows-pc-agent-lab/nexus-host/server-050.test.mjs windows-pc-agent-lab/nexus-host/session.test.mjs
+        run: node --test windows-pc-agent-lab/nexus-host/server.test.mjs windows-pc-agent-lab/nexus-host/access.test.mjs windows-pc-agent-lab/nexus-host/e2e-gateway.test.mjs windows-pc-agent-lab/nexus-host/windows.test.mjs windows-pc-agent-lab/nexus-host/gui.test.mjs windows-pc-agent-lab/nexus-host/modules.test.mjs windows-pc-agent-lab/nexus-host/capstore.test.mjs windows-pc-agent-lab/nexus-host/consent.test.mjs windows-pc-agent-lab/nexus-host/server-042.test.mjs windows-pc-agent-lab/nexus-host/server-050.test.mjs windows-pc-agent-lab/nexus-host/session.test.mjs windows-pc-agent-lab/nexus-host/cleanup-051.test.mjs
       - name: Egress proxy + real browser over CDP incl. SSRF/redirect/DNS negatives (Chrome on Linux, Edge on Windows)
         run: node --test --test-force-exit --test-reporter=spec windows-pc-agent-lab/nexus-host/egress-proxy.test.mjs windows-pc-agent-lab/nexus-host/browser.test.mjs
       - name: Real Java 17 Robot under Xvfb
@@ -29,7 +29,7 @@ jobs:
       - name: Real Windows desktop — Java 17 Robot + PowerShell 5.1 UIA + Notepad
         if: runner.os == 'Windows'
         env: {NEXUS_REAL_GUI: '1'}
-        run: node --test --test-concurrency=1 --test-reporter=spec windows-pc-agent-lab/nexus-host/robot-real.test.mjs windows-pc-agent-lab/nexus-host/windows-real.test.mjs windows-pc-agent-lab/nexus-host/windows-consent-real.test.mjs windows-pc-agent-lab/nexus-host/windows.test.mjs
+        run: node --test --test-concurrency=1 --test-reporter=spec windows-pc-agent-lab/nexus-host/robot-real.test.mjs windows-pc-agent-lab/nexus-host/windows-real.test.mjs windows-pc-agent-lab/nexus-host/windows-consent-real.test.mjs windows-pc-agent-lab/nexus-host/windows-cleanup-real.test.mjs windows-pc-agent-lab/nexus-host/windows.test.mjs
   gateway:
     runs-on: ubuntu-latest
     defaults:

@@ -15,6 +15,11 @@
  *  apps      {name}            → all top-level windows of processes named {name}, each with hwnd and tabs     [0.4.2]
  * 0.4.2: 'at' also returns element name/automationId, its top-level window hwnd and the TabItem it lies in;
  *        'activate' also reports the focused top-level window hwnd (focus confirmed by window, not only by pid).
+ * 0.5.1: apps — also ApplicationFrameHost frames hosting {name} (UWP Calculator): process/pid of the hosted app, hwnd of
+ *        the frame (the window the user sees); activate {pid,hwnd?} — restore if minimised, UIA SetFocus on the window,
+ *        then AppActivate, with diagnostics; close {hwnd,rid?} — one tab (select + its close button, Invoke) or the window
+ *        (WindowPattern.Close); dialog {hwnd,choice?} — Save / Don't save / Cancel prompt of that window (in-window or
+ *        a top-level dialog of the same process); with choice, Invoke that button (rect returned if not invokable).
  * Every mode returns `root` = UIA desktop rectangle, used by Node to map UIA coordinates to Java screen points.
  */
 export const UIA_SCRIPT = String.raw`
@@ -97,6 +102,18 @@ function NxTabs($w) {
   }
   return ,$out
 }
+function NxFindTab($w, $rid) {
+  $stack = New-Object System.Collections.Stack
+  $stack.Push(@($w, 0)); $seen = 0
+  while ($stack.Count -gt 0 -and $seen -lt 400) {
+    $item = $stack.Pop(); $e = $item[0]; $d = $item[1]; $seen++
+    if ($e.Current.ControlType -eq [System.Windows.Automation.ControlType]::TabItem) { if ((NxRid $e) -eq $rid) { return $e }; continue }
+    if ($d -ge 8) { continue }
+    $k = $TW.GetFirstChild($e)
+    while ($null -ne $k) { $stack.Push(@($k, ($d + 1))); $k = $TW.GetNextSibling($k) }
+  }
+  return $null
+}
 function NxWin($w) {
   if ($null -eq $w) { return $null }
   $wpid = $w.Current.ProcessId
@@ -121,15 +138,34 @@ switch ($a.mode) {
     $res.focused = NxFocused
   }
   'activate' {
+    $res.foregroundBefore = NxFocused
+    $w = $null
+    if ($a.hwnd) { try { $w = $AE::FromHandle([IntPtr]([int64]$a.hwnd)) } catch { $w = $null } }
+    $res.windowFound = ($null -ne $w)
+    $res.setFocus = $false; $res.wasMinimized = $false
+    if ($null -ne $w) {
+      try { $res.offscreen = [bool]$w.Current.IsOffscreen } catch { }
+      try {
+        $wp = $w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)
+        if ($wp.Current.WindowVisualState -eq [System.Windows.Automation.WindowVisualState]::Minimized) {
+          $res.wasMinimized = $true; $wp.SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Normal); Start-Sleep -Milliseconds 300
+        }
+      } catch { }
+      try { $w.SetFocus(); $res.setFocus = $true } catch { $res.setFocusError = (NxStr $_.Exception.GetType().Name 60) }
+      Start-Sleep -Milliseconds 300
+    }
+    $f = NxFocused
     $ws = New-Object -ComObject WScript.Shell
     $r1 = $false; $r2 = $false
-    try { $r1 = $ws.AppActivate([int]$a.pid) } catch { }
-    Start-Sleep -Milliseconds 400
-    $f = NxFocused
-    if (-not ($f.ok -and $f.pid -eq [int]$a.pid) -and $a.title) {
-      try { $r2 = $ws.AppActivate([string]$a.title) } catch { }
+    if (-not ($f.ok -and ($f.pid -eq [int]$a.pid -or ($a.hwnd -and $f.topHwnd -eq [int64]$a.hwnd)))) {
+      try { $r1 = $ws.AppActivate([int]$a.pid) } catch { }
       Start-Sleep -Milliseconds 400
       $f = NxFocused
+      if (-not ($f.ok -and $f.pid -eq [int]$a.pid) -and $a.title) {
+        try { $r2 = $ws.AppActivate([string]$a.title) } catch { }
+        Start-Sleep -Milliseconds 400
+        $f = NxFocused
+      }
     }
     $res.appActivateByPid = [bool]$r1; $res.appActivateByTitle = [bool]$r2; $res.focused = $f
   }
@@ -173,9 +209,84 @@ switch ($a.mode) {
       $n++
       $pn = (NxPName $c.Current.ProcessId).ToLowerInvariant()
       if ($pn -eq $want) { [void]$out.Add((NxWin $c)) }
+      elseif ($pn -eq 'applicationframehost') {
+        $k = $TW.GetFirstChild($c); $m = 0
+        while ($null -ne $k -and $m -lt 50) {
+          $m++
+          $kp = $k.Current.ProcessId
+          if ($kp -ne $c.Current.ProcessId -and (NxPName $kp).ToLowerInvariant() -eq $want) {
+            $w = NxWin $c; $w.pid = $kp; $w.process = (NxPName $kp); $w.frameHost = $true; [void]$out.Add($w); break
+          }
+          $k = $TW.GetNextSibling($k)
+        }
+      }
       $c = $TW.GetNextSibling($c)
     }
     $res.apps = @($out)
+  }
+  'close' {
+    $w = $null
+    try { $w = $AE::FromHandle([IntPtr]([int64]$a.hwnd)) } catch { $w = $null }
+    $res.found = $false; $res.invoked = $false
+    if ($null -ne $w -and [int64]$w.Current.NativeWindowHandle -eq [int64]$a.hwnd) {
+      if ($a.rid) {
+        $tab = NxFindTab $w ([string]$a.rid)
+        if ($null -ne $tab) {
+          $res.found = $true
+          try { $tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select(); Start-Sleep -Milliseconds 200 } catch { }
+          $btn = $null; $k = $TW.GetFirstChild($tab); $m = 0
+          while ($null -ne $k -and $m -lt 30) { $m++; if ($k.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button) { $btn = $k; break }; $k = $TW.GetNextSibling($k) }
+          if ($null -ne $btn) {
+            try { $btn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); $res.invoked = $true; $res.method = 'tab_close_button' } catch { $res.method = 'tab_close_button_not_invokable' }
+          } else { $res.method = 'tab_close_button_missing' }
+        }
+      } else {
+        $res.found = $true
+        try { $w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close(); $res.invoked = $true; $res.method = 'WindowPattern.Close' } catch { $res.method = 'window_pattern_failed' }
+      }
+    }
+  }
+  'dialog' {
+    $w = $null
+    try { $w = $AE::FromHandle([IntPtr]([int64]$a.hwnd)) } catch { $w = $null }
+    $roots = New-Object System.Collections.ArrayList
+    if ($null -ne $w) {
+      [void]$roots.Add($w)
+      $wp = $w.Current.ProcessId
+      $c = $TW.GetFirstChild($AE::RootElement); $n = 0
+      while ($null -ne $c -and $n -lt 400) { $n++; if ($c.Current.ProcessId -eq $wp -and [int64]$c.Current.NativeWindowHandle -ne [int64]$a.hwnd) { [void]$roots.Add($c) }; $c = $TW.GetNextSibling($c) }
+    }
+    $found = @{}
+    foreach ($r in $roots) {
+      $stack = New-Object System.Collections.Stack; $stack.Push(@($r, 0)); $seen = 0
+      while ($stack.Count -gt 0 -and $seen -lt 600) {
+        $item = $stack.Pop(); $e = $item[0]; $d = $item[1]; $seen++
+        $ct = $e.Current.ControlType.ProgrammaticName.Replace('ControlType.', '')
+        $nm = [string]$e.Current.Name
+        if (@('Button', 'Pane', 'Custom') -contains $ct -and $nm.Length -le 30) {
+          $role = $null
+          if ($nm -imatch '^(save|сохранить)$') { $role = 'save' }
+          elseif ($nm -imatch "^(don.?t save|do not save|не сохранять)$") { $role = 'discard' }
+          elseif ($nm -imatch '^(cancel|отмена)$') { $role = 'cancel' }
+          if ($null -ne $role -and -not $found.ContainsKey($role)) { $found[$role] = $e }
+        }
+        if ($d -ge 12) { continue }
+        $k = $TW.GetFirstChild($e); $kids = New-Object System.Collections.ArrayList
+        while ($null -ne $k -and $kids.Count -lt 200) { [void]$kids.Add($k); $k = $TW.GetNextSibling($k) }
+        for ($i = $kids.Count - 1; $i -ge 0; $i--) { $stack.Push(@($kids[$i], ($d + 1))) }
+      }
+      if ($found.ContainsKey('discard')) { break }
+    }
+    # A real save prompt always has «Don't save»; Save / Cancel alone can be ordinary toolbar buttons.
+    $res.dialog = $null
+    if ($found.ContainsKey('discard')) {
+      $res.dialog = @{ buttons = @($found.Keys | ForEach-Object { @{ role = $_; name = (NxStr $found[$_].Current.Name 30); rect = (NxRect $found[$_]) } }) }
+      if ($a.choice -and $found.ContainsKey([string]$a.choice)) {
+        $b = $found[[string]$a.choice]
+        $res.choice = [string]$a.choice
+        try { $b.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); $res.invoked = $true } catch { $res.invoked = $false; $res.rect = (NxRect $b) }
+      }
+    }
   }
   default { throw 'bad_mode' }
 }

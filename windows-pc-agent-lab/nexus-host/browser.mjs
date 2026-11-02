@@ -15,7 +15,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
-import {spawn} from 'node:child_process';
+import {spawn, spawnSync} from 'node:child_process';
+import os from 'node:os';
 import {requireCap} from './capabilities.mjs';
 import {createEgressProxy, isPublicIp} from './egress-proxy.mjs';
 
@@ -99,9 +100,60 @@ const RISK_JS = (ref, key) => `(() => {
      const b = [...f.querySelectorAll('button,input[type=submit]')].map(txt).find(t => RE.test(t)); return b ? {risky: true, label: b} : null;`}
 })()`;
 
-export function createBrowser({caps, home, consent = null, platform = process.platform, browserPath, headless = false, allowPrivate = false, proxyOptions = {}, spawnFn = spawn, onOwnedPid = () => {}}) {
+/**
+ * 0.5.1: PIDs of browser processes started with OUR profile (--user-data-dir=<profile>), incl. leftovers of a crashed
+ * Host. The owner's Edge never uses this directory, so it can never match. Windows: CIM query in PowerShell (profile
+ * path passed via env, never interpolated); Linux: /proc/<pid>/cmdline.
+ */
+export function profilePids(profile, {platform = process.platform, systemRoot = process.env.SystemRoot, run = spawnSync} = {}) {
+  // Exact directory only: --user-data-dir=<p> or --user-data-dir="<p>" followed by a quote, space or end (never <p>2).
+  const matches = cmd => {
+    const c = String(cmd).toLowerCase(), p = profile.toLowerCase();
+    for (const f of ['--user-data-dir=' + p, '--user-data-dir="' + p]) {
+      let i = c.indexOf(f);
+      while (i >= 0) { const nx = c[i + f.length]; if (nx === undefined || nx === '"' || /\s/.test(nx)) return true; i = c.indexOf(f, i + 1); }
+    }
+    return false;
+  };
+  if (platform === 'win32') {
+    if (typeof systemRoot !== 'string' || !/^[a-zA-Z]:\\/.test(systemRoot)) return [];
+    const ps = "$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | ForEach-Object { [pscustomobject]@{ pid = $_.ProcessId; cmd = $_.CommandLine } } | ConvertTo-Json -Compress";
+    const r = run(path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')], {encoding: 'utf8', windowsHide: true, timeout: 20_000});
+    if (r.status !== 0 || !r.stdout?.trim()) return [];
+    let rows; try { rows = JSON.parse(r.stdout); } catch { return []; }
+    return (Array.isArray(rows) ? rows : [rows]).filter(x => x && x.cmd && matches(x.cmd)).map(x => Number(x.pid)).filter(Number.isInteger);
+  }
+  if (platform === 'linux') {
+    const out = [];
+    for (const d of fs.readdirSync('/proc')) {
+      if (!/^\d+$/.test(d) || Number(d) === process.pid) continue;
+      let cmd; try { cmd = fs.readFileSync(`/proc/${d}/cmdline`, 'utf8').split('\0').join(' '); } catch { continue; }
+      if (matches(cmd)) out.push(Number(d));
+    }
+    return out;
+  }
+  return [];
+}
+
+function killPids(pids, {platform = process.platform, systemRoot = process.env.SystemRoot, run = spawnSync, tree = false} = {}) {
+  let n = 0;
+  for (const pid of pids) {
+    if (platform === 'win32') {
+      if (typeof systemRoot !== 'string') continue;
+      const r = run(path.win32.join(systemRoot, 'System32', 'taskkill.exe'), ['/pid', String(pid), ...(tree ? ['/t'] : []), '/f'], {windowsHide: true, timeout: 15_000});
+      if (r.status === 0) n++;
+    } else { try { process.kill(pid, 'SIGKILL'); n++; } catch { /* gone */ } }
+  }
+  return n;
+}
+
+export function createBrowser({caps, home, consent = null, platform = process.platform, browserPath, headless = false, allowPrivate = false, proxyOptions = {}, spawnFn = spawn, onOwnedPid = () => {}, listPids = null, kill = null}) {
   const profile = path.join(home, 'edge-profile');
+  const findPids = listPids || (() => profilePids(profile, {platform}));
+  const killFn = kill || ((pids, o) => killPids(pids, {platform, ...o}));
   let proc = null, page = null, browserWs = null, proxy = null, port = null, currentTarget = null;
+  let sweptOnce = false;
 
   async function ensure() {
     if (page && !page.closed) return page;
@@ -280,6 +332,37 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
       return {tabs, open: true};
     },
     egressStats: () => proxy?.stats ?? null,
-    stop() { page?.close(); browserWs?.close(); try { proc?.kill(); } catch { /* gone */ } proxy?.close(); proc = null; page = null; proxy = null; },
+    /**
+     * 0.5.1: end of a work session (finish_task / Stop / idle / error) — close NEXUS's own Edge completely:
+     * 1) CDP Browser.close (graceful, whole instance); 2) if still alive, kill its process tree by PID;
+     * 3) sweep any process still running with OUR profile dir (children, leftovers of a crashed Host).
+     * The owner's Edge is never touched: it has neither our PID nor our --user-data-dir.
+     */
+    async cleanupSession() {
+      const wasOpen = !!(proc || browserWs);
+      const steps = [];
+      const p = proc, pid = proc?.pid;
+      if (browserWs && !browserWs.closed) { try { await browserWs.send('Browser.close', {}, 3000); steps.push('cdp_browser_close'); } catch { steps.push('cdp_close_failed'); } }
+      if (p) {
+        const exited = await new Promise(res => { if (p.exitCode !== null || p.signalCode) return res(true); const t = setTimeout(() => res(false), 4000); p.once('exit', () => { clearTimeout(t); res(true); }); });
+        if (!exited && pid) { killFn([pid], {tree: true}); steps.push('kill_tree'); }
+      }
+      page?.close(); browserWs?.close(); proxy?.close();
+      proc = null; page = null; browserWs = null; proxy = null; port = null; currentTarget = null;
+      // Sweep our profile: always after our browser ran; otherwise once per Host (leftovers of a crashed Host).
+      if (!wasOpen && sweptOnce) return {wasOpen, steps, swept: 0, remaining: 0};
+      sweptOnce = true;
+      if (wasOpen) await sleep(300);
+      let left = []; try { left = findPids(); } catch { /* listing failed: report unknown */ left = null; }
+      let swept = 0;
+      if (left?.length) { swept = killFn(left, {tree: false}); steps.push('sweep_profile'); await sleep(300); try { left = findPids(); } catch { left = null; } }
+      return {wasOpen, steps, swept, remaining: left === null ? 'unknown' : left.length};
+    },
+    stop() {
+      const pid = proc?.pid;
+      page?.close(); browserWs?.close(); try { proc?.kill(); } catch { /* gone */ }
+      if (pid && platform === 'win32') killFn([pid], {tree: true}); // children otherwise survive the main process
+      proxy?.close(); proc = null; page = null; browserWs = null; proxy = null;
+    },
   };
 }

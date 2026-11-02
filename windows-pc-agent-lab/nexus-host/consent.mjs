@@ -60,7 +60,10 @@ export function classifyClick(action, at) {
 }
 
 export function createConsent({audit = () => {}, now = () => Date.now()} = {}) {
-  const owned = {windows: new Set(), tabs: new Set(), pids: new Set()};
+  // apps: process names that hold NEXUS-owned windows/tabs (where cleanup must look);
+  // scratch: hwnd/rid of NEXUS scratch documents (identified by token) — on close their prompt is answered «Save»
+  // (into the NEXUS scratch file), never «Don't save», so nothing typed into them is lost.
+  const owned = {windows: new Set(), tabs: new Set(), pids: new Set(), apps: new Set(), scratch: new Set()};
   const pending = new Map();
   const armed = new Map(); // hwnd → expiry: «Don't save» allowed after a consented/owned close
 
@@ -111,10 +114,13 @@ export function createConsent({audit = () => {}, now = () => Date.now()} = {}) {
       // with a restored session: only tabs/windows whose NAME contains the token are owned.
       if (token) {
         const has = x => typeof x?.name === 'string' && x.name.includes(token);
-        for (const {t} of newTabs) if (has(t)) { owned.tabs.add(t.rid); created.tabs.push(t.name); }
+        for (const {w, t} of newTabs) if (has(t)) { owned.tabs.add(t.rid); owned.scratch.add(t.rid); if (w.process) owned.apps.add(w.process); created.tabs.push(t.name); }
         for (const w of newWins) {
           const tabs = tabsOf(w);
-          if (tabs.length ? tabs.every(t => has(t) && !prevT.has(t.rid)) : has(w)) { owned.windows.add(String(w.hwnd)); created.windows.push(w.name); if (w.pid) owned.pids.add(w.pid); }
+          if (tabs.length ? tabs.every(t => has(t) && !prevT.has(t.rid)) : has(w)) {
+            owned.windows.add(String(w.hwnd)); owned.scratch.add(String(w.hwnd)); if (w.process) owned.apps.add(w.process);
+            created.windows.push(w.name); if (w.pid) owned.pids.add(w.pid);
+          }
         }
         created.ownership = created.windows.length || created.tabs.length ? 'token' : 'none';
         if (created.ownership === 'none') return refuse('token_not_found');
@@ -126,14 +132,23 @@ export function createConsent({audit = () => {}, now = () => Date.now()} = {}) {
       if (newTabs.length > 1) return refuse('multiple_new_tabs_ambiguous');
       for (const w of newWins) {
         if (tabsOf(w).some(t => prevT.has(t.rid))) continue; // a window holding pre-existing tabs is not ours
-        owned.windows.add(String(w.hwnd)); created.windows.push(w.name); if (w.pid) owned.pids.add(w.pid);
+        owned.windows.add(String(w.hwnd)); created.windows.push(w.name); if (w.pid) owned.pids.add(w.pid); if (w.process) owned.apps.add(w.process);
       }
-      for (const {t} of newTabs) { owned.tabs.add(t.rid); created.tabs.push(t.name); }
+      for (const {w, t} of newTabs) { owned.tabs.add(t.rid); if (w.process) owned.apps.add(w.process); created.tabs.push(t.name); }
       if (created.windows.length || created.tabs.length) audit({event: 'nexus_created', source, ...created});
       return created;
     },
     ownPid(pid) { owned.pids.add(pid); },
-    forget(win) { if (win) { owned.windows.delete(String(win.hwnd)); for (const t of tabsOf(win)) owned.tabs.delete(t.rid); } },
+    forget(win) { if (win) { owned.windows.delete(String(win.hwnd)); owned.scratch.delete(String(win.hwnd)); for (const t of tabsOf(win)) { owned.tabs.delete(t.rid); owned.scratch.delete(t.rid); } } },
+    forgetTab(rid) { owned.tabs.delete(rid); owned.scratch.delete(rid); },
+    /** Drop owned windows/tabs that no longer exist (closed by the owner or by the app). `wins` = fresh snapshots. */
+    prune(wins) {
+      const hw = new Set(wins.map(w => String(w.hwnd))), rids = new Set(wins.flatMap(w => tabsOf(w).map(t => t.rid)));
+      for (const h of [...owned.windows]) if (!hw.has(h)) { owned.windows.delete(h); owned.scratch.delete(h); }
+      for (const r of [...owned.tabs]) if (!rids.has(r)) { owned.tabs.delete(r); owned.scratch.delete(r); }
+    },
+    isOwned,
+    tabsOf,
 
     /**
      * Gate. Returns null when the action may run now; otherwise a consent_required result.

@@ -147,6 +147,20 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
       } finally { fs.closeSync(fd); }
     },
 
+    /** 0.5.1: session ended (finish_task / Stop / idle / revoke) → cancel tasks NEXUS started during that session. */
+    async cancelSession(reason, sess) {
+      const since = sess?.startedAt ?? 0;
+      const cancelled = [];
+      for (const t of tasks.values()) {
+        if (t.state !== 'running' || Date.parse(t.startedAt) < since - 1000) continue;
+        t.state = 'cancelled'; t.cancelReason = reason;
+        if (platform === 'win32' && t.child.pid) await exec(sys32('taskkill.exe'), ['/pid', String(t.child.pid), '/t', '/f']).catch(() => {});
+        else { try { t.child.kill(); } catch { /* gone */ } }
+        cancelled.push({id: t.id, task: t.task});
+      }
+      return {cancelled};
+    },
+
     stopAll() { for (const t of tasks.values()) if (t.state === 'running') { try { t.child.kill(); } catch { /* gone */ } } },
   };
   return api;

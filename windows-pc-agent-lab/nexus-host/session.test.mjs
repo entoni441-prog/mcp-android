@@ -121,6 +121,8 @@ test('HTTP: persistentGrant=true vs activeSession=false after finish_task; two t
       assert.equal(c.grants.gui_input, true); assert.equal(c.session.active, true); assert.equal(c.session.liveActive, true);
       const fin = (await h.call('finish_task')).structuredContent;
       assert.equal(fin.ended, true); assert.equal(fin.verified.liveActive, false); assert.equal(fin.verified.sessionActive, false);
+      // 0.5.1 stage 2: every cleanup step ran and reported (tasks, windows, browser)
+      assert.ok(fin.tasks && fin.windows && fin.browser, JSON.stringify(fin)); assert.equal(fin.hookErrors, undefined);
       c = (await h.call('get_capabilities')).structuredContent;
       assert.equal(c.grants.gui_input, true, 'persistent grant survives'); assert.equal(c.grants.live_view, true);
       assert.equal(c.session.active, false); assert.equal(c.session.liveActive, false);
