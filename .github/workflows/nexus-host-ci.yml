@@ -26,10 +26,48 @@ jobs:
         if: runner.os == 'Linux'
         env: {NEXUS_REAL_GUI: '1'}
         run: xvfb-run -a -s "-screen 0 1280x720x24" node --test windows-pc-agent-lab/nexus-host/robot-real.test.mjs
-      - name: Real Windows desktop — Java 17 Robot + PowerShell 5.1 UIA + Notepad
+      - name: Real Windows desktop — robot-real
         if: runner.os == 'Windows'
+        timeout-minutes: 8
         env: {NEXUS_REAL_GUI: '1'}
-        run: node --test --test-concurrency=1 --test-reporter=spec windows-pc-agent-lab/nexus-host/robot-real.test.mjs windows-pc-agent-lab/nexus-host/windows-real.test.mjs windows-pc-agent-lab/nexus-host/windows-consent-real.test.mjs windows-pc-agent-lab/nexus-host/windows-cleanup-real.test.mjs windows-pc-agent-lab/nexus-host/windows-discover-real.test.mjs windows-pc-agent-lab/nexus-host/windows-r01-real.test.mjs windows-pc-agent-lab/nexus-host/windows.test.mjs
+        # 0.5.2: one bounded step per file, run in-process (output streams live) — a hung file can no longer hold the job for hours
+        run: node --test-reporter=spec windows-pc-agent-lab/nexus-host/robot-real.test.mjs
+      - name: Real Windows desktop — windows-real
+        if: runner.os == 'Windows'
+        timeout-minutes: 8
+        env: {NEXUS_REAL_GUI: '1'}
+        # 0.5.2: one bounded step per file, run in-process (output streams live) — a hung file can no longer hold the job for hours
+        run: node --test-reporter=spec windows-pc-agent-lab/nexus-host/windows-real.test.mjs
+      - name: Real Windows desktop — windows-consent-real
+        if: runner.os == 'Windows'
+        timeout-minutes: 8
+        env: {NEXUS_REAL_GUI: '1'}
+        # 0.5.2: one bounded step per file, run in-process (output streams live) — a hung file can no longer hold the job for hours
+        run: node --test-reporter=spec windows-pc-agent-lab/nexus-host/windows-consent-real.test.mjs
+      - name: Real Windows desktop — windows-cleanup-real
+        if: runner.os == 'Windows'
+        timeout-minutes: 8
+        env: {NEXUS_REAL_GUI: '1'}
+        # 0.5.2: one bounded step per file, run in-process (output streams live) — a hung file can no longer hold the job for hours
+        run: node --test-reporter=spec windows-pc-agent-lab/nexus-host/windows-cleanup-real.test.mjs
+      - name: Real Windows desktop — windows-discover-real
+        if: runner.os == 'Windows'
+        timeout-minutes: 8
+        env: {NEXUS_REAL_GUI: '1'}
+        # 0.5.2: one bounded step per file, run in-process (output streams live) — a hung file can no longer hold the job for hours
+        run: node --test-reporter=spec windows-pc-agent-lab/nexus-host/windows-discover-real.test.mjs
+      - name: Real Windows desktop — windows-r01-real
+        if: runner.os == 'Windows'
+        timeout-minutes: 8
+        env: {NEXUS_REAL_GUI: '1'}
+        # 0.5.2: one bounded step per file, run in-process (output streams live) — a hung file can no longer hold the job for hours
+        run: node --test-reporter=spec windows-pc-agent-lab/nexus-host/windows-r01-real.test.mjs
+      - name: Real Windows desktop — windows
+        if: runner.os == 'Windows'
+        timeout-minutes: 8
+        env: {NEXUS_REAL_GUI: '1'}
+        # 0.5.2: one bounded step per file, run in-process (output streams live) — a hung file can no longer hold the job for hours
+        run: node --test-reporter=spec windows-pc-agent-lab/nexus-host/windows.test.mjs
   gateway:
     runs-on: ubuntu-latest
     defaults:
