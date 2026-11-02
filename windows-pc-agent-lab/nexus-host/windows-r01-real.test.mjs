@@ -37,15 +37,20 @@ test('Windows R-01: real MessageBox «permanently delete» → Yes = consent, No
     console.log('r01 dialog window', JSON.stringify({className: win.className, rect: win.rect, name: win.name}));
     // Find the buttons the way the Host sees a click target: UIA element under points of the dialog's button row.
     // ('tree' by pid walks the PowerShell console window, not the message box — seen on CI 41472116093.)
-    const r = win.rect; let atYes = null, atNo = null; const seen = [];
+    // The box may be behind other windows on the runner: bring it to the foreground first (FromPoint returns the top window).
+    const act = await runUiaReal({mode: 'activate', hwnd: Number(win.hwnd), pid: win.pid}, opt);
+    console.log('r01 activate', JSON.stringify({windowFound: act.windowFound, setFocus: act.setFocus, focused: act.focused}));
+    await sleep(400);
+    const r = win.rect; let atYes = null, atNo = null; const seen = [], probes = [];
     for (let y = r.y + r.h - 12; y > r.y + r.h / 2 && !(atYes && atNo); y -= 8) {
       for (let x = r.x + 10; x < r.x + r.w - 10 && !(atYes && atNo); x += 12) {
         const at = (await runUiaReal({mode: 'at', x, y}, opt)).at;
         const nm = String(at?.elem?.name || '').replace(/&/g, '');
+        if (probes.length < 4) probes.push({x, y, process: at?.process, ct: at?.elem?.controlType, win: at?.window?.name});
         if (at?.elem?.controlType === 'Button') { seen.push(nm); if (/^yes$/i.test(nm)) atYes = at; if (/^no$/i.test(nm)) atNo = at; }
       }
     }
-    if (!(atYes && atNo)) console.log('r01: buttons seen', JSON.stringify([...new Set(seen)]));
+    if (!(atYes && atNo)) console.log('r01: buttons seen', JSON.stringify([...new Set(seen)]), 'probes', JSON.stringify(probes));
     assert.ok(atYes && atNo, 'Yes/No buttons found under points of the dialog');
     console.log('r01 at(yes)', JSON.stringify({elem: atYes.elem, parentType: atYes.parentType, dialog: atYes.dialog}));
     assert.ok(atYes.dialog, 'UIA reports the dialog (modal or #32770)');
