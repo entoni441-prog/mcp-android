@@ -49,14 +49,15 @@ test('Windows R-01: real MessageBox «permanently delete» → Yes = consent, No
       for (let x = r.x + 10; x < r.x + r.w - 10; x += 24) {
         const at = (await runUiaReal({mode: 'at', x, y}, opt)).at;
         if (at?.dialog && (at.dialog.text || []).some(t => /permanently delete/i.test(t))) withText ||= at.dialog;
+        if (!probes.some(q => q.dlgLogged) && /^&?(yes|no)$/i.test(String(at?.elem?.name || ''))) { console.log('r01 raw at over button', JSON.stringify({elem: at.elem, parentType: at.parentType, window: at.window && {name: at.window.name, className: at.window.className}, dialog: at.dialog ?? '(absent)'})); probes.push({dlgLogged: true}); }
         probes.push({x, y, ct: at?.elem?.controlType, name: String(at?.elem?.name || '').replace(/&/g, '').slice(0, 40), cls: classifyDestructiveClick(at, 'click')});
       }
     }
-    const kinds = {}; for (const q of probes) { const k = `${q.ct}:${q.name}:${q.cls ? (q.cls.refuse ? 'refuse' : 'consent') : 'free'}`; kinds[k] = (kinds[k] || 0) + 1; }
+    const kinds = {}; for (const q of probes.filter(q => !q.dlgLogged)) { const k = `${q.ct}:${q.name}:${q.cls ? (q.cls.refuse ? 'refuse' : 'consent') : 'free'}`; kinds[k] = (kinds[k] || 0) + 1; }
     console.log('r01 probes', JSON.stringify(kinds));
     console.log('r01 dialog as seen by Host', JSON.stringify(withText));
     assert.ok(withText, 'UIA reports the dialog and its «permanently delete» text to the Host');
-    const leaks = probes.filter(q => !q.cls && !['Text', 'Image'].includes(q.ct) && !/^(no|cancel)$/i.test(q.name));
+    const leaks = probes.filter(q => !q.dlgLogged && !q.cls && !['Text', 'Image'].includes(q.ct) && !/^(no|cancel)$/i.test(q.name));
     assert.deepEqual(leaks, [], 'no click in the confirmation button row passes without consent/refusal');
     // keyboard path: the message box focuses its default button; Enter must need consent
     const ctx = await runUiaReal({mode: 'context'}, opt);
