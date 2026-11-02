@@ -35,14 +35,18 @@ test('Windows R-01: real MessageBox «permanently delete» → Yes = consent, No
     if (!win) console.log('r01: box not found; exited', exited, 'stderr', fs.readFileSync(errFile, 'utf8').slice(0, 600), 'windows', JSON.stringify((lw?.windows || []).map(w => [w.process, w.title])).slice(0, 1500));
     assert.ok(win, 'message box window found');
     console.log('r01 dialog window', JSON.stringify({className: win.className, rect: win.rect, name: win.name}));
-    const t = await runUiaReal({mode: 'tree', pid: win.pid, depth: 6, max: 200}, opt);
-    const nodes = flat(t.tree || []);
-    const btn = n => nodes.find(x => x.type === 'Button' && new RegExp('^&?' + n + '$', 'i').test(String(x.name || '')));
-    const yes = btn('Yes'), no = btn('No');
-    assert.ok(yes?.rect && no?.rect, 'Yes/No buttons with rectangles');
-    const centre = r => ({x: Math.round(r.x + r.w / 2), y: Math.round(r.y + r.h / 2)});
-    const atYes = (await runUiaReal({mode: 'at', ...centre(yes.rect)}, opt)).at;
-    const atNo = (await runUiaReal({mode: 'at', ...centre(no.rect)}, opt)).at;
+    // Find the buttons the way the Host sees a click target: UIA element under points of the dialog's button row.
+    // ('tree' by pid walks the PowerShell console window, not the message box — seen on CI 41472116093.)
+    const r = win.rect; let atYes = null, atNo = null; const seen = [];
+    for (let y = r.y + r.h - 12; y > r.y + r.h / 2 && !(atYes && atNo); y -= 8) {
+      for (let x = r.x + 10; x < r.x + r.w - 10 && !(atYes && atNo); x += 12) {
+        const at = (await runUiaReal({mode: 'at', x, y}, opt)).at;
+        const nm = String(at?.elem?.name || '').replace(/&/g, '');
+        if (at?.elem?.controlType === 'Button') { seen.push(nm); if (/^yes$/i.test(nm)) atYes = at; if (/^no$/i.test(nm)) atNo = at; }
+      }
+    }
+    if (!(atYes && atNo)) console.log('r01: buttons seen', JSON.stringify([...new Set(seen)]));
+    assert.ok(atYes && atNo, 'Yes/No buttons found under points of the dialog');
     console.log('r01 at(yes)', JSON.stringify({elem: atYes.elem, parentType: atYes.parentType, dialog: atYes.dialog}));
     assert.ok(atYes.dialog, 'UIA reports the dialog (modal or #32770)');
     assert.ok((atYes.dialog.text || []).some(s => /permanently delete/i.test(s)), 'dialog text visible to the Host');
