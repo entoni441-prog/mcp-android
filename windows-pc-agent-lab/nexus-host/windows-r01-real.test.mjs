@@ -8,6 +8,7 @@ import path from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
 import {runUiaReal} from './gui.mjs';
 import {classifyDestructiveClick, classifyDestructiveKeys} from './policy.mjs';
+import {listWindows} from './windows.mjs';
 
 const RUN = process.platform === 'win32' && process.env.NEXUS_REAL_GUI === '1';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -17,16 +18,21 @@ test('Windows R-01: real MessageBox «permanently delete» → Yes = consent, No
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-r01-real-'));
   const opt = {tmpDir: path.join(home, 'tmp')}; fs.mkdirSync(opt.tmpDir, {recursive: true});
   const ps = path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const script = "Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.MessageBox]::Show('Are you sure you want to permanently delete report.docx?', 'NEXUS R01 Delete File', 'YesNo', 'Warning')";
-  const p = spawn(ps, ['-NoProfile', '-NonInteractive', '-Command', script], {detached: true, stdio: 'ignore'});
-  p.unref();
+  const file = path.join(home, 'r01-box.ps1');
+  fs.writeFileSync(file, "Add-Type -AssemblyName System.Windows.Forms\r\n[void][System.Windows.Forms.MessageBox]::Show('Are you sure you want to permanently delete report.docx?', 'NEXUS R01 Delete File', 'YesNo', 'Warning')\r\n");
+  const errFile = path.join(home, 'r01-box.err');
+  const p = spawn(ps, ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', file], {stdio: ['ignore', 'ignore', fs.openSync(errFile, 'w')], windowsHide: false});
+  let exited = null; p.once('exit', c => { exited = c; });
   try {
-    let win = null;
-    for (let i = 0; i < 40 && !win; i++) {
+    let win = null, lw = null;
+    for (let i = 0; i < 60 && !win && exited === null; i++) {
       await sleep(500);
-      const r = await runUiaReal({mode: 'apps', name: 'powershell'}, opt);
-      win = (r.apps || []).find(w => /NEXUS R01 Delete File/.test(w.name || ''));
+      const ua = (await runUiaReal({mode: 'apps', name: 'powershell'}, opt)).apps || [];
+      win = ua.find(w => /NEXUS R01 Delete File/.test(w.name || ''));
+      if (!win && i % 10 === 9) console.log('r01: powershell windows so far', JSON.stringify(ua.map(w => [w.name, w.className])));
     }
+    if (!win) lw = await listWindows({includeTitles: true}, {tmpDir: opt.tmpDir});
+    if (!win) console.log('r01: box not found; exited', exited, 'stderr', fs.readFileSync(errFile, 'utf8').slice(0, 600), 'windows', JSON.stringify((lw?.windows || []).map(w => [w.process, w.title])).slice(0, 1500));
     assert.ok(win, 'message box window found');
     console.log('r01 dialog window', JSON.stringify({className: win.className, rect: win.rect, name: win.name}));
     const t = await runUiaReal({mode: 'tree', pid: win.pid, depth: 6, max: 200}, opt);
