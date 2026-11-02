@@ -89,16 +89,48 @@ const SNAPSHOT_JS = `(() => {
 const KEYS = {Enter: 13, Tab: 9, Escape: 27, Backspace: 8, ArrowDown: 40, ArrowUp: 38, ArrowLeft: 37, ArrowRight: 39, PageDown: 34, PageUp: 33, Home: 36, End: 35, Space: 32};
 
 /** allowPrivate and proxyOptions are TEST-ONLY injections; production callers (server.mjs) never pass them. */
-// Words that mark an action as irreversible, financial or sending something out. Matched on the clicked element's
-// accessible text (or, for Enter, on the submit buttons of the focused field's form).
-export const RISKY_RE = /(buy|purchase|pay\b|payment|checkout|place order|order now|submit order|confirm|send|post\b|publish|delete|remove account|transfer|subscribe|sign up|register|купить|оплат|заказ|оформить|подтверд|отправ|опубликов|удали|перевест|перевод|подписа|зарегистр)/i;
-const RISK_JS = (ref, key) => `(() => {
-  const RE = ${RISKY_RE.toString()};
-  const txt = e => String(e && (e.getAttribute('aria-label') || e.value || e.innerText || e.getAttribute('title')) || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
-  ${ref ? `const e = document.querySelector('[data-nexus-ref="' + ${JSON.stringify(ref || '')} + '"]'); if (!e) return null; const t = txt(e); return {risky: RE.test(t), label: t};` :
-    `if (${JSON.stringify(key || '')} !== 'Enter') return null; const f = document.activeElement && document.activeElement.form; if (!f) return null;
-     const b = [...f.querySelectorAll('button,input[type=submit]')].map(txt).find(t => RE.test(t)); return b ? {risky: true, label: b} : null;`}
+// ── 0.5.1 D2/D3: risk boundary for browser clicks / Enter. ──
+// Autonomous: search, compare, add to cart, go to cart/checkout, fill ordinary fields, move between checkout steps.
+// Owner consent: the step that CREATES a paid obligation (buy/pay/place order/pay later/subscribe/trial/booking/transfer)
+// — decided by label AND by context: on a checkout/payment page any form-submitting control whose label is not a
+// known navigation step needs consent, because its result (order created?) cannot be known in advance.
+// Outgoing/destructive actions on the owner's behalf (send/post/publish/delete/register) also need consent (D3).
+export const COMMIT_RE = /(\bbuy\b|\bpurchase|\bpay\b|\bpay\s*(now|later|in\b)|\bpaypal\b|\bpayment|place\s+(the\s+|your\s+|my\s+)?order|\border\s+now\b|submit\s+order|complete\s+(order|purchase|checkout|payment|booking)|confirm\s+(and\s+pay|order|purchase|payment|booking|subscription)|^\s*order\s*$|subscribe|start\s+(my\s+|free\s+|your\s+)?(trial|subscription|membership)|\bbook\s+now\b|\breserve\b|\bdonate\b|\btransfer\b|send\s+money|купить|оплат|заказать|разместить\s+заказ|оформить\s+заказ|подтвердить\s+(заказ|оплату|покупку|бронирование|перевод)|забронировать|подписаться|оформить\s+подписку|перевести|перевод|пожертвовать|\bacquista|\bcompra\b|\bpaga\b|\bpagamento|\bordina\b|invia\s+(l'|l’)?ordine|conferma\s+(e\s+paga|(l'|l’)?ordine|(l'|l’)?acquisto|(il\s+)?pagamento)|abbonati|abbonamento|\bprenota)/i;
+export const SAFE_STEP_RE = /^\s*((proceed|continue|go)\s+to\s+(checkout|cart|basket|bag|shipping|delivery|address)|checkout|view\s+(cart|basket|bag)|(add|move)\s+to\s+(cart|basket|bag)|apply(\s+(coupon|promo|code|discount))?|back|edit|change|cancel|search|в\s+корзину|добавить\s+в\s+корзину|перейти\s+в\s+корзину|корзина|(перейти\s+)?к\s+оформлению(\s+заказа)?|применить(\s+промокод|\s+купон)?|назад|изменить|отмена|найти|поиск|procedi\s+(all'|all’)ordine|procedi\s+al\s+checkout|vai\s+(alla\s+cassa|al\s+carrello)|aggiungi\s+al\s+carrello|indietro|modifica|annulla|cerca)(?![\p{L}\p{N}])/iu;
+export const CART_EDIT_RE = /(remove|delete|удалить|убрать|rimuovi|elimina).{0,25}(from\s+(cart|basket|bag)|из\s+корзины|dal\s+carrello)/i;
+export const OUTGOING_RE = /(\bsend\b|\bpost\b|\bpublish|\bdelete\b|remove\s+account|\bsign\s*up\b|\bregister\b|\bsubmit\b|отправ|опубликов|удали|зарегистр|разместить|\binvia\b|\bpubblica|\belimina\b|registrati|iscriviti)/i;
+const CHECKOUT_URL_RE = /(checkout|payment|\/pay\b|billing|\/order|cassa|pagamento|oplata|oformlenie|\/buy\b)/i;
+const PAY_FRAME_RE = /(stripe\.com|braintreegateway|adyen|paypal\.com|checkout\.com|klarna|yookassa|cloudpayments|nexi|satispay|worldpay|squareup)/i;
+const SECRET_FIELD_RE = /(card.?(number|num|no)|ccnum|cc-?number|cvv|cvc|csc|security.?code|iban|\botp\b|2fa|one.?time|verification.?code|passcode|\bpin\b)/i;
+
+/** Pure decision from page facts. Returns null (autonomous) or {what, reason}. */
+export function classifyBrowserRisk({label = '', submit = false, checkout = null} = {}) {
+  const l = String(label || '').replace(/\s+/g, ' ').trim();
+  if (CART_EDIT_RE.test(l)) return null;
+  if (COMMIT_RE.test(l)) return {what: 'browser_financial', reason: 'commitment_label'};
+  if (checkout && submit && !SAFE_STEP_RE.test(l)) return {what: 'browser_financial', reason: 'checkout_submit_' + checkout};
+  if (OUTGOING_RE.test(l)) return {what: 'browser_irreversible', reason: 'outgoing_or_destructive'};
+  return null;
+}
+
+// Page facts for classifyBrowserRisk: label of the target (or of the form's default submit for Enter), whether it
+// submits a form, and whether the page is a checkout/payment page. No values of fields are read.
+const FACTS_JS = (ref, key) => `(() => {
+  const txt = e => String(e && (e.getAttribute('aria-label') || (e.tagName === 'INPUT' ? e.value : e.innerText) || e.getAttribute('title')) || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
+  const U = new RegExp(${JSON.stringify(CHECKOUT_URL_RE.source)}, 'i'), F = new RegExp(${JSON.stringify(PAY_FRAME_RE.source)}, 'i'), S = new RegExp(${JSON.stringify(SECRET_FIELD_RE.source)}, 'i');
+  const checkout = U.test(location.pathname + location.search) ? 'url'
+    : [...document.querySelectorAll('input')].some(i => /^cc-/.test(i.autocomplete || '') || S.test((i.name || '') + ' ' + (i.id || ''))) ? 'card_fields'
+    : [...document.querySelectorAll('iframe[src]')].some(f => F.test(f.src)) ? 'payment_frame' : null;
+  const isSubmit = e => { if (!e) return false; const t = (e.getAttribute('type') || '').toLowerCase();
+    if (e.tagName === 'INPUT') return t === 'submit' || t === 'image'; if (e.tagName === 'BUTTON') return (t === '' || t === 'submit') && !!e.form; return false; };
+  ${ref ? `let e = document.querySelector('[data-nexus-ref="' + ${JSON.stringify(ref || '')} + '"]'); if (!e) return null;
+    const c = e.closest('button,a,input,[role=button]') || e; return {label: txt(c), submit: isSubmit(c), checkout};` :
+    `if (${JSON.stringify(key || '')} !== 'Enter') return null; const a = document.activeElement; const f = a && a.form;
+     if (a && a.tagName === 'BUTTON') return {label: txt(a), submit: isSubmit(a), checkout};
+     if (!f) return checkout ? {label: '', submit: true, checkout} : null;
+     const b = f.querySelector('button:not([type]),button[type=submit],input[type=submit],input[type=image]'); return {label: txt(b), submit: true, checkout};`}
 })()`;
+export const SECRET_FIELD_SOURCE = SECRET_FIELD_RE.source;
 
 /**
  * 0.5.1: PIDs of browser processes started with OUR profile (--user-data-dir=<profile>), incl. leftovers of a crashed
@@ -237,13 +269,16 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
       if (!onlyKeys(args, ['action', 'ref', 'text', 'key', 'url', 'clear', 'amount', 'value', 'timeoutMs'])) bad();
       if (!page) throw Error('browser_not_open');
       await guardUrl();
-      // 0.5.0: irreversible / financial / outgoing actions need the owner's consent (consent_required → confirm_action allow).
+      // 0.5.1 D2/D3: the step that creates a paid obligation, or sends/publishes/deletes on the owner's behalf, needs consent.
       if (!consented && consent && ['click', 'press'].includes(args.action)) {
-        const risk = await evaluate(RISK_JS(args.action === 'click' ? args.ref : null, args.key));
-        if (risk && risk.risky) {
+        const facts = await evaluate(FACTS_JS(args.action === 'click' ? args.ref : null, args.key));
+        const risk = facts && classifyBrowserRisk(facts);
+        if (risk) {
           const host = await evaluate('location.host');
-          return consent.requestGrant({what: 'browser_irreversible', replay: {tool: 'browser_action', args},
-            target: `браузер NEXUS: ${args.action === 'click' ? 'нажать' : 'Enter для'} «${risk.label}» на ${host}`,
+          const label = facts.label || (args.action === 'press' ? 'отправка формы' : 'элемент без подписи');
+          const why = risk.what === 'browser_financial' ? 'может создать платное обязательство' : 'отправка/публикация/удаление от вашего имени';
+          return consent.requestGrant({what: risk.what, replay: {tool: 'browser_action', args},
+            target: `браузер NEXUS: ${args.action === 'click' ? 'нажать' : 'Enter для'} «${label}» на ${host} (${why})`,
             apply: () => this.browser_action(args, {consented: true})});
         }
       }
@@ -277,7 +312,7 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
         case 'type': {
           if (typeof args.text !== 'string' || args.text.length > 2000) bad();
           if (args.clear !== undefined && typeof args.clear !== 'boolean') bad();
-          const ok = await evaluate(`(() => { const e = ${refExpr(args.ref)}; if (!e) return 'missing'; if ((e.getAttribute('type') || '').toLowerCase() === 'password' || e.autocomplete === 'cc-number') return 'password'; e.focus(); ${args.clear ? "if ('value' in e) { e.value = ''; e.dispatchEvent(new Event('input', {bubbles: true})); }" : ''} return 'ok'; })()`);
+          const ok = await evaluate(`(() => { const e = ${refExpr(args.ref)}; if (!e) return 'missing'; if ((e.getAttribute('type') || '').toLowerCase() === 'password' || /^(cc-|one-time-code|current-password|new-password)/.test(e.autocomplete || '') || new RegExp(${JSON.stringify(SECRET_FIELD_RE.source)}, 'i').test((e.name || '') + ' ' + (e.id || '') + ' ' + (e.getAttribute('aria-label') || ''))) return 'password'; e.focus(); ${args.clear ? "if ('value' in e) { e.value = ''; e.dispatchEvent(new Event('input', {bubbles: true})); }" : ''} return 'ok'; })()`);
           if (ok === 'missing') throw Error('ref_not_found');
           if (ok === 'password') throw Error('sensitive_field_refused');
           await page.send('Input.insertText', {text: args.text});

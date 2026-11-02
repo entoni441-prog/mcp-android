@@ -108,7 +108,7 @@ export function createCapStore({file, initial, audit = () => {}, intervalMs = 20
   });
 
   return {
-    view, refresh, set, grantApp, revokeApp,
+    view, refresh, set, grantApp, revokeApp, edit,
     get: () => caps,
     status: () => ({...Object.fromEntries(FLAGS.map(k => [k, caps[k]])), inputApps: caps.inputApps, launchApps: Object.keys(caps.launchApps || {}), tasks: Object.keys(caps.tasks), fileError: lastError, settableFromChat: SETTABLE}),
     watch() { if (file && !timer) { timer = setInterval(() => refresh('file'), intervalMs); timer.unref?.(); } },

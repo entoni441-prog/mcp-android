@@ -165,3 +165,40 @@ test('real browser 0.5.0: tabs, wait, select, consent before pay/send', {skip: !
     await assert.rejects(b.browser_tabs({action: 'switch', id: 'zz'}), /invalid_args/);
   } finally { b.stop(); srv.close(); }
 });
+
+// 0.5.1 D2 — real page facts: cart steps autonomous; on a checkout page the committing step waits for the owner.
+test('real browser: D2 financial boundary (cart autonomous, checkout submit/Enter/place order → consent, card fields refused)', {skip: !exe && 'no browser', timeout: 120_000}, async () => {
+  const {createConsent} = await import('./consent.mjs');
+  const SHOP = `<!doctype html><title>Shop</title><h1 id=h>shop</h1><button onclick="document.getElementById('h').textContent='in cart'">Add to cart</button><a href="/checkout">Proceed to checkout</a>`;
+  const CHECKOUT = `<!doctype html><title>Checkout</title><h1 id=h>checkout</h1><form onsubmit="event.preventDefault();document.getElementById('h').textContent='ORDER CREATED'">
+<label for=n>Name</label><input id=n name=fullname><label for=c>Card</label><input id=c name=cardnumber><button>Continue</button></form>
+<button onclick="document.getElementById('h').textContent='ORDER CREATED'">Place order</button>`;
+  const srv = http.createServer((req, res) => { res.setHeader('content-type', 'text/html'); res.end(req.url === '/checkout' ? CHECKOUT : SHOP); });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const consent = createConsent();
+  const b = createBrowser({caps: validateCapabilities({browser: true}), home: fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-d2-')), consent,
+    browserPath: exe, headless: true, allowPrivate: true, proxyOptions: {ports: [srv.address().port]}});
+  try {
+    await b.browser_open({url: base + '/shop'});
+    let s = await b.browser_snapshot({}); const by = n => s.elements.find(e => e.name === n);
+    assert.equal((await b.browser_action({action: 'click', ref: by('Add to cart').ref})).done, true);
+    assert.match((await b.browser_snapshot({})).text, /in cart/);
+    s = await b.browser_snapshot({});
+    await b.browser_action({action: 'click', ref: by('Proceed to checkout').ref});
+    s = await b.browser_snapshot({});
+    assert.equal(s.title, 'Checkout');
+    await b.browser_action({action: 'type', ref: by('Name').ref, text: 'Owner'});
+    await assert.rejects(b.browser_action({action: 'type', ref: by('Card').ref, text: '4111'}), /sensitive_field_refused/);
+    const r1 = await b.browser_action({action: 'click', ref: by('Continue').ref});
+    assert.equal(r1.status, 'consent_required'); assert.equal(r1.what, 'browser_financial');
+    const r2 = await b.browser_action({action: 'press', key: 'Enter'}); // focus is in the Name field of the checkout form
+    assert.equal(r2.status, 'consent_required'); assert.equal(r2.what, 'browser_financial');
+    const r3 = await b.browser_action({action: 'click', ref: by('Place order').ref});
+    assert.equal(r3.what, 'browser_financial'); assert.match(r3.target, /Place order/);
+    assert.match((await b.browser_snapshot({})).text, /checkout/); assert.doesNotMatch((await b.browser_snapshot({})).text, /ORDER CREATED/);
+    // owner allows exactly that step → it runs once
+    const p = consent.take(r3.consentId, 'allow', r3.target); await p.apply();
+    assert.match((await b.browser_snapshot({})).text, /ORDER CREATED/);
+  } finally { b.stop(); srv.close(); }
+});
