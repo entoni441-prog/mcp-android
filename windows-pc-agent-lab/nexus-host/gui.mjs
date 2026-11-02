@@ -85,16 +85,21 @@ export class RobotDaemon {
 }
 
 // ───────────── PowerShell UIA runner ─────────────
+export const UIA_BOOTSTRAP = "$s = $env:NEXUS_UIA_PS; Remove-Item Env:NEXUS_UIA_PS; . ([ScriptBlock]::Create($s))";
+const UIA_BOOTSTRAP_B64 = Buffer.from(UIA_BOOTSTRAP, 'utf16le').toString('base64');
 export function runUiaReal(args, {systemRoot = process.env.SystemRoot, tmpDir, timeoutMs = 20_000} = {}) {
   if (typeof systemRoot !== 'string' || !/^[a-zA-Z]:\\/.test(systemRoot)) throw Error('invalid_windows_system_root');
   const exe = path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   fs.mkdirSync(tmpDir, {recursive: true});
   const out = path.join(tmpDir, 'uia-' + crypto.randomBytes(8).toString('hex') + '.json');
-  const encoded = Buffer.from(UIA_SCRIPT, 'utf16le').toString('base64');
+  // 0.5.1: the script outgrew the 32 767-char Windows command line as -EncodedCommand (spawn ENAMETOOLONG on CI).
+  // A tiny fixed bootstrap runs the FIXED script text from an environment variable; request data still arrives only
+  // as JSON in NEXUS_UIA_ARGS and is never part of code.
+  const encoded = UIA_BOOTSTRAP_B64;
   return new Promise((resolve, reject) => {
     const p = spawn(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
       stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true,
-      env: {...process.env, NEXUS_UIA_ARGS: JSON.stringify(args), NEXUS_UIA_OUT: out},
+      env: {...process.env, NEXUS_UIA_PS: UIA_SCRIPT, NEXUS_UIA_ARGS: JSON.stringify(args), NEXUS_UIA_OUT: out},
     });
     let err = '';
     const timer = setTimeout(() => { p.kill(); reject(Error('uia_timeout')); }, timeoutMs);

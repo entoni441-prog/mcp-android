@@ -116,12 +116,14 @@ test('Windows 0.5.1: NEXUS Edge fully stopped at session end; another Edge profi
     console.log('nexus edge pids', before.length);
     assert.ok(before.length >= 1, 'NEXUS Edge processes found by profile');
     await sleep(1000);
-    const otherBefore = profilePids(otherProfile).length;
+    const otherBefore = profilePids(otherProfile);
+    assert.ok(otherBefore.length >= 1, 'second Edge running');
     const r = await b.cleanupSession('finish_task');
     console.log('cleanup', JSON.stringify(r));
     await sleep(1000);
     assert.deepEqual(profilePids(prof), [], 'no process with the NEXUS profile left');
-    assert.equal(profilePids(otherProfile).length, otherBefore, 'other Edge untouched');
-    assert.ok(otherBefore >= 1);
+    assert.equal(other.exitCode, null, 'other Edge main process not killed');
+    const otherAfter = new Set(profilePids(otherProfile));
+    assert.ok(otherAfter.has(other.pid) || otherBefore.every(p => otherAfter.has(p)), 'other Edge untouched');
   } finally { b.stop(); taskkill(other.pid); }
 });
