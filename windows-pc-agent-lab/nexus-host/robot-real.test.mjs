@@ -39,6 +39,20 @@ test('NexusRobot.java: info, capture, input, defence-in-depth validation', {skip
     assert.equal(fr.imageW, Math.min(480, info.w));
     assert.equal(fr.cursorX, cx); assert.equal(fr.cursorY, cy);
     await assert.rejects(d.cmd(`frame 480 5 ${Buffer.from(jf).toString('base64')}`), /out_of_range/);
+    // 0.5.2 A-02: redaction masks are painted BEFORE encoding (whole screen masked → one sampled colour)
+    const mc = await d.cmd(`capture 640 ${Buffer.from(file).toString('base64')} ${info.x},${info.y},${info.w},${info.h}`);
+    console.log('robot capture masked', JSON.stringify(mc));
+    assert.equal(mc.masked, 1); assert.equal(mc.colours, 1);
+    const mf = await d.cmd(`frame 480 60 ${Buffer.from(jf).toString('base64')} ${info.x - 10},${info.y - 10},20,20;-`.replace(';-', ''));
+    assert.equal(mf.masked, 1);
+    assert.equal((await d.cmd(`capture 640 ${Buffer.from(file).toString('base64')} -`)).masked, 0);
+    await assert.rejects(d.cmd(`capture 640 ${Buffer.from(file).toString('base64')} 1,2,3`), /invalid_mask/);
+    await assert.rejects(d.cmd(`capture 640 ${Buffer.from(file).toString('base64')} ${Array(33).fill('0,0,1,1').join(';')}`), /too_many_masks/);
+    // 0.5.2 clipboard: paste reports what happened to the previous clipboard; nothing is silently lost
+    const ps = await d.cmd('paste ' + Buffer.from('nexus-clip-test').toString('base64'));
+    console.log('robot paste', JSON.stringify(ps));
+    assert.match(ps.clipboard, /^(cleared|restored_(text|image|files|mixed)|not_restored_unreadable)$/);
+    assert.equal(ps.clipboardRestored, ps.clipboard !== 'not_restored_unreadable');
     // helper keeps serving after errors
     assert.equal((await d.cmd('info')).w, info.w);
   } finally { d.stop(); }

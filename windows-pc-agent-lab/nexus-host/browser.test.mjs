@@ -243,3 +243,40 @@ test('real browser: alert accepted automatically and reported; confirm waits for
     await assert.rejects(b.browser_action({action: 'dialog', value: 'accept'}), /no_dialog_open/);
   } finally { b.stop(); srv.close(); }
 });
+
+// 0.5.2 B-01: Demoblaze-like cart. «Place Order» only OPENS the order form (data-toggle=modal) → autonomous;
+// «Purchase» inside the modal creates the order → consent. Look-alikes that must still need consent: a «Place Order»
+// with inline onclick, a submit-button «Place Order» with data-toggle, a modal opener whose target does not exist.
+test('real browser 0.5.2 B-01: modal opener autonomous, Purchase and look-alikes need consent', {skip: !exe && 'no browser', timeout: 120_000}, async () => {
+  const {createConsent} = await import('./consent.mjs');
+  const CART = `<!doctype html><title>Cart</title><h1 id=h>cart</h1>
+<button type=button id=po data-toggle=modal data-target="#orderModal">Place Order</button>
+<button type=button onclick="document.getElementById('h').textContent='ORDER CREATED'">Place Order now</button>
+<form onsubmit="event.preventDefault();document.getElementById('h').textContent='ORDER CREATED'"><button type=submit data-toggle=modal data-target="#orderModal">Place Order (form)</button></form>
+<button type=button data-toggle=modal data-target="#missing">Place Order ghost</button>
+<div class=modal id=orderModal role=dialog style="display:none"><label for=nm>Name</label><input id=nm>
+<button type=button onclick="document.getElementById('h').textContent='ORDER CREATED'">Purchase</button></div>
+<script>document.getElementById('po').addEventListener('click',()=>{document.getElementById('orderModal').style.display='block'})</script>`;
+  const srv = http.createServer((req, res) => { res.setHeader('content-type', 'text/html'); res.end(CART); });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const consent = createConsent();
+  const b = createBrowser({caps: validateCapabilities({browser: true}), home: fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-b01-')), consent,
+    browserPath: exe, headless: true, allowPrivate: true, proxyOptions: {ports: [srv.address().port]}});
+  try {
+    await b.browser_open({url: base + '/cart'});
+    let s = await b.browser_snapshot({}); const by = n => s.elements.find(e => e.name === n);
+    for (const n of ['Place Order now', 'Place Order (form)', 'Place Order ghost']) {
+      const r = await b.browser_action({action: 'click', ref: by(n).ref});
+      assert.equal(r.status, 'consent_required', n); assert.equal(r.what, 'browser_financial', n);
+    }
+    const r0 = await b.browser_action({action: 'click', ref: by('Place Order').ref});
+    assert.equal(r0.done, true, JSON.stringify(r0));
+    s = await b.browser_snapshot({});
+    assert.ok(by('Purchase'), 'order form opened');
+    await b.browser_action({action: 'type', ref: by('Name').ref, text: 'Test'});
+    const r1 = await b.browser_action({action: 'click', ref: by('Purchase').ref});
+    assert.equal(r1.status, 'consent_required'); assert.equal(r1.what, 'browser_financial');
+    assert.doesNotMatch((await b.browser_snapshot({})).text, /ORDER CREATED/);
+  } finally { b.stop(); srv.close(); }
+});

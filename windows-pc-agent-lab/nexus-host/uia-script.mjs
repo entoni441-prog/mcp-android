@@ -118,7 +118,7 @@ function NxWin($w) {
   if ($null -eq $w) { return $null }
   $wpid = $w.Current.ProcessId
   $tb = NxTabs $w   # ArrayList (returned with unary comma); @($tb) enumerates it — @(NxTabs $w) would wrap an empty list as [[]]
-  return @{ hwnd = [int64]$w.Current.NativeWindowHandle; pid = $wpid; process = (NxPName $wpid); name = (NxStr $w.Current.Name 200); className = $w.Current.ClassName; tabs = @($tb) }
+  return @{ hwnd = [int64]$w.Current.NativeWindowHandle; pid = $wpid; process = (NxPName $wpid); name = (NxStr $w.Current.Name 200); className = $w.Current.ClassName; rect = (NxRect $w); tabs = @($tb) }
 }
 function NxElem($e) {
   return @{ controlType = $e.Current.ControlType.ProgrammaticName.Replace('ControlType.', ''); name = (NxStr $e.Current.Name 120); id = (NxStr $e.Current.AutomationId 80) }

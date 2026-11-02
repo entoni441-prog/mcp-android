@@ -135,11 +135,11 @@ export function createRuntime(cfg, deps = {}) {
   const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
   const live = createLive({caps, store, session, capture: (w, q) => gui.frameJpeg(w, q), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
   // End of every session: stream off at the source first, then clean up what NEXUS itself opened.
-  session.onEnd(async () => { live.sessionEnded(); return {liveActive: false}; });
-  session.onEnd(async (reason, s) => (typeof procs.cancelSession === 'function' ? {tasks: await procs.cancelSession(reason, s)} : {}));
-  session.onEnd(async reason => (typeof gui.cleanupOwned === 'function' ? {windows: await gui.cleanupOwned(reason)} : {}));
-  session.onEnd(async reason => (typeof browser.cleanupSession === 'function' ? {browser: await browser.cleanupSession(reason)} : {}));
-  session.onEnd(async reason => { handoffs.abandon(); const id = tasks.close(reason); return id ? {task: id, taskStatus: reason === 'finish_task' ? 'finished' : 'interrupted'} : {}; });
+  session.onEnd(async () => { const m = live.sessionEnded() || {}; return {liveActive: false, liveLastFrameAt: m.lastFrameAt ?? null, liveFramesDropped: m.droppedAfterStop ?? 0}; }, 'live');
+  session.onEnd(async (reason, s) => (typeof procs.cancelSession === 'function' ? {tasks: await procs.cancelSession(reason, s)} : {}), 'tasks');
+  session.onEnd(async reason => (typeof gui.cleanupOwned === 'function' ? {windows: await gui.cleanupOwned(reason)} : {}), 'windows');
+  session.onEnd(async reason => (typeof browser.cleanupSession === 'function' ? {browser: await browser.cleanupSession(reason)} : {}), 'browser');
+  session.onEnd(async reason => { handoffs.abandon(); const id = tasks.close(reason); return id ? {task: id, taskStatus: reason === 'finish_task' ? 'finished' : 'interrupted'} : {}; }, 'task');
   const apps = createApps({caps, store, consent, gui, handoff, workspace: cfg.workspace, execDeps,
     ...(execDeps.platform ? {platform: execDeps.platform} : {}), ...(execDeps.systemRoot ? {systemRoot: execDeps.systemRoot} : {}),
     ...(execDeps.launcher ? {launcher: execDeps.launcher} : {}), ...(deps.appsDeps || {})});
@@ -270,9 +270,10 @@ export async function handleRpc(msg, cfg, deps = {}) {
   if (isNotification) {
     // 0.5.1: the client (ChatGPT Stop) cancelled a request → end the work session at once (stream off, cleanup).
     if (msg.method === 'notifications/cancelled') {
+      const receivedAt = Date.now(); // 0.5.2 N-07: Host-side receipt mark of the Stop
       const rt = deps.runtime || cfg.runtime;
       audit(cfg, {event: 'client_cancelled', by: deps.principal, trace: deps.trace, requestId: msg.params?.requestId ?? null});
-      if (rt?.session) await rt.session.end('client_cancelled');
+      if (rt?.session) await rt.session.end('client_cancelled', {receivedAt});
     }
     return null;
   }

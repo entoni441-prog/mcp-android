@@ -3,10 +3,13 @@
 //   "ok <json>"  or  "err <code>".
 // Commands (all arguments validated again here — defence in depth; Node validates first):
 //   info
-//   capture <maxWidth> <base64(outFile)>            PNG of the primary screen, downscaled to maxWidth
+//   capture <maxWidth> <base64(outFile)> [masks]    PNG of the primary screen, downscaled to maxWidth
+//   frame <maxW> <quality> <base64(outFile)> [masks] JPEG Live View frame (cursor drawn in)
+//     masks (0.5.2 A-02): "x,y,w,h;x,y,w,h" (screen points, max 32) filled opaque BEFORE scaling/encoding
 //   move <x> <y> | click <x> <y> <left|right|middle> <1|2> | scroll <x> <y> <notches> | drag <x1> <y1> <x2> <y2>
 //   key <combo>                                     e.g. ctrl+s, enter, shift+tab (Windows key never allowed)
-//   paste <base64(utf8 text)>                       via clipboard + Ctrl+V; previous text clipboard restored
+//   paste <base64(utf8 text)>                       via clipboard + Ctrl+V; previous clipboard restored (text/image/files),
+//                                                   an empty clipboard is left empty-text (0.5.2) — `clipboard` says which
 // Coordinates are Java logical screen points (same space as the capture before downscaling).
 // No network, no files except the capture path given by NEXUS Host, no process launching.
 import java.awt.*;
@@ -17,6 +20,7 @@ import java.awt.image.BufferedImage;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.List;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageWriter;
 import javax.imageio.ImageWriteParam;
@@ -53,6 +57,34 @@ public class NexusRobot {
     return GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDefaultConfiguration().getBounds();
   }
 
+  /** 0.5.2 A-02: parse and paint redaction rectangles (screen points) onto the full-resolution capture. */
+  static List<Rectangle> masks(String arg) {
+    List<Rectangle> out = new ArrayList<>();
+    if (arg == null || arg.equals("-")) return out;
+    String[] parts = arg.split(";");
+    if (parts.length > 32) throw new IllegalArgumentException("too_many_masks");
+    for (String r : parts) {
+      String[] v = r.split(",");
+      if (v.length != 4) throw new IllegalArgumentException("invalid_mask");
+      out.add(new Rectangle(num(v[0], -100000, 100000), num(v[1], -100000, 100000), num(v[2], 1, 100000), num(v[3], 1, 100000)));
+    }
+    return out;
+  }
+
+  static int paint(BufferedImage img, Rectangle b, List<Rectangle> ms) {
+    if (ms.isEmpty()) return 0;
+    Graphics2D g = img.createGraphics();
+    g.setColor(new Color(40, 40, 40));
+    int n = 0;
+    for (Rectangle m : ms) {
+      Rectangle r = m.intersection(b);
+      if (r.isEmpty()) continue;
+      g.fillRect(r.x - b.x, r.y - b.y, r.width, r.height); n++;
+    }
+    g.dispose();
+    return n;
+  }
+
   static void inside(int x, int y) {
     if (!primary().contains(x, y)) throw new IllegalArgumentException("out_of_screen");
   }
@@ -68,12 +100,14 @@ public class NexusRobot {
           b.x, b.y, b.width, b.height, sx, sy, devs.length, System.getProperty("java.version"));
       }
       case "capture": {
-        if (p.length != 3) throw new IllegalArgumentException("invalid_args");
+        if (p.length != 3 && p.length != 4) throw new IllegalArgumentException("invalid_args");
         int maxW = num(p[1], 200, 4000);
         String file = new String(Base64.getDecoder().decode(p[2]), StandardCharsets.UTF_8);
+        List<Rectangle> ms = masks(p.length == 4 ? p[3] : null);
         Rectangle b = primary();
         long t = System.nanoTime();
         BufferedImage img = robot.createScreenCapture(b);
+        int masked = paint(img, b, ms);
         int w = img.getWidth(), h = img.getHeight();
         BufferedImage outImg = img;
         if (w > maxW) {
@@ -87,19 +121,21 @@ public class NexusRobot {
         Set<Integer> colours = new HashSet<>();
         for (int y = 0; y < h; y += 37) for (int x = 0; x < w; x += 37) colours.add(img.getRGB(x, y));
         ImageIO.write(outImg, "png", new File(file));
-        return String.format(Locale.ROOT, "{\"screenW\":%d,\"screenH\":%d,\"imageW\":%d,\"imageH\":%d,\"colours\":%d,\"ms\":%d}",
-          b.width, b.height, outImg.getWidth(), outImg.getHeight(), colours.size(), (System.nanoTime() - t) / 1_000_000);
+        return String.format(Locale.ROOT, "{\"screenW\":%d,\"screenH\":%d,\"imageW\":%d,\"imageH\":%d,\"colours\":%d,\"masked\":%d,\"ms\":%d}",
+          b.width, b.height, outImg.getWidth(), outImg.getHeight(), colours.size(), masked, (System.nanoTime() - t) / 1_000_000);
       }
       case "frame": {
         // 0.5.0 Live View: JPEG of the primary screen with the mouse cursor drawn in (Robot does not capture it).
         // frame <maxW> <quality 10..95> <base64 file>
-        if (p.length != 4) throw new IllegalArgumentException("invalid_args");
+        if (p.length != 4 && p.length != 5) throw new IllegalArgumentException("invalid_args");
         int maxW = num(p[1], 200, 4000);
         int q = num(p[2], 10, 95);
         String file = new String(Base64.getDecoder().decode(p[3]), StandardCharsets.UTF_8);
+        List<Rectangle> ms = masks(p.length == 5 ? p[4] : null);
         Rectangle b = primary();
         long t = System.nanoTime();
         BufferedImage img = robot.createScreenCapture(b);
+        int masked = paint(img, b, ms);
         int w = img.getWidth(), h = img.getHeight();
         int ow = Math.min(w, maxW), oh = (int) Math.round(h * (ow / (double) w));
         BufferedImage outImg = new BufferedImage(ow, oh, BufferedImage.TYPE_INT_RGB);
@@ -130,8 +166,8 @@ public class NexusRobot {
         try (ImageOutputStream ios = ImageIO.createImageOutputStream(new File(file))) {
           wr.setOutput(ios); wr.write(null, new IIOImage(outImg, null, null), prm);
         } finally { wr.dispose(); }
-        return String.format(Locale.ROOT, "{\"screenW\":%d,\"screenH\":%d,\"imageW\":%d,\"imageH\":%d,\"cursorX\":%d,\"cursorY\":%d,\"ms\":%d}",
-          b.width, b.height, ow, oh, cx, cy, (System.nanoTime() - t) / 1_000_000);
+        return String.format(Locale.ROOT, "{\"screenW\":%d,\"screenH\":%d,\"imageW\":%d,\"imageH\":%d,\"cursorX\":%d,\"cursorY\":%d,\"masked\":%d,\"ms\":%d}",
+          b.width, b.height, ow, oh, cx, cy, masked, (System.nanoTime() - t) / 1_000_000);
       }
       case "move": {
         int x = num(p[1], -100000, 100000), y = num(p[2], -100000, 100000);
@@ -178,14 +214,21 @@ public class NexusRobot {
         String text = new String(Base64.getDecoder().decode(p[1]), StandardCharsets.UTF_8);
         if (text.length() > 4000) throw new IllegalArgumentException("too_long");
         Clipboard cb = Toolkit.getDefaultToolkit().getSystemClipboard();
-        String previous = null;
-        try { if (cb.isDataFlavorAvailable(DataFlavor.stringFlavor)) previous = (String) cb.getData(DataFlavor.stringFlavor); } catch (Exception ignored) { }
+        // 0.5.2: snapshot the previous clipboard EAGERLY (text, image, file list) — 0.5.1 restored only text and
+        // reported clipboardRestored:false for anything else (owner's image/files lost, our text lingered).
+        Snapshot prev = Snapshot.take(cb);
         cb.setContents(new StringSelection(text), null);
         robot.keyPress(KeyEvent.VK_CONTROL); robot.keyPress(KeyEvent.VK_V);
         robot.keyRelease(KeyEvent.VK_V); robot.keyRelease(KeyEvent.VK_CONTROL);
         robot.delay(400);
-        if (previous != null) cb.setContents(new StringSelection(previous), null);
-        return String.format(Locale.ROOT, "{\"pasted\":%d,\"clipboardRestored\":%b}", text.length(), previous != null);
+        String how;
+        try {
+          if (prev.kind.equals("unreadable")) how = "not_restored_unreadable";
+          else if (prev.kind.equals("empty")) { cb.setContents(new StringSelection(""), null); how = "cleared"; }
+          else { cb.setContents(prev, null); how = "restored_" + prev.kind; }
+        } catch (Exception e) { how = "not_restored_error"; }
+        return String.format(Locale.ROOT, "{\"pasted\":%d,\"clipboardRestored\":%b,\"clipboard\":\"%s\"}",
+          text.length(), how.startsWith("restored") || how.equals("cleared"), how);
       }
       default: throw new IllegalArgumentException("unknown_command");
     }
@@ -213,5 +256,25 @@ public class NexusRobot {
       out[i] = c;
     }
     return out;
+  }
+  /** Eager copy of the clipboard in the flavors Java can round-trip. kind: text | image | files | mixed | empty | unreadable. */
+  static final class Snapshot implements Transferable {
+    final LinkedHashMap<DataFlavor, Object> data = new LinkedHashMap<>();
+    String kind = "empty";
+    static Snapshot take(Clipboard cb) {
+      Snapshot s = new Snapshot();
+      DataFlavor[] fl;
+      try { fl = cb.getAvailableDataFlavors(); } catch (Exception e) { s.kind = "unreadable"; return s; }
+      if (fl == null || fl.length == 0) return s;
+      for (DataFlavor f : new DataFlavor[]{DataFlavor.stringFlavor, DataFlavor.imageFlavor, DataFlavor.javaFileListFlavor}) {
+        try { if (cb.isDataFlavorAvailable(f)) { Object v = cb.getData(f); if (v != null) s.data.put(f, v); } } catch (Exception ignored) { }
+      }
+      if (s.data.isEmpty()) { s.kind = "unreadable"; return s; } // something is there, but in no flavor we can restore
+      s.kind = s.data.size() > 1 ? "mixed" : s.data.containsKey(DataFlavor.stringFlavor) ? "text" : s.data.containsKey(DataFlavor.imageFlavor) ? "image" : "files";
+      return s;
+    }
+    public DataFlavor[] getTransferDataFlavors() { return data.keySet().toArray(new DataFlavor[0]); }
+    public boolean isDataFlavorSupported(DataFlavor f) { return data.containsKey(f); }
+    public Object getTransferData(DataFlavor f) throws UnsupportedFlavorException { if (!data.containsKey(f)) throw new UnsupportedFlavorException(f); return data.get(f); }
   }
 }

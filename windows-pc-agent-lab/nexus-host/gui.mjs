@@ -128,6 +128,33 @@ export function mapping(info, root) {
   };
 }
 
+/**
+ * 0.5.2 A-02: which Notepad windows must be painted over before a screen image leaves the Host.
+ *  wins  = apps('notepad') snapshot (null = snapshot failed → caller must refuse the capture: fail-closed);
+ *  owned = consent.owned; toScreen = rect mapper (UIA → screen points) or null.
+ *  mode 'capture' (one-shot, fresh snapshot): a window is shown only if its SELECTED tab (or, without tabs, the window
+ *    itself) was created by NEXUS. mode 'live' (cached up to LIVE_MASK_TTL_MS): shown only if it holds NO foreign tab —
+ *    a tab switch between two cached snapshots can therefore never reveal an owner's document.
+ * Returns {masks:[{x,y,w,h}], hidden:n} or null (cannot redact reliably → no image).
+ */
+export function notepadMasks(wins, owned, toScreen, mode = 'capture') {
+  if (!Array.isArray(wins)) return null;
+  const tabs = w => (Array.isArray(w?.tabs) ? w.tabs : []).filter(t => t && typeof t.rid === 'string' && t.rid);
+  const masks = [];
+  for (const w of wins) {
+    const ts = tabs(w);
+    const visibleOk = ts.length === 0 ? owned.windows.has(String(w.hwnd))
+      : mode === 'live' ? ts.every(t => owned.tabs.has(t.rid))
+        : (() => { const sel = ts.filter(t => t.selected); return sel.length === 1 && owned.tabs.has(sel[0].rid); })();
+    if (visibleOk) continue;
+    const r = w.rect && toScreen ? toScreen(w.rect) : null;
+    if (!r || !(r.w > 0 && r.h > 0)) return null;
+    masks.push(r);
+  }
+  return {masks, hidden: masks.length};
+}
+export const LIVE_MASK_TTL_MS = 1000;
+const maskArg = m => (m.length ? m.slice(0, 32).map(r => [r.x, r.y, r.w, r.h].join(',')).join(';') : '-');
 
 // ───────────── tiny PNG (image_selftest) ─────────────
 function crc32(buf) { let c, crc = ~0; for (const b of buf) { c = (crc ^ b) & 0xff; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; crc = (crc >>> 8) ^ c; } return ~crc >>> 0; }
@@ -201,6 +228,28 @@ export function createGui({caps, home, workspace, platform = process.platform, r
   const NEW_KEYS = new Set(['ctrl+n', 'ctrl+t', 'ctrl+shift+n', 'shift+ctrl+n']);
   const apps = async name => (await uia({mode: 'apps', name})).apps || [];
   const tabsOf = w => (Array.isArray(w?.tabs) ? w.tabs : []).filter(t => t && typeof t.rid === 'string' && t.rid);
+
+  // 0.5.2 A-02: redaction of Notepad windows holding the owner's (possibly restored) documents.
+  let liveMaskCache = null;
+  async function captureMasks(mode) {
+    if (mode === 'live' && liveMaskCache && Date.now() - liveMaskCache.t < LIVE_MASK_TTL_MS) return liveMaskCache.v;
+    let v = null;
+    try {
+      const r = await uia({mode: 'apps', name: 'notepad'});
+      const m = mapping(await info(), r.root);
+      v = notepadMasks(r.apps || [], consent.owned, m ? m.rectToScreen : null, mode);
+    } catch { v = null; }
+    if (mode === 'live') liveMaskCache = {t: Date.now(), v};
+    if (!v) throw Error('capture_redaction_unavailable: NEXUS could not locate Notepad windows to hide the owner\'s documents, so no image is taken');
+    return v;
+  }
+  /** inspect_ui includeText on Notepad: honoured only if every Notepad window of that pid shows a NEXUS-owned document. */
+  async function notepadTextAllowed(pid) {
+    let wins; try { wins = await apps('notepad'); } catch { return false; }
+    const mine = wins.filter(w => w.pid === pid);
+    const res = notepadMasks(mine.map(w => ({...w, rect: w.rect || {x: 0, y: 0, w: 1, h: 1}})), consent.owned, r => r, 'capture');
+    return !!res && res.hidden === 0;
+  }
 
   /** Press a prompt button that UIA could not Invoke: click its centre, only if UIA confirms the point is that button. */
   async function clickPromptButton(rect, hwnd, pid, role) {
@@ -390,7 +439,8 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       fs.mkdirSync(tmpDir, {recursive: true});
       const file = path.join(tmpDir, 'cap-' + crypto.randomBytes(8).toString('hex') + '.png');
       try {
-        const r = await getRobot().cmd(`capture ${maxW} ${Buffer.from(file).toString('base64')}`);
+        const mk = await captureMasks('capture');
+        const r = await getRobot().cmd(`capture ${maxW} ${Buffer.from(file).toString('base64')} ${maskArg(mk.masks)}`);
         const png = fs.readFileSync(file);
         let saved = null;
         if (args.saveToWorkspace) {
@@ -399,7 +449,8 @@ export function createGui({caps, home, workspace, platform = process.platform, r
           fs.writeFileSync(path.join(workspace, ...saved.split('/')), png, {flag: 'wx'});
         }
         const meta = {imageW: r.imageW, imageH: r.imageH, screenW: r.screenW, screenH: r.screenH,
-          imageToScreen: +(r.screenW / r.imageW).toFixed(4), distinctColours: r.colours, pngBytes: png.length, ms: r.ms, savedTo: saved};
+          imageToScreen: +(r.screenW / r.imageW).toFixed(4), distinctColours: r.colours, pngBytes: png.length, ms: r.ms, savedTo: saved,
+          ...(mk.hidden ? {hiddenWindows: mk.hidden, hiddenWhy: 'owner Notepad documents (not created by NEXUS) are painted over'} : {})};
         return {content: [{type: 'image', data: png.toString('base64'), mimeType: 'image/png'}, {type: 'text', text: JSON.stringify(meta)}], structured: meta};
       } finally { fs.rmSync(file, {force: true}); }
     },
@@ -410,7 +461,8 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       fs.mkdirSync(tmpDir, {recursive: true});
       const file = path.join(tmpDir, 'frm-' + crypto.randomBytes(8).toString('hex') + '.jpg');
       try {
-        const r = await getRobot().cmd(`frame ${maxW} ${quality} ${Buffer.from(file).toString('base64')}`);
+        const mk = await captureMasks('live');
+        const r = await getRobot().cmd(`frame ${maxW} ${quality} ${Buffer.from(file).toString('base64')} ${maskArg(mk.masks)}`);
         return {jpeg: fs.readFileSync(file), meta: r};
       } finally { fs.rmSync(file, {force: true}); }
     },
@@ -435,13 +487,19 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       const pg = policy({proc: r.target?.process, title: r.tree?.[0]?.name, mode: 'read', hwnd: 'pid:' + args.pid, tool: 'inspect_ui', args, opts, legacy: 'app_not_allowed'});
       if (pg) return pg;
       const m = mapping(await info(), r.root);
+      // 0.5.2 A-02: in Notepad the owner's documents (incl. ones restored from a previous session) are never read.
+      let withheld = null;
+      if (args.includeText && String(r.target?.process || '').toLowerCase() === 'notepad' && !(await notepadTextAllowed(args.pid))) {
+        args = {...args, includeText: false}; withheld = 'notepad_owner_document';
+      }
       // 0.5.0 data protection: the Name of a Document/Edit control IS the document text (e.g. a password file open in
       // Notepad). Redacted unless includeText=true; only the length is returned.
       const redact = n => !args.includeText && TEXT_CONTROLS.has(n.type) && typeof n.name === 'string' && n.name ? `<text ${n.name.length}+ chars, includeText=true to read>` : n.name;
       let redacted = 0;
       const fix = n => { const name = redact(n); if (name !== n.name) redacted++; return {...n, name, rect: m ? m.rectToScreen(n.rect) : null, ...(n.children ? {children: n.children.map(fix)} : {})}; };
       const tree = (r.tree || []).map(fix);
-      return {pid: args.pid, process: r.target.process, nodes: r.nodes, coordinateMapping: !!m, textRedacted: redacted, tree};
+      return {pid: args.pid, process: r.target.process, nodes: r.nodes, coordinateMapping: !!m, textRedacted: redacted,
+        ...(withheld ? {textWithheld: withheld, hint: 'Text is shown only for documents NEXUS created (its scratch tab must be the selected tab of every Notepad window).'} : {}), tree};
     },
 
     async focus_window(args) {
@@ -570,7 +628,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       if (creating) { await sleep(700); created = consent.recordCreated(snap, await apps(before.window.process).catch(() => null), 'keys:' + args.keys); }
       const after = await uia({mode: 'focused'});
       return {done: true, target: before.focused.process, foregroundAfter: after.focused?.process || null,
-        ...(hasText ? {chars: args.text.length, clipboardRestored: r.clipboardRestored} : {keys: args.keys}),
+        ...(hasText ? {chars: args.text.length, clipboardRestored: r.clipboardRestored, ...(r.clipboard ? {clipboard: r.clipboard} : {})} : {keys: args.keys}),
         ...(c ? {closeAction: c.kind, consented: !!consented} : {}), ...(created ? {createdByNexus: created} : {})};
     },
   };

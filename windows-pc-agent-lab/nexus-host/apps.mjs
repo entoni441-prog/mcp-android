@@ -25,10 +25,13 @@ import {appGate, classifyApp, notepadLaunchDecision, launchableExe} from './poli
 import {createDiscovery} from './discover.mjs';
 
 /**
- * 0.5.2 TEMPORARY (A-02): Windows 11 Notepad restores the owner's previous session on a cold start. Until stage 4
- * hides restored tabs from captures/UIA and this is verified on the owner's PC, NEXUS does not cold-start Notepad.
+ * 0.5.2 A-02 (stage 4, permanent rule — replaces the stage-2 temporary flag NOTEPAD_COLD_START_BLOCKED):
+ *  (a) NEXUS never cold-starts Windows 11 Notepad: a cold start restores the owner's previous session (unsaved tabs
+ *      with secrets) on screen. If no Notepad window exists → Owner Handoff (the owner opens it; capture is paused).
+ *  (b) Warm start: NEXUS adds ONE scratch tab; every Notepad window that holds a tab NEXUS does not own is masked in
+ *      capture_screen / Live View (gui.captureMasks) and its document text is never returned by inspect_ui.
  */
-export const NOTEPAD_COLD_START_BLOCKED = true;
+const sansRect = a => JSON.stringify(a.map(({rect, ...w}) => w)); // a moved/resized window is not a "new window"
 
 const isObj = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const onlyKeys = (a, allowed) => isObj(a) && Object.keys(a).every(k => allowed.includes(k));
@@ -45,7 +48,7 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
     for (let i = 0; i < rounds; i++) {
       await wait(400);
       after = await gui.snapshotApp(proc);
-      if (before !== null && after !== null && JSON.stringify(after) !== JSON.stringify(before)) {
+      if (before !== null && after !== null && sansRect(after) !== sansRect(before)) {
         if (!opts.token || JSON.stringify(after).includes(opts.token)) break;
       }
     }
@@ -69,7 +72,7 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
         fs.writeFileSync(file, '', {flag: 'wx'});
         const before = await gui.snapshotApp('notepad');
         const nd = notepadLaunchDecision({running: Array.isArray(before) ? before.length > 0 : undefined});
-        if (NOTEPAD_COLD_START_BLOCKED && nd.level !== 1) {
+        if (nd.level !== 1) {
           fs.rmSync(file, {force: true});
           const legacy = {started: false, status: 'owner_action_required', reason: nd.reason, app: 'notepad',
             instruction: 'Notepad is not running. A cold start would restore the owner\'s previous Notepad session (it may contain secrets). Ask the owner to open Notepad themselves, then call open_app notepad again — or use another editor.'};

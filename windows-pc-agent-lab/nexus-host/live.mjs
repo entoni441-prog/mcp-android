@@ -20,6 +20,7 @@ export const IDLE_MS = 6000;
 
 export function createLive({caps, store, capture, session = null, audit = () => {}, now = () => Date.now(), indicator = defaultIndicator, setIntervalFn = setInterval}) {
   let seq = 0, last = null, inflight = null, viewing = false, lastServed = 0, served = 0, since = 0;
+  let lastFrameAt = 0, droppedAfterStop = 0; // 0.5.2 N-07: Stop timing marks
   const setViewing = (on, why) => {
     if (on === viewing) return;
     viewing = on;
@@ -57,7 +58,9 @@ export function createLive({caps, store, capture, session = null, audit = () => 
       if (!granted()) { setViewing(false, 'capability_off'); return {state: 'off', hint: 'Live View is not granted by the owner.'}; }
       if (!allowed()) { setViewing(false, 'no_active_session'); return {state: 'ready', hint: 'No task is running on the desktop: nothing to show. Frames resume automatically with the next GUI task.'}; }
       const f = await grab(maxW, quality);
-      lastServed = now(); served++;
+      // 0.5.2 N-07: a capture that was in flight when Stop/finish ended the session is DROPPED, never delivered.
+      if (!allowed()) { droppedAfterStop++; setViewing(false, 'ended_during_capture'); return {state: state(), hint: 'The session ended while a frame was being captured; it was discarded.'}; }
+      lastServed = now(); lastFrameAt = lastServed; served++;
       setViewing(true, 'frame_request');
       const structured = {state: 'live', seq: f.seq, capturedAt: new Date(f.t).toISOString(), imageW: f.meta.imageW, imageH: f.meta.imageH,
         screenW: f.meta.screenW, screenH: f.meta.screenH, cursor: f.meta.cursorX >= 0 ? {x: f.meta.cursorX, y: f.meta.cursorY} : null,
@@ -68,7 +71,8 @@ export function createLive({caps, store, capture, session = null, audit = () => 
     async frameBytes(maxW = 960, quality = 60) {
       if (!allowed()) { setViewing(false, 'no_active_session'); return null; }
       const f = await grab(maxW, quality);
-      lastServed = now(); served++;
+      if (!allowed()) { droppedAfterStop++; setViewing(false, 'ended_during_capture'); return null; }
+      lastServed = now(); lastFrameAt = lastServed; served++;
       setViewing(true, 'frame_request');
       return f;
     },
@@ -92,7 +96,7 @@ export function createLive({caps, store, capture, session = null, audit = () => 
           'Live View is not granted. The owner grants it once in the NEXUS profile (local, outside chat).'};
     },
     /** Called by the session end hook: stop serving immediately. */
-    sessionEnded() { setViewing(false, 'session_end'); last = null; },
+    sessionEnded() { setViewing(false, 'session_end'); last = null; return {lastFrameAt: lastFrameAt || null, droppedAfterStop}; },
     status: () => ({state: state(), viewing, framesServed: served}),
     stop() { clearInterval(timer); },
   };

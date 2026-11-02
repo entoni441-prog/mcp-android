@@ -37,7 +37,7 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
   let s = null;            // current session or null
   let last = null;         // summary of the last ended session
   let ownerLiveOptOut = false;
-  const hooks = [];        // async (reason, session) => partial report
+  const hooks = [];        // {fn: async (reason, session) => partial report, name}
   const holds = new Map(); // 0.5.2 N-03: key → {until, pauseLive} — an owner action is pending; the idle lease must not end the task
 
   const timer = setIntervalFn(() => { tick().catch(() => {}); }, tickMs);
@@ -51,14 +51,31 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
     return s;
   }
 
-  async function end(reason) {
+  /**
+   * 0.5.2 N-07: `receivedAt` = when the Host got the trigger (e.g. notifications/cancelled arrived). The moment the owner
+   * pressed Stop is NOT visible to the Host: full latency = (receivedAt − owner's own timestamp) + timing.hostTotalMs.
+   */
+  async function end(reason, {receivedAt = null} = {}) {
     if (!s) return {ended: false, reason, active: false};
+    const t0 = Number.isFinite(receivedAt) ? receivedAt : now();
     const cur = s; s = null; // live goes off synchronously: no frame can be produced after this line
+    const tLive = now();
     holds.clear();
     const report = {ended: true, session: cur.id, reason, sec: Math.round((now() - cur.startedAt) / 1000), calls: cur.calls};
+    const hooksMs = {};
     for (const h of hooks) {
-      try { Object.assign(report, await h(reason, cur)); } catch (e) { (report.hookErrors ||= []).push(String(e?.message || e).slice(0, 120)); }
+      const th = now();
+      try { Object.assign(report, await h.fn(reason, cur)); } catch (e) { (report.hookErrors ||= []).push(String(e?.message || e).slice(0, 120)); }
+      hooksMs[h.name] = now() - th;
     }
+    const tDone = now();
+    const {liveLastFrameAt = null, liveFramesDropped = 0} = report;
+    delete report.liveLastFrameAt; delete report.liveFramesDropped;
+    report.timing = {trigger: reason, receivedAt: new Date(t0).toISOString(), liveOffMs: tLive - t0, cleanupMs: tDone - tLive, hostTotalMs: tDone - t0,
+      hooksMs, lastFrameAt: liveLastFrameAt ? new Date(liveLastFrameAt).toISOString() : null, framesAfterStop: 0, framesDroppedInFlight: liveFramesDropped,
+      ...(reason === 'lease_expired' ? {idleDetectLagMs: Math.max(0, t0 - (cur.lastWork + idleMs))} : {}),
+      ownerPress: 'not visible to the Host — full Stop latency = (receivedAt − owner timestamp from stopwatch/screen recording) + hostTotalMs'};
+    if (liveLastFrameAt && liveLastFrameAt > t0) report.timing.framesAfterStop = 1; // must stay 0: frames after the trigger are a defect
     last = {...report, endedAt: new Date(now()).toISOString()};
     audit({event: 'session_end', ...report});
     return {...report, active: false, liveActive: false};
@@ -85,7 +102,7 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
     beginWatch() { ownerLiveOptOut = false; const cur = begin('watch_nexus', 'watch'); cur.live = caps.live_view === true; cur.lastWork = now(); return cur; },
     end,
     tick,
-    onEnd(h) { hooks.push(h); },
+    onEnd(h, name = 'hook' + (hooks.length + 1)) { hooks.push({fn: h, name}); },
     /** Owner said "no Live View" — respected until the owner asks to watch again. */
     optOutLive() { ownerLiveOptOut = true; if (s) s.live = false; },
     /** 0.5.2: an owner action is pending — keep the session (bounded by `ms`); optionally stop Live View frames meanwhile. */

@@ -104,10 +104,18 @@ const CHECKOUT_URL_RE = /(checkout|payment|\/pay\b|billing|\/order|cassa|pagamen
 const PAY_FRAME_RE = /(stripe\.com|braintreegateway|adyen|paypal\.com|checkout\.com|klarna|yookassa|cloudpayments|nexi|satispay|worldpay|squareup)/i;
 const SECRET_FIELD_RE = /(card.?(number|num|no)|ccnum|cc-?number|cvv|cvc|csc|security.?code|iban|\botp\b|2fa|one.?time|verification.?code|passcode|\bpin\b)/i;
 
-/** Pure decision from page facts. Returns null (autonomous) or {what, reason}. */
-export function classifyBrowserRisk({label = '', submit = false, checkout = null} = {}) {
+/**
+ * Pure decision from page facts. Returns null (autonomous) or {what, reason}.
+ * 0.5.2 B-01: `opensDialog` — the control only opens a dialog ON THE SAME PAGE (Bootstrap data-(bs-)toggle=modal with an
+ * existing modal target, or aria-haspopup=dialog / aria-controls → [role=dialog]|<dialog>), is not a form submit and
+ * has no inline onclick. Opening a form is not an obligation (Demoblaze «Place Order» → order form); the control that
+ * then CREATES the order («Purchase») is classified on its own. Residual risk: a page script attached with
+ * addEventListener to such a control cannot be seen — documented, as for every label-based decision.
+ */
+export function classifyBrowserRisk({label = '', submit = false, checkout = null, opensDialog = null} = {}) {
   const l = String(label || '').replace(/\s+/g, ' ').trim();
   if (CART_EDIT_RE.test(l)) return null;
+  if (opensDialog && !submit) return null;
   if (COMMIT_RE.test(l)) return {what: 'browser_financial', reason: 'commitment_label'};
   if (checkout && submit && !SAFE_STEP_RE.test(l)) return {what: 'browser_financial', reason: 'checkout_submit_' + checkout};
   if (OUTGOING_RE.test(l)) return {what: 'browser_irreversible', reason: 'outgoing_or_destructive'};
@@ -116,7 +124,7 @@ export function classifyBrowserRisk({label = '', submit = false, checkout = null
 
 // Page facts for classifyBrowserRisk: label of the target (or of the form's default submit for Enter), whether it
 // submits a form, and whether the page is a checkout/payment page. No values of fields are read.
-const FACTS_JS = (ref, key) => `(() => {
+export const FACTS_JS = (ref, key) => `(() => {
   const txt = e => String(e && (e.getAttribute('aria-label') || (e.tagName === 'INPUT' ? e.value : e.innerText) || e.getAttribute('title')) || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
   const U = new RegExp(${JSON.stringify(CHECKOUT_URL_RE.source)}, 'i'), F = new RegExp(${JSON.stringify(PAY_FRAME_RE.source)}, 'i'), S = new RegExp(${JSON.stringify(SECRET_FIELD_RE.source)}, 'i');
   const checkout = U.test(location.pathname + location.search) ? 'url'
@@ -125,7 +133,19 @@ const FACTS_JS = (ref, key) => `(() => {
   const isSubmit = e => { if (!e) return false; const t = (e.getAttribute('type') || '').toLowerCase();
     if (e.tagName === 'INPUT') return t === 'submit' || t === 'image'; if (e.tagName === 'BUTTON') return (t === '' || t === 'submit') && !!e.form; return false; };
   ${ref ? `let e = document.querySelector('[data-nexus-ref="' + ${JSON.stringify(ref || '')} + '"]'); if (!e) return null;
-    const c = e.closest('button,a,input,[role=button]') || e; return {label: txt(c), submit: isSubmit(c), checkout};` :
+    const c = e.closest('button,a,input,[role=button]') || e;
+    const byId = v => { try { return v ? document.querySelector(v.startsWith('#') ? v : '#' + CSS.escape(v)) : null; } catch { return null; } };
+    const isDlg = d => !!d && (d.tagName === 'DIALOG' || d.getAttribute('role') === 'dialog' || d.getAttribute('role') === 'alertdialog' || (d.classList && d.classList.contains('modal')));
+    const href = c.tagName === 'A' ? (c.getAttribute('href') || '') : '';
+    const navigates = c.tagName === 'A' && href && !href.startsWith('#') && !/^javascript:\\s*(void\\(0\\);?)?$/i.test(href);
+    let opensDialog = null;
+    if (!isSubmit(c) && !c.hasAttribute('onclick') && !navigates) {
+      const tg = c.getAttribute('data-toggle') || c.getAttribute('data-bs-toggle');
+      const ctl = c.getAttribute('aria-controls');
+      if (tg === 'modal' && isDlg(byId(c.getAttribute('data-target') || c.getAttribute('data-bs-target') || (href.startsWith('#') ? href : '')))) opensDialog = 'modal';
+      else if (ctl && isDlg(byId(ctl)) && (c.getAttribute('aria-haspopup') === 'dialog' || c.getAttribute('aria-haspopup') === 'true' || c.hasAttribute('aria-expanded'))) opensDialog = 'aria_dialog';
+    }
+    return {label: txt(c), submit: isSubmit(c), checkout, opensDialog};` :
     `if (${JSON.stringify(key || '')} !== 'Enter') return null; const a = document.activeElement; const f = a && a.form;
      if (a && a.tagName === 'BUTTON') return {label: txt(a), submit: isSubmit(a), checkout};
      if (!f) return checkout ? {label: '', submit: true, checkout} : null;
