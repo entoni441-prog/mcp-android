@@ -340,3 +340,79 @@ export function handoffSpec(proc, reason, title = '') {
     where: `mmc${w}`, check: 'проверка по последствиям действия', verify: {kind: 'none'}, pause: {input: true, capture: false}};
   return null;
 }
+
+// ── R-01 (owner, 02.11.2026 — release blocker): accidental deletion of data inside ordinary apps ───────────────────
+/**
+ * Deletion/erasure inside ANY app (ordinary, Explorer, IDE…) needs owner consent (level 2, what 'destructive_action').
+ *  Click (or Enter/Space on the focused control) on a Button/MenuItem/SplitButton/Hyperlink named:
+ *   STRONG words (delete, remove, uninstall, erase, wipe, purge, empty recycle bin, permanently…) → consent always;
+ *   WEAK words (clear, reset, очистить, сбросить…) → consent, unless the context shows a form/search field: the
+ *   control sits inside an Edit/ComboBox (the «×» of a search box) or its name names a field/filter/search/selection.
+ *  Keys: Delete / Shift+Delete with focus in a list/tree/grid (selected items: files, records) → consent;
+ *   in a text field/editor they stay free. Ctrl+Shift+Delete (clear browsing data) → consent always.
+ *  Confirmation dialogs («Are you sure / permanently / cannot be undone»): affirmative button → consent,
+ *   negative/«Save» button → free, a button NEXUS cannot name → refused (fail-closed); Enter on a non-button in such a
+ *   dialog (activates the default button) → consent.
+ * Limits (documented): only what UI Automation exposes — custom-drawn UIs without UIA names, icon-only buttons without
+ * a Name, and actions that delete without any of these words are not recognised.
+ */
+const ACT_TYPES = new Set(['Button', 'MenuItem', 'SplitButton', 'Hyperlink']);
+const DLG_BTN_TYPES = new Set(['Button', 'Pane', 'Custom', 'MenuItem', 'SplitButton', 'Hyperlink']); // TaskDialog buttons are Pane
+const SEL_TYPES = new Set(['ListItem', 'TreeItem', 'DataItem', 'List', 'Tree', 'DataGrid', 'Table', 'Row']);
+export const DESTRUCT_STRONG_RE = /(\bdelete\b|\bdel\b|\bremove\b|\buninstall|\berase\b|\bwipe\b|\bpurge\b|\bshred|\bdestroy|permanent|empty\s+(the\s+)?(recycle\s+bin|trash|bin)|move\s+to\s+(the\s+)?(recycle\s+bin|trash)|\bformat\s+(disk|drive|volume)|factory\s+reset|удал|стереть|уничтож|деинсталл|безвозвратн|очистить\s+корзину|в\s+корзину$|форматировать|\belimina|\brimuovi|disinstalla|cancella\s+definitiv|svuota\s+(il\s+)?cestino|\bsposta\s+nel\s+cestino)/i;
+export const DESTRUCT_WEAK_RE = /(\bclear\b|\breset\b|\bclean\s*(up)?\b|\bdiscard\b|\brevert\b|\brestore\s+defaults|очист|сброс|сбросить|отменить\s+изменения|\bpulisci|\bsvuota|\bripristina|\bcancella\b|\bazzera)/i;
+const WEAK_FIELD_CTX_RE = /(search|поиск|find|найти|filter|фильтр|field|поле|input|text\s*box|form|форм|selection|выделени|format(ting)?\b|форматирован|zoom|масштаб|\bcerca\b|campo|filtro|selezione)/i;
+export const CONFIRM_TEXT_RE = /(are\s+you\s+sure|permanent|cannot\s+be\s+undone|can['’]?t\s+be\s+undone|irreversib|will\s+be\s+(deleted|removed|lost|erased)|delete\s+(this|these|the|\d)|вы\s+уверены|действительно|безвозвратн|нельзя\s+(будет\s+)?(отменить|восстановить)|будут?\s+(удален|потерян|стерт)|удалить\s+(эт|выбран|\d)|sei\s+sicur|definitivament|in\s+modo\s+permanente|non\s+(può|potrà)\s+essere\s+annullat|verranno?\s+(eliminat|rimoss))/i;
+const AFFIRM_RE = /^(yes|yes\s+to\s+all|ok|okay|continue|confirm|proceed|delete|remove|erase|uninstall|empty|clear|reset|discard|да|да\s+для\s+всех|ок|продолжить|подтвердить|удалить|стереть|очистить|сбросить|sì|si|conferma|continua|elimina|rimuovi|svuota|procedi)(?![\p{L}\p{N}])/iu;
+// Buttons that keep data: negative answers and «Save» (a save prompt may say «changes will be lost»).
+const NEGATE_RE = /^(no|no\s+to\s+all|cancel|close|back|keep|save|don['’]?t\s+delete|нет|отмена|отменить|закрыть|назад|оставить|сохранить|не\s+удалять|annulla|chiudi|indietro|mantieni|salva)(?![\p{L}\p{N}])/iu;
+
+const clean = n => String(n ?? '').replace(/[&_]/g, '').replace(/\s+/g, ' ').trim();
+const isConfirmDialog = d => !!d && CONFIRM_TEXT_RE.test([d.title, ...(Array.isArray(d.text) ? d.text : [])].join(' \n '));
+
+function byName(elem, parentType) {
+  const n = clean(elem?.name);
+  if (!n || n.length > 60) return null;
+  if (DESTRUCT_STRONG_RE.test(n)) return {via: n};
+  if (DESTRUCT_WEAK_RE.test(n)) {
+    if (['Edit', 'ComboBox'].includes(parentType) || WEAK_FIELD_CTX_RE.test(n)) return null; // clearing a field/search/filter
+    return {via: n};
+  }
+  return null;
+}
+
+/**
+ * Click target → null (free) | {level:2, what:'destructive_action', via} | {refuse:true, reason}.
+ * `at` = UIA point result: {elem:{controlType,name,id}, parentType, dialog:{modal,className,title,text[]}}.
+ */
+export function classifyDestructiveClick(at, action = 'click') {
+  if (!['click', 'double_click'].includes(action) || !at?.elem) return null;
+  const t = at.elem.controlType, n = clean(at.elem.name);
+  if (isConfirmDialog(at.dialog) && DLG_BTN_TYPES.has(t)) {
+    if (n && n.length <= 40 && NEGATE_RE.test(n)) return null;
+    if (n && n.length <= 40 && AFFIRM_RE.test(n)) return {level: 2, what: 'destructive_action', via: 'confirm:' + n};
+    if (t === 'Button' || !n || n.length <= 40) return {refuse: true, reason: 'destructive_confirm_button_unrecognised'};
+    return null; // a long Pane name in a dialog is text, not a button
+  }
+  if (!ACT_TYPES.has(t)) return null;
+  const hit = byName(at.elem, at.parentType);
+  return hit ? {level: 2, what: 'destructive_action', via: 'click:' + hit.via} : null;
+}
+
+/** Keyboard chord in the focused context ({elem, parentType, dialog}) → same results as classifyDestructiveClick. */
+export function classifyDestructiveKeys(keys, ctx) {
+  const k = String(keys || '').toLowerCase();
+  const el = ctx?.elem || {}, t = el.controlType;
+  if (k === 'ctrl+shift+delete' || k === 'shift+ctrl+delete') return {level: 2, what: 'destructive_action', via: 'keys:' + k};
+  if ((k === 'delete' || k === 'shift+delete') && (SEL_TYPES.has(t) || SEL_TYPES.has(ctx?.parentType) && !['Edit', 'Document'].includes(t))) {
+    return {level: 2, what: 'destructive_action', via: `keys:${k} on selection (${t || '?'})`};
+  }
+  if (k === 'enter' || k === 'space') {
+    if (isConfirmDialog(ctx?.dialog)) {
+      if (!DLG_BTN_TYPES.has(t)) return k === 'space' ? null : {level: 2, what: 'destructive_action', via: 'keys:enter in a confirmation dialog (default button)'};
+      return classifyDestructiveClick({elem: el, dialog: ctx.dialog}, 'click');
+    }
+    if (ACT_TYPES.has(t)) { const hit = byName(el, ctx?.parentType); if (hit) return {level: 2, what: 'destructive_action', via: `keys:${k} on «${hit.via}»`}; }
+  }
+  return null;
+}

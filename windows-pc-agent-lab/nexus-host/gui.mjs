@@ -24,7 +24,7 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {UIA_SCRIPT} from './uia-script.mjs';
 import {requireCap} from './capabilities.mjs';
-import {appGate, classifyIdeInput, classifyIdeClick, redactSecrets, handoffSpec} from './policy.mjs';
+import {appGate, classifyIdeInput, classifyIdeClick, redactSecrets, handoffSpec, classifyDestructiveClick, classifyDestructiveKeys} from './policy.mjs';
 import {classifyKeys, classifyClick, createConsent} from './consent.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -192,7 +192,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
    * 0.5.2: every target goes through policy.appGate. Returns null (go on) or a consent_required result whose
    * confirm_action replays the same tool once, for the same window (policyOk), and only for that need.
    */
-  const LABEL = {system_tool: 'системная утилита (изменения системы)', protected_app: 'защищённое приложение', security_page: 'страница безопасности', arbitrary_command: 'выполнение команды'};
+  const LABEL = {destructive_action: 'удаление/стирание данных в приложении', system_tool: 'системная утилита (изменения системы)', protected_app: 'защищённое приложение', security_page: 'страница безопасности', arbitrary_command: 'выполнение команды'};
   function describeInput(args, el) {
     if (typeof args?.text === 'string') return `ввод текста «${redactSecrets(args.text).text.slice(0, 200)}»`;
     if (typeof args?.keys === 'string') return `клавиши ${args.keys}`;
@@ -571,8 +571,12 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         const at = await uia({mode: 'at', x: u.x, y: u.y});
         if (JSON.stringify(at.root) !== JSON.stringify(rootCache)) { rootCache = at.root; infoCache = null; throw Error('screen_changed_retry'); }
         const ide = appGate(caps, at.at?.process, {title: at.at?.window?.name, mode: 'input'}).cls === 'ide' ? classifyIdeClick(at.at?.elem) : null;
+        // 0.5.2 R-01: deleting/erasing data inside any app needs consent; an unrecognised button in an «Are you sure» dialog is refused.
+        const dz = x === pts[0][0] && y === pts[0][1] ? classifyDestructiveClick(at.at, args.action) : null;
+        if (dz?.refuse) throw Error(`destructive_confirm_refused: ${dz.reason} — NEXUS cannot tell what this button in a deletion confirmation does; ask the owner to answer the dialog`);
         const pg = policy({proc: at.at?.process, title: at.at?.window?.name, mode: 'input', hwnd: at.at?.window?.hwnd, tool: 'mouse_action', args,
-          opts: {policyOk}, legacy: 'target_not_allowed', el: at.at?.elem, extra: ide?.level === 3 ? {level: 3, what: 'arbitrary_command', via: ide.via} : null});
+          opts: {policyOk}, legacy: 'target_not_allowed', el: at.at?.elem,
+          extra: ide?.level === 3 ? {level: 3, what: 'arbitrary_command', via: ide.via} : dz ? {level: 2, what: dz.what, via: dz.via} : null});
         if (pg) return pg;
         target = {process: at.at.process, pid: at.at.pid, control: at.at.controlType, name: at.at.elem?.name};
         lastAt = at.at;
@@ -607,8 +611,11 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         const title = before.window?.name;
         const ide = appGate(caps, before.focused.process, {title, mode: 'input'}).cls === 'ide'
           ? classifyIdeInput({keys: hasKeys ? args.keys : null, text: hasText ? args.text : undefined, elem: before.elem}) : null;
+        const dz = hasKeys ? classifyDestructiveKeys(args.keys, before) : null; // 0.5.2 R-01
+        if (dz?.refuse) throw Error(`destructive_confirm_refused: ${dz.reason} — NEXUS cannot tell what the focused button in a deletion confirmation does; ask the owner to answer the dialog`);
         const pg = policy({proc: before.focused.process, title, mode: 'input', hwnd: before.window?.hwnd, tool: 'keyboard_action', args,
-          opts: {policyOk}, legacy: 'focus_not_allowed', el: before.elem, extra: ide?.level === 3 ? {level: 3, what: 'arbitrary_command', via: ide.via} : null});
+          opts: {policyOk}, legacy: 'focus_not_allowed', el: before.elem,
+          extra: ide?.level === 3 ? {level: 3, what: 'arbitrary_command', via: ide.via} : dz ? {level: 2, what: dz.what, via: dz.via} : null});
         if (pg) return pg;
       }
       const c = hasKeys ? classifyKeys(args.keys, before) : null;

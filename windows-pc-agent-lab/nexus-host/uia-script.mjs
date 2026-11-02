@@ -120,6 +120,26 @@ function NxWin($w) {
   $tb = NxTabs $w   # ArrayList (returned with unary comma); @($tb) enumerates it — @(NxTabs $w) would wrap an empty list as [[]]
   return @{ hwnd = [int64]$w.Current.NativeWindowHandle; pid = $wpid; process = (NxPName $wpid); name = (NxStr $w.Current.Name 200); className = $w.Current.ClassName; rect = (NxRect $w); tabs = @($tb) }
 }
+# 0.5.2 R-01: is the top-level window a dialog, and what does it say? Text is used ONLY inside the Host to recognise
+# «Are you sure / permanently» confirmations — it is never returned to the model (gui strips it).
+function NxDlg($w) {
+  if ($null -eq $w) { return $null }
+  $modal = $false
+  try { $modal = [bool]$w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Current.IsModal } catch { }
+  $cls = [string]$w.Current.ClassName
+  if (-not $modal -and $cls -ne '#32770') { return $null }
+  $txt = New-Object System.Collections.ArrayList
+  $stack = New-Object System.Collections.Stack; $stack.Push(@($w, 0)); $seen = 0
+  while ($stack.Count -gt 0 -and $seen -lt 250 -and $txt.Count -lt 12) {
+    $item = $stack.Pop(); $e = $item[0]; $d = $item[1]; $seen++
+    $ct = $e.Current.ControlType
+    if ($ct -eq [System.Windows.Automation.ControlType]::Text) { $nm = NxStr $e.Current.Name 200; if ($nm) { [void]$txt.Add($nm) } }
+    if ($d -ge 8) { continue }
+    $k = $TW.GetFirstChild($e)
+    while ($null -ne $k) { $stack.Push(@($k, ($d + 1))); $k = $TW.GetNextSibling($k) }
+  }
+  return @{ modal = $modal; className = $cls; title = (NxStr $w.Current.Name 200); text = @($txt) }
+}
 function NxElem($e) {
   return @{ controlType = $e.Current.ControlType.ProgrammaticName.Replace('ControlType.', ''); name = (NxStr $e.Current.Name 120); id = (NxStr $e.Current.AutomationId 80) }
 }
@@ -134,7 +154,10 @@ switch ($a.mode) {
     $res.at = @{ pid = $epid; process = (NxPName $epid); controlType = $e.Current.ControlType.ProgrammaticName; elem = (NxElem $e) }
     $tab = NxTabOf $e
     if ($null -ne $tab) { $res.at.tab = @{ rid = (NxRid $tab); name = (NxStr $tab.Current.Name 120) } }
-    $res.at.window = NxWin (NxTopOf $e)
+    $top = NxTopOf $e
+    $res.at.window = NxWin $top
+    try { $p = $TW.GetParent($e); if ($null -ne $p) { $res.at.parentType = $p.Current.ControlType.ProgrammaticName.Replace('ControlType.', '') } } catch { }
+    try { $res.at.dialog = NxDlg $top } catch { }
     $res.focused = NxFocused
   }
   'activate' {
@@ -198,7 +221,10 @@ switch ($a.mode) {
     try {
       $f = $AE::FocusedElement
       $res.elem = NxElem $f
-      $res.window = NxWin (NxTopOf $f)
+      $top = NxTopOf $f
+      $res.window = NxWin $top
+      try { $p = $TW.GetParent($f); if ($null -ne $p) { $res.parentType = $p.Current.ControlType.ProgrammaticName.Replace('ControlType.', '') } } catch { }
+      try { $res.dialog = NxDlg $top } catch { }
     } catch { }
   }
   'apps' {
