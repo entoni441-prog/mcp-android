@@ -233,9 +233,27 @@ switch ($a.mode) {
         $tab = NxFindTab $w ([string]$a.rid)
         if ($null -ne $tab) {
           $res.found = $true
-          try { $tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select(); Start-Sleep -Milliseconds 200 } catch { }
-          $btn = $null; $k = $TW.GetFirstChild($tab); $m = 0
-          while ($null -ne $k -and $m -lt 30) { $m++; if ($k.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button) { $btn = $k; break }; $k = $TW.GetNextSibling($k) }
+          try { $tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() } catch { }
+          # 0.5.1 live fix: Win11 Notepad (WinUI TabView) shows the close button only on the selected/hovered tab and it
+          # can sit deeper than a direct child. Search all descendants (raw view) a few times after selecting.
+          $RW = [System.Windows.Automation.TreeWalker]::RawViewWalker
+          $btn = $null; $diag = New-Object System.Collections.ArrayList
+          for ($try = 0; $try -lt 6 -and $null -eq $btn; $try++) {
+            Start-Sleep -Milliseconds 250
+            $cands = New-Object System.Collections.ArrayList
+            $stack = New-Object System.Collections.Stack; $stack.Push(@($tab, 0)); $seen = 0
+            while ($stack.Count -gt 0 -and $seen -lt 200) {
+              $item = $stack.Pop(); $e = $item[0]; $d = $item[1]; $seen++
+              if ($d -gt 0 -and $e.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button) { [void]$cands.Add($e) }
+              if ($d -ge 5) { continue }
+              $k = $RW.GetFirstChild($e); while ($null -ne $k) { $stack.Push(@($k, ($d + 1))); $k = $RW.GetNextSibling($k) }
+            }
+            foreach ($c in $cands) { if ($c.Current.AutomationId -imatch 'close' -or $c.Current.Name -imatch '(close|закрыть|chiudi|schlie)') { $btn = $c; break } }
+            if ($null -eq $btn -and $cands.Count -eq 1) { $btn = $cands[0] }
+            if ($try -eq 0) { foreach ($c in $cands) { [void]$diag.Add(@{ name = (NxStr $c.Current.Name 40); id = (NxStr $c.Current.AutomationId 40) }) } }
+          }
+          $res.tabButtons = @($diag)
+          try { $res.tabSelected = [bool]$tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected } catch { }
           if ($null -ne $btn) {
             try { $btn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); $res.invoked = $true; $res.method = 'tab_close_button' } catch { $res.method = 'tab_close_button_not_invokable' }
           } else { $res.method = 'tab_close_button_missing' }

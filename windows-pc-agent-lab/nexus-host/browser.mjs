@@ -45,9 +45,9 @@ export function findEdge(caps, env = process.env, exists = fs.existsSync) {
 class Cdp {
   static async connect(url) {
     if (typeof WebSocket !== 'function') throw Error('websocket_unavailable_node22_required');
-    const c = new Cdp(); c.ws = new WebSocket(url); c.seq = 0; c.pending = new Map();
+    const c = new Cdp(); c.ws = new WebSocket(url); c.seq = 0; c.pending = new Map(); c.listeners = new Map();
     await new Promise((res, rej) => { c.ws.onopen = res; c.ws.onerror = () => rej(Error('cdp_connect_failed')); });
-    c.ws.onmessage = ev => { const m = JSON.parse(ev.data); const p = m.id && c.pending.get(m.id); if (p) { c.pending.delete(m.id); m.error ? p.rej(Error('cdp_error')) : p.res(m.result); } };
+    c.ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.method) { for (const f of c.listeners.get(m.method) || []) { try { f(m.params || {}); } catch { /* listener */ } } return; } const p = m.id && c.pending.get(m.id); if (p) { c.pending.delete(m.id); m.error ? p.rej(Error('cdp_error')) : p.res(m.result); } };
     c.ws.onclose = () => { for (const p of c.pending.values()) p.rej(Error('browser_closed')); c.pending.clear(); c.closed = true; };
     return c;
   }
@@ -60,6 +60,7 @@ class Cdp {
       this.ws.send(JSON.stringify({id, method, params}));
     });
   }
+  on(method, f) { if (!this.listeners.has(method)) this.listeners.set(method, []); this.listeners.get(method).push(f); }
   close() { try { this.ws.close(); } catch { /* closed */ } }
 }
 
@@ -185,6 +186,31 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
   const findPids = listPids || (() => profilePids(profile, {platform}));
   const killFn = kill || ((pids, o) => killPids(pids, {platform, ...o}));
   let proc = null, page = null, browserWs = null, proxy = null, port = null, currentTarget = null;
+  // 0.5.1: JavaScript dialogs block the page (every CDP call on it hangs → cdp_timeout). alert/beforeunload on the NEXUS
+  // browser are accepted automatically and reported; confirm/prompt wait for a decision (action 'dialog').
+  let pendingDialog = null, dialogWaiters = [], seenDialogs = [];
+  const clip = (x, n) => String(x ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+  function onDialog(cdp, d) {
+    const info = {type: d.type, message: clip(d.message, 300)};
+    if (d.type === 'alert' || d.type === 'beforeunload') {
+      seenDialogs.push({...info, handled: 'accepted_automatically'});
+      cdp.send('Page.handleJavaScriptDialog', {accept: true}).catch(() => {});
+      return;
+    }
+    pendingDialog = {...info, ...(d.type === 'prompt' ? {defaultPrompt: clip(d.defaultPrompt, 200)} : {}), cdp};
+    for (const w of dialogWaiters.splice(0)) w();
+  }
+  const dialogOpened = () => new Promise(r => { if (pendingDialog) r(); else dialogWaiters.push(r); });
+  const dialogStatus = () => ({status: 'dialog_open', dialog: {type: pendingDialog.type, message: pendingDialog.message, ...(pendingDialog.defaultPrompt !== undefined ? {defaultPrompt: pendingDialog.defaultPrompt} : {})},
+    instruction: 'The page shows a dialog and is blocked until it is answered. Call browser_action {action:"dialog", value:"accept"|"dismiss"} (text = answer for a prompt). Accepting a dialog that confirms a purchase/payment/sending needs the owner (consent_required).'});
+  /** Run a page command; if a confirm/prompt dialog opens meanwhile, stop waiting (the command resumes after the answer). */
+  async function untilDialog(promise) {
+    const DIALOG = Symbol('dialog');
+    promise.catch(() => {});
+    const r = await Promise.race([promise, dialogOpened().then(() => DIALOG)]);
+    if (r === DIALOG) throw Object.assign(Error('dialog_open'), {dialog: true});
+    return r;
+  }
   let sweptOnce = false;
 
   async function ensure() {
@@ -219,6 +245,8 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
   }
   async function attach(target) {
     const next = await Cdp.connect(target.webSocketDebuggerUrl);
+    next.on('Page.javascriptDialogOpening', d => onDialog(next, d));
+    next.on('Page.javascriptDialogClosed', () => { if (pendingDialog?.cdp === next) pendingDialog = null; });
     await next.send('Page.enable'); await next.send('Runtime.enable');
     if (page && page !== next) page.close();
     page = next; currentTarget = target.id;
@@ -226,12 +254,13 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
   }
   const shortId = id => String(id).slice(0, 8).toLowerCase();
   const evaluate = async (expr) => {
-    const r = await (await ensure()).send('Runtime.evaluate', {expression: expr, returnByValue: true, awaitPromise: true});
+    if (pendingDialog) throw Object.assign(Error('dialog_open'), {dialog: true});
+    const r = await untilDialog((await ensure()).send('Runtime.evaluate', {expression: expr, returnByValue: true, awaitPromise: true}));
     if (r.exceptionDetails) throw Error('page_script_failed');
     return r.result?.value;
   };
   async function waitLoad() {
-    for (let i = 0; i < 60; i++) { try { if (await evaluate('document.readyState') === 'complete') return; } catch { /* navigating */ } await sleep(250); }
+    for (let i = 0; i < 60 && !pendingDialog; i++) { try { if (await evaluate('document.readyState') === 'complete') return; } catch { /* navigating */ } await sleep(250); }
   }
   async function guardUrl() {
     const url = await evaluate('location.href');
@@ -258,16 +287,45 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
       if (!onlyKeys(args, ['screenshot'])) bad();
       if (args.screenshot !== undefined && typeof args.screenshot !== 'boolean') bad();
       if (!page) throw Error('browser_not_open');
+      if (pendingDialog) return dialogStatus();
       await guardUrl();
       const snap = await evaluate(SNAPSHOT_JS);
       if (!args.screenshot) return snap;
       const shot = await page.send('Page.captureScreenshot', {format: 'jpeg', quality: 60});
       return {content: [{type: 'image', data: shot.data, mimeType: 'image/jpeg'}, {type: 'text', text: JSON.stringify(snap)}], structured: snap};
     },
-    async browser_action(args, {consented = false} = {}) {
+    async browser_action(args, opts = {}) {
       requireCap(caps, 'browser');
       if (!onlyKeys(args, ['action', 'ref', 'text', 'key', 'url', 'clear', 'amount', 'value', 'timeoutMs'])) bad();
       if (!page) throw Error('browser_not_open');
+      seenDialogs = [];
+      try {
+        const r = await this._action(args, opts);
+        return seenDialogs.length && r && typeof r === 'object' && !r.status ? {...r, dialogs: seenDialogs} : r;
+      } catch (e) {
+        if (e?.dialog && pendingDialog) return {...dialogStatus(), ...(seenDialogs.length ? {dialogs: seenDialogs} : {})};
+        throw e;
+      }
+    },
+    async _action(args, {consented = false} = {}) {
+      if (args.action === 'dialog') {
+        if (!pendingDialog) throw Error('no_dialog_open');
+        if (!['accept', 'dismiss'].includes(args.value) || (args.text !== undefined && (typeof args.text !== 'string' || args.text.length > 500))) bad();
+        const accept = args.value === 'accept';
+        if (accept && !consented && consent) {
+          const risk = classifyBrowserRisk({label: pendingDialog.message});
+          if (risk) return consent.requestGrant({what: risk.what, replay: {tool: 'browser_action', args},
+            target: `браузер NEXUS: подтвердить диалог «${pendingDialog.message.slice(0, 120)}» (${risk.what === 'browser_financial' ? 'может создать платное обязательство' : 'отправка/публикация/удаление от вашего имени'})`,
+            apply: () => this.browser_action(args, {consented: true})});
+        }
+        const d = pendingDialog; pendingDialog = null;
+        await d.cdp.send('Page.handleJavaScriptDialog', {accept, ...(accept && d.type === 'prompt' && args.text !== undefined ? {promptText: args.text} : {})});
+        await sleep(300); await waitLoad();
+        if (pendingDialog) throw Object.assign(Error('dialog_open'), {dialog: true});
+        const url = await guardUrl();
+        return {done: true, action: 'dialog', answered: args.value, dialog: {type: d.type, message: d.message}, url, title: await evaluate('document.title')};
+      }
+      if (pendingDialog) throw Object.assign(Error('dialog_open'), {dialog: true});
       await guardUrl();
       // 0.5.1 D2/D3: the step that creates a paid obligation, or sends/publishes/deletes on the owner's behalf, needs consent.
       if (!consented && consent && ['click', 'press'].includes(args.action)) {
@@ -305,7 +363,7 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
         case 'click': {
           const r = await evaluate(`(() => { const e = ${refExpr(args.ref)}; if (!e) return null; e.scrollIntoView({block: 'center'}); const b = e.getBoundingClientRect(); return {x: b.x + b.width / 2, y: b.y + b.height / 2}; })()`);
           if (!r) throw Error('ref_not_found');
-          for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', {type, x: r.x, y: r.y, button: 'left', clickCount: 1});
+          for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await untilDialog(page.send('Input.dispatchMouseEvent', {type, x: r.x, y: r.y, button: 'left', clickCount: 1}, 30_000));
           await sleep(300); await waitLoad();
           break;
         }
@@ -321,7 +379,7 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
         case 'press': {
           const code = KEYS[args.key]; if (!code) bad();
           const key = args.key === 'Space' ? ' ' : args.key;
-          for (const type of ['keyDown', 'keyUp']) await page.send('Input.dispatchKeyEvent', {type, key, code: args.key, windowsVirtualKeyCode: code, ...(args.key === 'Enter' && type === 'keyDown' ? {text: '\r'} : {})});
+          for (const type of ['keyDown', 'keyUp']) await untilDialog(page.send('Input.dispatchKeyEvent', {type, key, code: args.key, windowsVirtualKeyCode: code, ...(args.key === 'Enter' && type === 'keyDown' ? {text: '\r'} : {})}));
           await sleep(300); await waitLoad();
           break;
         }

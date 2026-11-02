@@ -196,6 +196,11 @@ export function createGui({caps, home, workspace, platform = process.platform, r
   async function closeTarget({process, hwnd, pid = null, rid = null, onPrompt}) {
     const r = await uia({mode: 'close', hwnd: Number(hwnd), ...(rid ? {rid} : {})});
     if (!r.found) return {closed: true, method: 'already_gone'};
+    if (!r.invoked && rid && /^tab_close_button_(missing|not_invokable)$/.test(r.method || '')) {
+      const k = await closeTabByKey({process, hwnd, pid, rid});
+      if (!k.ok) return {closed: false, method: r.method, fallback: k.why};
+      r.invoked = true; r.method = 'ctrl_w_verified';
+    }
     if (!r.invoked) return {closed: false, method: r.method || 'not_invokable'};
     let prompt = null;
     for (let i = 0; i < 4; i++) {
@@ -213,6 +218,27 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       await sleep(600);
     }
     return {closed: await gone(process, hwnd, rid), method: r.method, prompt: prompt ? 'shown' : null, answered, ...(r.pressed ? {pressedBy: r.pressed} : {})};
+  }
+  /**
+   * 0.5.1 live fix (Win11 Notepad: tab_close_button_missing). Ctrl+W only after UIA proves, right before the key, that
+   * the target window is in the foreground AND the selected tab in it is exactly our tab (runtime id). Otherwise refuse:
+   * a keystroke must never land in another window or on the owner's tab.
+   */
+  async function closeTabByKey({process, hwnd, pid, rid}) {
+    if (caps.gui_input !== true) return {ok: false, why: 'gui_input_off'};
+    try { await uia({mode: 'activate', hwnd: Number(hwnd), pid}); } catch { /* verified below */ }
+    for (let i = 0; i < 3; i++) {
+      const f = (await uia({mode: 'focused'})).focused;
+      const w = (await apps(process)).find(x => String(x.hwnd) === String(hwnd));
+      if (!w) return {ok: false, why: 'window_gone'};
+      const sel = tabsOf(w).find(t => t.selected);
+      if (f?.ok && String(f.topHwnd) === String(hwnd) && sel?.rid === rid) {
+        await getRobot().cmd('key ctrl+w');
+        return {ok: true};
+      }
+      await sleep(300);
+    }
+    return {ok: false, why: 'focus_or_selection_not_verified'};
   }
   async function gone(process, hwnd, rid) {
     let wins; try { wins = await apps(process); } catch { return false; }

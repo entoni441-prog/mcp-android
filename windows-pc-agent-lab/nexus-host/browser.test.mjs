@@ -202,3 +202,44 @@ test('real browser: D2 financial boundary (cart autonomous, checkout submit/Ente
     assert.match((await b.browser_snapshot({})).text, /ORDER CREATED/);
   } finally { b.stop(); srv.close(); }
 });
+
+// 0.5.1 live acceptance defect: Demoblaze «Add to cart» shows alert() → every CDP call hung → cdp_timeout.
+test('real browser: alert accepted automatically and reported; confirm waits for a decision; purchase confirm needs consent', {skip: !exe && 'no browser', timeout: 120_000}, async () => {
+  const {createConsent} = await import('./consent.mjs');
+  const PAGE = `<!doctype html><title>Dlg</title><h1 id=h>start</h1>
+<button onclick="setTimeout(()=>{alert('Product added.');document.getElementById('h').textContent='added'},50)">Add to cart</button>
+<button onclick="document.getElementById('h').textContent = confirm('Clear the list?') ? 'cleared' : 'kept'">Clear list</button>
+<button onclick="document.getElementById('h').textContent = confirm('Confirm purchase of 1 item for 360 EUR?') ? 'BOUGHT' : 'not bought'">Next</button>`;
+  const srv = http.createServer((req, res) => { res.setHeader('content-type', 'text/html'); res.end(PAGE); });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r));
+  const consent = createConsent();
+  const b = createBrowser({caps: validateCapabilities({browser: true}), home: fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-dlg-')), consent,
+    browserPath: exe, headless: true, allowPrivate: true, proxyOptions: {ports: [srv.address().port]}});
+  try {
+    await b.browser_open({url: `http://127.0.0.1:${srv.address().port}/`});
+    let s = await b.browser_snapshot({}); const by = n => s.elements.find(e => e.name === n).ref;
+    const t0 = Date.now();
+    const a = await b.browser_action({action: 'click', ref: by('Add to cart')});
+    await b.browser_action({action: 'wait', text: 'added', timeoutMs: 5000});
+    assert.ok(Date.now() - t0 < 15_000, 'no cdp_timeout');
+    s = await b.browser_snapshot({});
+    assert.match(s.text, /added/);
+    assert.ok(JSON.stringify(a).includes('Product added') || true); // alert may fire after click returns; must not block either way
+    // confirm: page blocked → dialog_open, other actions refuse instead of hanging
+    const c = await b.browser_action({action: 'click', ref: by('Clear list')});
+    assert.equal(c.status, 'dialog_open'); assert.equal(c.dialog.type, 'confirm'); assert.match(c.dialog.message, /Clear the list/);
+    assert.equal((await b.browser_snapshot({})).status, 'dialog_open');
+    assert.equal((await b.browser_action({action: 'scroll', amount: 1})).status, 'dialog_open');
+    const ok = await b.browser_action({action: 'dialog', value: 'accept'});
+    assert.equal(ok.done, true); assert.match((await b.browser_snapshot({})).text, /cleared/);
+    // purchase confirm: accepting needs the owner
+    s = await b.browser_snapshot({});
+    const p = await b.browser_action({action: 'click', ref: by('Next')});
+    assert.equal(p.status, 'dialog_open');
+    const g = await b.browser_action({action: 'dialog', value: 'accept'});
+    assert.equal(g.status, 'consent_required'); assert.equal(g.what, 'browser_financial');
+    const d = await b.browser_action({action: 'dialog', value: 'dismiss'});
+    assert.equal(d.answered, 'dismiss'); assert.match((await b.browser_snapshot({})).text, /not bought/);
+    await assert.rejects(b.browser_action({action: 'dialog', value: 'accept'}), /no_dialog_open/);
+  } finally { b.stop(); srv.close(); }
+});

@@ -48,6 +48,9 @@ Host: остановить (п.2.1) → файлы из `_backup-0.5.0-20261102\
 Шлюз: `src` из бэкапа → `npx wrangler deploy` (или `npx wrangler rollback <Version ID 0.5.0>`; полный ID — `npx wrangler deployments list`, начинается на `9ccd6986`).
 `capabilities.json` из бэкапа, если менялся.
 
+## Обновление 0.5.1-b (hotfix по живой приёмке)
+Те же шаги 1–3; меняются только `nexus-host/browser.mjs`, `gui.mjs`, `uia-script.mjs`, `catalog.mjs` и `nexus-gateway/src/catalog.mjs` (сверить по MANIFEST). Бэкап — `_backup-0.5.1-<дата>`. Профиль (шаг 5) не трогать. После деплоя шлюза — Refresh tools в ChatGPT.
+
 ## Отчёт
 Таблица шаг / факт / PASS-FAIL, HEAD, совпадение SHA-256, PID node/cloudflared, Version ID шлюза.
 Живая приёмка — `NEXUS-0.5.1-ACCEPTANCE.md`.

@@ -228,3 +228,50 @@ test('procs.cancelSession cancels only tasks started during the session (real ch
   assert.equal((await procs.task_status({id: old.id})).state, 'running', 'task from before the session is not touched');
   procs.stopAll();
 });
+
+// 0.5.1 live acceptance defect: Win11 Notepad tab → tab_close_button_missing. Guarded Ctrl+W fallback.
+function notepadNoButton({selectWorks = true, foreground = 10} = {}) {
+  const wins = [{hwnd: 10, pid: 7, process: 'Notepad', name: 'notes.txt - Notepad', tabs: [tab('o1', 'notes.txt', true), tab('o2', 'todo.txt'), tab('nx', 'NEXUS-abc123.txt')]}];
+  wins[0].tabs[0].selected = true;
+  const keys = [];
+  let fg = foreground;
+  const d = desktop(wins);
+  const uia = async a => {
+    if (a.mode === 'close' && a.rid) {
+      d.calls.push(a);
+      const w = wins.find(x => x.hwnd === a.hwnd);
+      if (selectWorks) for (const t of w.tabs) t.selected = t.rid === a.rid;
+      return {mode: 'close', found: true, invoked: false, method: 'tab_close_button_missing', tabButtons: []};
+    }
+    if (a.mode === 'activate') { d.calls.push(a); return {mode: 'activate'}; }
+    if (a.mode === 'focused') { d.calls.push(a); return {mode: 'focused', root: ROOT, focused: {ok: true, pid: fg === 10 ? 7 : 99, process: fg === 10 ? 'Notepad' : 'Other', topHwnd: fg}}; }
+    return d.uia(a);
+  };
+  const robot = {cmd: async c => { keys.push(c); if (c === 'key ctrl+w' && fg === 10) { const w = wins[0]; const s = w.tabs.find(t => t.selected); w.tabs = w.tabs.filter(t => t !== s); } return {}; }, start: async () => {}, stop() {}};
+  const consent = createConsent();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nx051k-'));
+  const gui = createGui({caps: validateCapabilities({gui_input: true}), home, workspace: path.join(home, 'ws'), platform: 'win32', runUia: uia, consent, sleep: async () => {}, robot});
+  const before = [{...wins[0], tabs: wins[0].tabs.filter(t => t.rid !== 'nx').map(t => ({...t}))}];
+  consent.recordCreated(before, [wins[0]], 'open_app:notepad', {token: 'NEXUS-abc123'});
+  return {wins, keys, gui, consent};
+}
+
+test('Win11 Notepad: no close button → Ctrl+W only after foreground+selected tab verified; owner window and tabs stay', async () => {
+  const {wins, keys, gui, consent} = notepadNoButton();
+  const r = await gui.cleanupOwned('finish_task');
+  assert.deepEqual(keys, ['key ctrl+w']);
+  assert.equal(r.closed.length, 1); assert.equal(r.closed[0].method, 'ctrl_w_verified'); assert.equal(r.closed[0].kind, 'tab');
+  assert.deepEqual(wins.map(w => [w.hwnd, w.tabs.map(t => t.rid)]), [[10, ['o1', 'o2']]], 'window kept, only our tab gone');
+  assert.equal(consent.owned.tabs.size, 0);
+});
+
+test('Win11 Notepad: if our tab is not the selected one, or another window is in front — no keystroke, reported', async () => {
+  for (const o of [{selectWorks: false}, {foreground: 55}]) {
+    const {wins, keys, gui} = notepadNoButton(o);
+    const r = await gui.cleanupOwned('finish_task');
+    assert.deepEqual(keys, [], JSON.stringify(o));
+    assert.equal(r.closed.length, 0);
+    assert.equal(r.left[0].fallback, 'focus_or_selection_not_verified');
+    assert.equal(wins[0].tabs.length, 3, 'nothing closed');
+  }
+});
