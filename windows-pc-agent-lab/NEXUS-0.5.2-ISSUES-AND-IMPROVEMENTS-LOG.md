@@ -36,6 +36,10 @@
 | NX-052-25 | P1 power | BLOCKED / NO POWER TRANSITION ATTEMPTED | Sleep / remote wake / reboot end-to-end needs independently verified recovery and safe power controls |
 | NX-052-26 | P2 GUI focus | CONFIRMED / CAUSE UNKNOWN | msinfo32 UIA inaccessible while foreground reports csrss; close_window target_unknown |
 | NX-052-27 | P1 requirement | OWNER-APPROVED CHANGE REQUEST / NOT IMPLEMENTED | Полное управление питанием: shutdown, remote power-on, sleep, wake, restart, экран и восстановление Host |
+| NX-052-28 | P2 consent | CONFIRMED / POLICY OVERBROAD | Calculator C(clear) on synthetic 7+5 requests destructive_action approval |
+| NX-052-29 | P2 browser cleanup | CONFIRMED API ERROR / ROOT CAUSE UNKNOWN | browser_tabs last tab closes to tabs=[], then list returns internal_error |
+| NX-052-30 | P1 owner requirement | CONFIRMED CURRENT RESTRICTION | Strict one-window-at-a-time blocks working across two task-owned apps |
+| NX-052-31 | P2 connectivity | CONFIRMED TEMPORARY OFFLINE | Live View restart refused pc_offline / edge_530; gateway reachable but tunnel unavailable |
 
 ## Наблюдения и требования для будущего задания
 
@@ -216,7 +220,33 @@
 - **План реальной приёмки PASS:** (1) проверить конфигурацию автозапуска Host и Tunnel; (2) подтверждённо работающий независимый `wake/power_on` и возврат Host в онлайн из тестового состояния; (3) пробный `restart` и проверка возобновления; (4) `sleep → внешний wake → online`; (5) `shutdown → внешний power_on → online`, при этом отдельно проверить USB Wi-Fi против Ethernet и S5; (6) проверка STOP, журналов и точного соответствия состояния Windows. Отмечать отдельные PASS/FAIL на каждом переходе.
 - **Статус фиксации:** добавлено в единый накопительный журнал для будущего пакетного ТЗ. Рабочий Host/Worker и Windows не менялись; питания ПК не касались.
 
-## Предложения для следующих тестов — НЕ ПРОВЕРЕНО
+## TEST-RUN-2026-11-03 — последовательная приёмка по одобрению владельца
+
+**Условия:** в ночь 02→03.11.2026 (Europe/Rome) владелец дал «Все одобрено, выполняй». `watch_nexus` был вызван до любых GUI-действий, подтвердил `streaming:true`. Проверки проводились на синтетических данных, без публикации/отправки веб-форм, изменения Windows security/Host/gateway/main/production и без обращения к личным документам. Глобальное «все одобрено» не заменяет точное разрешение для каждой `consent_required` операции.
+
+| Сценарий из плана | Фактический результат | Фактическое свидетельство |
+|---|---|---|
+| TEST-NEXT-01 — работа двух приложений/clipboard | **BLOCKED / PARTIAL** | Calculator открыт и проверен, но `open_app explorer` при открытом калькуляторе → `nexus_window_not_closed`; по дизайну строго одно окно. `keyboard_action text` в Explorer и File Picker возвращал `clipboardRestored:true`. Реальная копия между одновременно открытыми приложениями не проверена; содержимое пользовательского clipboard не читалось |
+| TEST-NEXT-02 — документы | **PARTIAL PASS** | Только изолированный TXT внутри `NEXUS-test/acceptance-multitool`: создать, читать, копировать, переименовать, изменить через `expectedSha256`, откатить; исходный SHA-256 `dc98da99f077fca24bce6bf9e1b985b4179c3d593db55b5c43aafefd956dffb0` восстановился точно. DOCX/XLSX/PDF и файлы вне workspace не проверялись |
+| TEST-NEXT-03 — диалог Windows | **PASS for properties/file-picker** | В Explorer перешёл в `NEXUS-test/zip-test-20261102`, открыл Properties для фиктивного `alpha.txt` через `Alt+Enter`, увидел размер 50 байт, закрыл Esc. В браузере Selenium `input type=file` открыл native Open, ввёл путь `%USERPROFILE%\\NEXUS-workspace\\NEXUS-test\\zip-test-20261102\\alpha.txt`, выбрал, имя `alpha.txt` видно на форме, Submit не нажат; окно выбора закрыто автоматически |
+| TEST-NEXT-04 — браузер/формы/вкладки | **PASS for tested operations** | `browser_tabs` new/switch/close на W3Schools + example.com; `browser_action click` на example.com → подтверждённый URL iana.org и back. На `https://www.selenium.dev/selenium/web/web-form.html` ввод фиктивного текста в Text input и Textarea, select Two, checkbox on; затем пустые поля, возврат select, checkbox off, подтверждено screenshot и snapshot; никакой Submit. Файл лишь локально выбран; загрузка на сервер не выполнялась. После закрытия последней вкладки возник `internal_error` (NX-052-29). Предыдущая проблема скачивания осталась NX-052-20 |
+| TEST-NEXT-05 — STOP/owner pause | **NOT TESTED physically** | Виджет STOP доступен, но физического нажатия владельца в этом прогоне не было; не имитировать `live_control stop` и не объявлять PASS. Исторический owner mouse pause описан в NX-052-04 |
+| TEST-NEXT-06 — crash/resume | **BLOCKED** | Нет возможности безопасно запускать/срывать процессы: `run_task:false`, `process_control:false`. Реальный crash тест не выполнялся |
+| TEST-NEXT-07 — координаты/перемещение | **PASS for one Explorer window** | `mouse_action drag (922,170)→(769,112)` переместил Explorer из rect `x508,y154,w653,h455` в `x355,y96,w653,h455`; после перемещения `Ctrl+L`, вставка пути и свойства `alpha.txt` сработали по назначению; `close_window` → `closed:true,by:nexus_owned`, после окно отсутствовало |
+| TEST-NEXT-08 — сеть/USB/периферия | **BLOCKED for deep diagnostics** | Windows GUI/терминал ограничены; `run_task:false`; без нового доступа не узнаём текущие LAN NIC/ADB/devices. Ранее доступно только `list_processes adb` |
+| TEST-NEXT-09 — задачи/автозапуск | **BLOCKED** | Нельзя проверять/регистрировать Task Scheduler через командный канал; предыдущий инсталляционный отчёт содержит историческое отсутствие постоянной Scheduled Task, но текущая конфигурация не подтверждена |
+| TEST-NEXT-10 — автономный отчёт/восстановление | **PARTIAL / BLOCKED** | `read_audit_log`, `task_status`, журнал GitHub доступны; планировщик/фоновые задания нет. В конце `watch_nexus` после idle lease → `pc_offline edge_530_registered_392s_ago`; `connection_status` → tunnel probe HTTP 530; состояние связи требует дополнительной проверки (NX-052-31), не повторять действия до восстановления |
+
+**Прочие факты:**
+- Calculator `mouse_action` последовательность 7,+,5,= успешно; `inspect_ui` показал `CalculatorExpression:"7 + 5="`, `CalculatorResults:"Отображать как 12"`. Попытка `click` «Очистить» → `consent_required` `kind:"grant"`, `what:"destructive_action"`, consent `dc007807debb`, **не подтверждено**, результат 12 остался; `close_window CalculatorApp pid 3324` → `closed:true`.
+- Стандартный Explorer второй раз открылся только после закрытия Calculator. `close_window explorer pid 7276` → `closed:true`; `window_info` после показывал только Shell_TrayWnd и Progman.
+- Browser last tab close вернул `tabs:[],open:true`; следующий `browser_tabs list` → `internal_error`, trace `d2158acd88998de4`. Контрольный screenshot показал рабочий стол, `list_windows` не показывал Edge; браузерные окна фактически отсутствовали.
+- Новый `NEXUS-test/acceptance-multitool` после проверки целиком отправлен `file_action delete` в `.nexus-trash/2026-11-02T23-07-26-616Z-acceptance-multitool` (`recoverable:true`). `list_dir NEXUS-test` подтвердил отсутствие рабочей папки; мусор остаётся восстановимым. Старые тестовые объекты не трогались.
+- `task_status` после lease expiry показал исходный `lastInterrupted t-cf3860cf98f9`, `errors` включали `nexus_window_not_closed` и `browser_tabs internal_error`; нет данных о сбоях Windows.
+- Восстановление Live View по явному плану попытались: `watch_nexus` → **pc_offline**, следующая диагностика `connection_status`: gateway ok, `tunnelProbe.status:530`, `verdict:"tunnel_down_or_reconnecting"`, `registration.ageSec:398`. Эту потерю связи нельзя называть спящим/выключенным ПК; никаких повторных GUI-операций не делали. Финальный `finish_task` во время offline не подтверждён; предыдущая сессия закончилась по lease expiry (`session.active=false` в последнем `task_status`).
+**Требование:** не создавать повторно провалившиеся действия после reconnect без проверки их побочных эффектов; восстановить показ Live View при доступности соединения, не после STOP. Все подтверждённые результаты должны остаться в журнале.
+
+## Предложения для следующих тестов — результаты частичной приёмки
 
 **Дата:** 02.11.2026. Это предложения, не новые подтверждённые дефекты и не разрешение изменять Host, шлюз, Windows, main или production. В основной реестр NX-052 добавлять только после фактического PASS/FAIL либо ясного owner requirement. Использовать отдельные фиктивные файлы и тестовые окна. Перед каждым GUI-тестом `watch_nexus`; на timeout трансляции повторный `watch_nexus` и продолжение с чекпоинта, но **не после STOP**. Каждое временное окно закрывать сразу после завершения теста и проверять отсутствие.
 
@@ -244,6 +274,22 @@
 8. `power.lifecycle`: см. NX-052-25/27 — сон, независимое пробуждение, shutdown/power-on, restart, Host autostart с подтверждённым возвратом.
 
 **Приоритет выполнения:** сначала доступные и безопасные TEST-NEXT-01/03/07 и незаконченный NX-052-10 (STOP), затем расширение прав в экспериментальной версии, затем тесты файлов/загрузок/питания. Любой UAC/защищённый экран — STOP и передача владельцу, никакого слепого ввода. Не снимать защиту от случайного разрушения данных и незапрошенного доступа к секретам.
+
+### NX-052-28 — False positive destructive_action on synthetic Calculator clear (P2, 03.11.2026)
+- **Fact:** NEXUS created Calculator, entered 7+5=, UIA result «12». Click on C «Очистить» returned `consent_required`, `kind:grant`, `what:destructive_action`, `consentId:dc007807debb`, target «удаление/стирание данных в приложении — CalculatorApp „Калькулятор“: click по „Очистить“». No click was performed; consent not approved. Closing only own Calculator window → `closed:true,by:nexus_owned`.
+- **Issue:** overly general text/action-based deletion guard treats clearing a transient calculator display like destruction of files or private content. Do not globally disable destructive-action protection; scope by target semantics and ownership. **PASS:** clear C on synthetic owned calculator requires no grant; real deletion, unsaved owner text and destructive actions still require appropriate controls.
+
+### NX-052-29 — Browser tabs last-tab closure (P2, 03.11.2026)
+- **Fact:** `browser_tabs close` on final tab id `988aeb63` → `tabs:[],open:true`; next `browser_tabs list` failed `internal_error` trace `d2158acd88998de4`. Immediately after, screenshot showed no browser and `list_windows` absent msedge, so browser was likely gone and state returned inconsistent.
+- **PASS:** closing final tab returns `open:false` or unambiguous browser closed state; `list` returns `tabs:[],open:false` cleanly and `finish_task` is idempotent.
+
+### NX-052-30 — Concurrent task-owned windows (P1 requirement, 03.11.2026)
+- **Fact:** while calculator opened by NEXUS still active, `open_app explorer` refused with `nexus_window_not_closed: your CalculatorApp pid 3324 window is finished and checked but still open - close it ... one window at a time` (trace `9eeda604dd04bd11`). After closing Calculator, Explorer opened normally. This prevents owner-requested ordinary workflow across two apps, clipboard and cross-app tasks.
+- **Design change:** allow task-bound multiple windows with verified ownership, visible ordered focus, safe clipboard save/restore and per-window cleanup; retain strict no-closing-other-user-windows rules. **PASS:** 2+ synthetic windows can coexist under one task, transfer data, close just created windows, audit every action without cross-window accidental input.
+
+### NX-052-31 — Loss of NEXUS tunnel during long acceptance (P2, 03.11.2026)
+- **Fact:** following lease-expired work session, `watch_nexus` reactivation returned `pc_offline: ... reason:edge_530_registered_392s_ago`, trace `07907cfc1205115e`. One diagnostic `connection_status`: `gateway:"ok"`, `tunnelProbe.status:530`, `verdict:"tunnel_down_or_reconnecting"`, `registration.ageSec:398`. Do not infer PC power state. No retrying write actions.
+- **PASS:** distinguish idle view timeout, session end, tunnel loss, host offline and machine sleep; automatic verified reconnect; resumable Live View from prior checkpoint with STOP semantics; diagnose and report separately. Preserve existing cloudflared reconnect behavior.
 
 ## Подтверждённые рабочие функции — не переделывать без причины
 - **ZIP compress/extract and recoverable removal — PASS (02.11.2026):** created isolated folder `NEXUS-test/zip-test-20261102` containing two synthetic files `alpha.txt` and `beta.txt` using `make_dir` and `write_text`. In NEXUS-opened Explorer selected both, «Сжать до → ZIP-файл» created `alpha.zip` (the archive contained both). «Извлечь все» created `alpha/` with both files. Compared source/extracted SHA-256: alpha `2ab5f7d376c73ff1c33fc1f9e49375c3bcdeecf734bc5bcc15a361475dc3ff03`, beta `c60e3ec09dcc108a14ff1f590ad37810b3d690f6f911de25b3ba07c176a76c29` — each matched exactly. `file_action({action:"delete",path:"NEXUS-test/zip-test-20261102/alpha.zip"})` moved only test ZIP to `.nexus-trash/2026-11-02T22-00-20-145Z-alpha.zip`, `recoverable:true`; final listing confirmed it absent from source dir and present in trash. Synthetic original/extracted text files intentionally retained for verification. No user files or settings changed.
