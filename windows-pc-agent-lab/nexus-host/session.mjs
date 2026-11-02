@@ -43,6 +43,7 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
   const hooks = [];        // {fn: async (reason, session) => partial report, name}
   let stoppedUntil = 0;     // owner pressed STOP on the Live View page: no new work until then (or until resumed)
   const activity = [];     // last tool calls: {t, tool, ok, code?, target?} — names and codes only, never arguments
+  let ownerPause = null;    // revision 2: the owner took over the PC → {since, why}; ends ONLY by explicit resume
   const holds = new Map(); // 0.5.2 N-03: key → {until, pauseLive} — an owner action is pending; the idle lease must not end the task
 
   const timer = setIntervalFn(() => { tick().catch(() => {}); }, tickMs);
@@ -101,6 +102,9 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
       if (starts && stoppedUntil > now()) {
         throw Error(`stopped_by_owner: the owner pressed STOP on Live View ${Math.round((now() - (stoppedUntil - ownerStopMs)) / 1000)} s ago - do not continue the task; wait for the owner to say in chat that you may continue`);
       }
+      if (starts && ownerPause) {
+        throw Error(`owner_paused: the owner took over the PC ${Math.round((now() - ownerPause.since) / 1000)} s ago (${ownerPause.why}) - NEXUS does nothing on the desktop until the owner explicitly says to continue; ask the owner, then call live_control resume`);
+      }
       if (!renews) return fn();
       const cur = starts ? begin(tool) : s;
       cur.inflight++; cur.calls++; cur.lastWork = now();
@@ -117,6 +121,16 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
       return end('owner_stop');
     },
     resumeAfterStop() { const was = stoppedUntil > now(); stoppedUntil = 0; if (was) audit({event: 'owner_stop_cleared'}); return was; },
+    /** Revision 2: the owner moved the mouse / switched the window. Sticky: no timer, no idle heuristic ends it. */
+    pauseForOwner(why = 'owner') {
+      if (ownerPause) return false;
+      ownerPause = {since: now(), why: SAFE(why) || 'owner'};
+      audit({event: 'owner_pause', why: ownerPause.why});
+      return true;
+    },
+    /** Explicit continuation (live_control resume after the owner's go-ahead). */
+    resumeOwner() { const was = !!ownerPause; if (was) audit({event: 'owner_pause_cleared', sec: Math.round((now() - ownerPause.since) / 1000)}); ownerPause = null; return was; },
+    ownerPaused: () => !!ownerPause,
     stoppedByOwner: () => stoppedUntil > now(),
     /** One journal line per tool call (owner can see what runs, its result and where it failed). */
     note({tool, ok, code = null, target = null}) {
@@ -129,7 +143,7 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
     /** ASCII caption burned into Live View frames: what NEXUS did last, on what, result. */
     caption() {
       const e = activity[activity.length - 1];
-      const head = stoppedUntil > now() ? 'NEXUS - STOPPED BY OWNER' : s ? 'NEXUS working' : 'NEXUS idle';
+      const head = stoppedUntil > now() ? 'NEXUS - STOPPED BY OWNER' : ownerPause ? 'NEXUS - PAUSED, OWNER AT PC' : s ? 'NEXUS working' : 'NEXUS idle';
       if (!e) return head;
       const ago = Math.max(0, Math.round((now() - e.t) / 1000));
       return `${head} | ${e.tool}${e.target ? ' -> ' + e.target : ''} | ${e.ok ? 'ok' : 'ERROR ' + (e.code || '')} | ${ago}s ago`;
@@ -148,6 +162,7 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
       ...(s ? {session: s.id, kind: s.kind, sinceSec: Math.round((now() - s.startedAt) / 1000),
         idleSec: Math.round((now() - s.lastWork) / 1000), inflight: s.inflight, expiresInSec: Math.max(0, Math.round((idleMs - (now() - s.lastWork)) / 1000))} : {}),
       leaseIdleSec: idleMs / 1000, lastEnded: last,
+      ...(ownerPause ? {ownerPaused: {why: ownerPause.why, sinceSec: Math.round((now() - ownerPause.since) / 1000), resume: 'live_control resume, only after the owner said to continue'}} : {}),
       ...(stoppedUntil > now() ? {stoppedByOwner: true, stopBlocksSec: Math.round((stoppedUntil - now()) / 1000)} : {}),
       activity: activity.slice(-5).map(e => ({...e, t: new Date(e.t).toISOString()})),
     }),

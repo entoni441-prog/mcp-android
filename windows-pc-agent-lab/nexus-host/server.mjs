@@ -139,22 +139,24 @@ export function createRuntime(cfg, deps = {}) {
   const handoffs = createHandoffs({tasks, session, audit: e => audit(cfg, e), probe: {apps: n => gui.snapshotApp(n)}, ...(deps.handoffDeps || {})});
   const handoff = spec => handoffs.request(spec);
   const procs = createProcs({caps, cfg, consent, ...(deps.procsDeps || {})});
-  gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, handoff, ...(deps.guiDeps || {})});
+  gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, handoff, onOwnerActive: why => session.pauseForOwner(why), ...(deps.guiDeps || {})});
   const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
-  const live = createLive({caps, store, session, capture: (w, q) => gui.frameJpeg(w, q, session.caption()), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
+  const live = createLive({caps, store, session, onResume: () => gui.ownerResumed?.(), capture: (w, q) => gui.frameJpeg(w, q, session.caption()), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
   // End of every session: stream off at the source first, then clean up what NEXUS itself opened.
   session.onEnd(async () => { const m = live.sessionEnded() || {}; return {liveActive: false, liveLastFrameAt: m.lastFrameAt ?? null, liveFramesDropped: m.droppedAfterStop ?? 0}; }, 'live');
   session.onEnd(async (reason, s) => (typeof procs.cancelSession === 'function' ? {tasks: await procs.cancelSession(reason, s)} : {}), 'tasks');
-  session.onEnd(async reason => (typeof gui.cleanupOwned === 'function' ? {windows: await gui.cleanupOwned(reason)} : {}), 'windows');
+  session.onEnd(async reason => (typeof gui.cleanupOwned === 'function' ? {windows: await gui.cleanupOwned(reason, {ownerPaused: session.ownerPaused?.() === true})} : {}), 'windows');
   session.onEnd(async reason => (typeof browser.cleanupSession === 'function' ? {browser: await browser.cleanupSession(reason)} : {}), 'browser');
   session.onEnd(async reason => { handoffs.abandon(); const id = tasks.close(reason); return id ? {task: id, taskStatus: reason === 'finish_task' ? 'finished' : 'interrupted'} : {}; }, 'task');
   const apps = createApps({caps, store, consent, gui, handoff, workspace: cfg.workspace, execDeps,
     ...(execDeps.platform ? {platform: execDeps.platform} : {}), ...(execDeps.systemRoot ? {systemRoot: execDeps.systemRoot} : {}),
     ...(execDeps.launcher ? {launcher: execDeps.launcher} : {}), ...(deps.appsDeps || {})});
   const ws = {workspace: cfg.workspace};
+  // Revision 2 (open → act → verify → close): a successful read of the window counts as checking NEXUS's last input there.
+  const observe = async (a, p) => { const out = await p; gui.lifecycle?.observed?.({pid: Number.isInteger(a?.pid) ? a.pid : null}); return out; };
   const handlers = {
-    image_selftest: a => gui.image_selftest(a), capture_screen: a => gui.capture_screen(a), focus_window: a => gui.focus_window(a),
-    window_info: a => gui.window_info(a), close_window: a => gui.close_window(a), inspect_ui: a => gui.inspect_ui(a), mouse_action: a => gui.mouse_action(a), keyboard_action: a => gui.keyboard_action(a),
+    image_selftest: a => gui.image_selftest(a), capture_screen: a => observe(a, gui.capture_screen(a)), focus_window: a => gui.focus_window(a),
+    window_info: a => observe(a, gui.window_info(a)), close_window: a => gui.close_window(a), inspect_ui: a => observe(a, gui.inspect_ui(a)), mouse_action: a => gui.mouse_action(a), keyboard_action: a => gui.keyboard_action(a),
     list_processes: a => procs.list_processes(a), process_action: a => procs.process_action(a), run_task: a => procs.run_task(a),
     // 0.5.2 N-03: handoff ids (h-…) go through the existing task tools — the gateway catalog is unchanged until stage 6.
     task_status: async a => {

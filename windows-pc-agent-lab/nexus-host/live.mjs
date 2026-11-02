@@ -18,7 +18,7 @@ const int = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
 export const MIN_INTERVAL_MS = 200;
 export const IDLE_MS = 6000;
 
-export function createLive({caps, store, capture, session = null, audit = () => {}, now = () => Date.now(), indicator = defaultIndicator, setIntervalFn = setInterval}) {
+export function createLive({caps, store, capture, session = null, onResume = () => {}, audit = () => {}, now = () => Date.now(), indicator = defaultIndicator, setIntervalFn = setInterval}) {
   let seq = 0, last = null, inflight = null, viewing = false, lastServed = 0, served = 0, since = 0;
   let lastFrameAt = 0, droppedAfterStop = 0; // 0.5.2 N-07: Stop timing marks
   const setViewing = (on, why) => {
@@ -78,7 +78,12 @@ export function createLive({caps, store, capture, session = null, audit = () => 
     },
     live_control(args = {}) {
       if (!onlyKeys(args, ['action']) || !['status', 'stop', 'resume'].includes(args.action)) bad();
-      if (args.action === 'resume') return {resumed: session?.resumeAfterStop?.() || false, state: state()};
+      if (args.action === 'resume') {
+        // Lifts the STOP block and the owner pause (revision 2). Allowed ONLY after the owner's explicit go-ahead in chat.
+        const stopCleared = session?.resumeAfterStop?.() || false, pauseCleared = session?.resumeOwner?.() || false;
+        if (pauseCleared) onResume();
+        return {resumed: stopCleared || pauseCleared, stopCleared, ownerPauseCleared: pauseCleared, state: state()};
+      }
       if (args.action === 'stop') {
         // Owner requirement 02.11: STOP on the phone stops the whole task (session end: NEXUS windows closed, tasks
         // cancelled) and blocks new work for a while — the agent must wait for the owner's go-ahead in chat.

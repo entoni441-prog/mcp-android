@@ -68,7 +68,7 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
     const o = consent.owned, out = [];
     for (const app of o.apps) {
       const ws = await gui.snapshotApp(app).catch(() => null);
-      if (!Array.isArray(ws)) continue;
+      if (!Array.isArray(ws)) { out.partial = true; continue; }
       for (const w of ws) {
         if (o.windows.has(String(w.hwnd))) out.push({app, hwnd: w.hwnd});
         else for (const t of w.tabs || []) if (o.tabs.has(t.rid)) out.push({app, hwnd: w.hwnd, tab: true});
@@ -80,8 +80,12 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
   async function openApp(args) {
       if (!onlyKeys(args, ['app']) || typeof args.app !== 'string' || !LAUNCH_NAME.test(args.app)) bad();
       if (platform !== 'win32') throw Error('windows_only');
-      { // open → act → check → close: at most MAX_OWN_WINDOWS of NEXUS's own windows/tabs at a time (2 = justified pair)
+      { // Revision 2 — sequential: open → act → verify → close. The window limit below is only a safety net.
         const open = await openOwned();
+        const lc = gui.lifecycle?.classify?.(open, {prune: !open.partial});
+        const say = l => l.map(w => `${w.app}${w.pid ? ' pid ' + w.pid : ''}`).join(', ');
+        if (lc?.unverified.length) throw Error(`nexus_window_unverified: you worked in your ${say(lc.unverified)} window and have not checked the result - check it (inspect_ui / window_info / capture_screen), close it (close_window), then open the next app`);
+        if (lc?.done.length) throw Error(`nexus_window_not_closed: your ${say(lc.done)} window is finished and checked but still open - close it (close_window) before opening the next app; one window at a time`);
         if (open.length >= MAX_OWN_WINDOWS) {
           throw Error(`nexus_window_limit: NEXUS already has ${open.length} of its own windows open (${[...new Set(open.map(w => w.app))].join(', ')}) - close the one you have finished with (close_window) before opening another; work one window at a time`);
         }

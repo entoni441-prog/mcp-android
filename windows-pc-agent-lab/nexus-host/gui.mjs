@@ -26,6 +26,7 @@ import {UIA_SCRIPT} from './uia-script.mjs';
 import {requireCap} from './capabilities.mjs';
 import {appGate, classifyIdeInput, classifyIdeClick, redactSecrets, handoffSpec, classifyDestructiveClick, classifyDestructiveKeys} from './policy.mjs';
 import {classifyKeys, classifyClick, createConsent} from './consent.mjs';
+import {createLifecycle} from './lifecycle.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROBOT_SRC = path.join(HERE, 'NexusRobot.java');
@@ -195,7 +196,8 @@ export function testPng(size = 64) {
 }
 
 // ───────────── tools ─────────────
-export function createGui({caps, home, workspace, platform = process.platform, runUia, robot, consent = createConsent(), handoff = null, sleep = ms => new Promise(r => setTimeout(r, ms)), now = () => Date.now()}) {
+export function createGui({caps, home, workspace, platform = process.platform, runUia, robot, consent = createConsent(), handoff = null, sleep = ms => new Promise(r => setTimeout(r, ms)), now = () => Date.now(), onOwnerActive = () => {}}) {
+  const lifecycle = createLifecycle({now});
   const tmpDir = path.join(home, 'tmp');
   const uia = runUia || (args => runUiaReal(args, {tmpDir}));
   let daemon = robot || null;
@@ -348,29 +350,29 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     return !w || (!!rid && !tabsOf(w).some(t => t.rid === rid));
   }
 
-  // ── Owner requirement 02.11 (VISIBILITY & WINDOW LIFECYCLE): do not fight the owner for the mouse/keyboard ─────────
+  // ── Owner requirement 02.11 (VISIBILITY & WINDOW LIFECYCLE), revision 2: do not fight the owner for the PC ────────
   // NEXUS remembers where IT left the mouse and which window IT worked in. Before new input:
-  //  - the mouse is elsewhere → the owner moved it → owner_active (input paused) until the mouse rests ≥ OWNER_QUIET_MS;
-  //  - typing: the foreground window changed to ANOTHER process not by NEXUS → owner_active (never type into the
-  //    owner's window); the agent may take the window back only explicitly (focus_window), which is also guarded.
+  //  - the mouse is elsewhere → the owner moved it → owner_active, and the session is PAUSED (onOwnerActive);
+  //  - typing: the foreground window changed to ANOTHER process not by NEXUS → owner_active, session PAUSED.
+  // The pause is sticky: a still mouse does NOT mean the owner has finished. Work resumes only after an explicit
+  // live_control resume, which the agent may call only when the owner said in chat to continue (session.mjs).
   // Limit: keyboard-only owner activity inside NEXUS's own window is not visible (no native input hook by design).
-  const OWNER_QUIET_MS = 3000;
-  let lastPointer = null, ownerSeen = null, nexusWin = null;
+  let lastPointer = null, nexusWin = null;
   const far = (a, b) => Math.abs(a.x - b.x) > 4 || Math.abs(a.y - b.y) > 4;
   async function pointer() { try { const r = await getRobot().cmd('pointer'); return Number.isInteger(r?.x) && Number.isInteger(r?.y) ? r : null; } catch { return null; } }
+  const OWNER_HINT = 'NEXUS paused ALL input until the owner explicitly says to continue - do not retry; tell the owner, and call live_control resume only after the owner said in this chat that you may continue';
   async function ownerGuard() {
     const p = await pointer();
     if (!p) return; // pointer unreadable: no evidence of the owner — the other policy checks still apply
-    if (!lastPointer || !far(p, lastPointer)) { lastPointer = lastPointer || p; ownerSeen = null; return; }
-    if (ownerSeen && !far(p, ownerSeen) && now() - ownerSeen.t >= OWNER_QUIET_MS) { lastPointer = p; ownerSeen = null; return; }
-    if (!ownerSeen || far(p, ownerSeen)) ownerSeen = {x: p.x, y: p.y, t: now()};
-    throw Error(`owner_active: the owner is using the mouse - NEXUS paused its input; retry in ${Math.ceil(OWNER_QUIET_MS / 1000) + 1} s (input resumes once the mouse has been still for ${OWNER_QUIET_MS / 1000} s)`);
+    if (!lastPointer || !far(p, lastPointer)) { lastPointer = lastPointer || p; return; }
+    try { onOwnerActive('mouse'); } catch { /* the refusal below still holds */ }
+    throw Error(`owner_active: the owner moved the mouse - ${OWNER_HINT}`);
   }
   async function afterInput(f) {
     const p = await pointer(); if (p) lastPointer = p;
-    if (f?.ok && f.topHwnd) nexusWin = {hwnd: String(f.topHwnd), pid: f.pid ?? null, process: f.process || null};
+    if (f?.ok && f.topHwnd) { nexusWin = {hwnd: String(f.topHwnd), pid: f.pid ?? null, process: f.process || null}; lifecycle.input(nexusWin); }
   }
-  function resetFocusState() { lastPointer = null; ownerSeen = null; nexusWin = null; }
+  function resetFocusState() { lastPointer = null; nexusWin = null; }
 
   const api = {
     consent,
@@ -384,12 +386,20 @@ export function createGui({caps, home, workspace, platform = process.platform, r
      * with unsaved changes: prompt answered «Cancel», window left open, reported (the owner decides).
      */
     resetFocusState,
+    lifecycle,
+    /** After the owner's explicit go-ahead: the current mouse position becomes NEXUS's reference again. */
+    ownerResumed() { lastPointer = null; },
     /** open_app / handoff created a new foreground window: the next input adopts it (no stale-window refusal). */
     forgetNexusWindow() { nexusWin = null; },
-    async cleanupOwned(reason) {
+    async cleanupOwned(reason, {ownerPaused = false} = {}) {
       resetFocusState();
       const o = consent.owned;
       const report = {closed: [], left: []};
+      const unchecked = lifecycle.status().filter(e => !e.checked).map(e => e.app || 'window');
+      if (unchecked.length) report.unverified = unchecked; // honest report: input whose result NEXUS never checked
+      // Revision 2: the owner took over the PC and has not handed it back — NEXUS does not touch any window now
+      // (the owner may be working in one of NEXUS's windows). Ownership is kept; the next session end cleans up.
+      if (ownerPaused && reason !== 'owner_stop' && (o.windows.size || o.tabs.size)) { report.left.push({why: 'owner_at_pc_paused', windows: o.windows.size, tabs: o.tabs.size}); return report; }
       if (platform !== 'win32' || (!o.windows.size && !o.tabs.size)) return report;
       // Snapshot every app first; prune only when all snapshots succeeded (a failed snapshot must not drop ownership).
       const snaps = new Map(); let allOk = true;
@@ -406,7 +416,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
             try { r = await closeTarget({process: proc, hwnd: w.hwnd, pid: w.pid, rid: it.rid, onPrompt: it.scratch ? 'save' : 'cancel'}); }
             catch (e) { r = {closed: false, error: String(e?.message || e).slice(0, 80)}; }
             const rec = {app: proc, name: String(it.name || '').slice(0, 120), kind: it.rid ? 'tab' : 'window', ...r};
-            if (r.closed) { report.closed.push(rec); if (it.rid) consent.forgetTab(it.rid); else consent.forget(w); }
+            if (r.closed) { report.closed.push(rec); if (it.rid) consent.forgetTab(it.rid); else { consent.forget(w); lifecycle.forget(w.hwnd); } }
             else report.left.push({...rec, why: r.answered === 'cancel' ? 'unsaved_changes_owner_decides' : 'close_failed'});
           }
         }
@@ -446,6 +456,9 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       const c = {kind, via: 'close_window'};
       const own = consent.isOwned(c, win, tab);
       const byOwner = !own && args.ownerRequested === true && caps.grantsFromChat !== false;
+      if (own && !consented && lifecycle.unverified(win.hwnd)) {
+        throw Error(`nexus_verify_before_close: NEXUS typed/clicked in this window and has not checked the result yet - check it first (inspect_ui / window_info pid ${win.pid ?? args.pid} / capture_screen), then close it: open -> act -> verify -> close`);
+      }
       if (consented) {
         if (String(win.hwnd) !== consented.hwnd || (consented.rid && tab?.rid !== consented.rid)) throw Error('consent_target_changed');
       } else if (!own && !byOwner) {
@@ -461,7 +474,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       else if (args.onUnsaved === 'save') onPrompt = 'save';
       else onPrompt = 'cancel';
       const r = await closeTarget({process: proc, hwnd: win.hwnd, pid: win.pid, rid: tab?.rid || null, onPrompt});
-      if (r.closed) { if (tab) consent.forgetTab(tab.rid); else consent.forget(win); }
+      if (r.closed) { if (tab) consent.forgetTab(tab.rid); else { consent.forget(win); lifecycle.forget(win.hwnd); } }
       const out = {target: `${proc}: ${tab ? 'вкладка «' + tab.name + '»' : 'окно «' + win.name + '»'}`, kind, closed: r.closed,
         by: own ? 'nexus_owned' : consented ? 'confirm_action' : 'owner_request', prompt: r.prompt, answered: r.answered};
       if (!r.closed && r.prompt && r.answered === 'cancel' && (args.onUnsaved ?? 'ask') !== 'cancel') {
@@ -668,7 +681,8 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       const before = await uia({mode: 'context'});
       if (!before.focused?.ok) throw Error('focus_not_allowed');
       if (nexusWin && before.window?.hwnd && String(before.window.hwnd) !== nexusWin.hwnd && before.focused.pid !== nexusWin.pid) {
-        throw Error(`owner_active: the foreground window is now ${before.focused.process || 'another app'}, switched not by NEXUS (the owner may be working there) - typing refused; if the owner is not using the PC, call focus_window for your window (pid ${nexusWin.pid ?? '?'}) and retry`);
+        try { onOwnerActive('foreground'); } catch { /* the refusal below still holds */ }
+        throw Error(`owner_active: the foreground window is now ${before.focused.process || 'another app'}, switched not by NEXUS (the owner may be working there) - typing refused; ${OWNER_HINT}; after that, take your window back with focus_window (pid ${nexusWin.pid ?? '?'})`);
       }
       {
         const title = before.window?.name;
