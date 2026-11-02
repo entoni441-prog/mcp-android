@@ -37,3 +37,14 @@ test('nexus.mjs logs every exit Node can see (crash stack / exit code) to tunnel
   const src = fs.readFileSync(new URL('./nexus.mjs', import.meta.url), 'utf8');
   for (const k of ["'uncaughtException'", "'unhandledRejection'", "process.on('exit'", "'host_exit'"]) assert.ok(src.includes(k), k);
 });
+
+test('Owner 02.11: ending a process in Task Manager needs consent; ordinary Task Manager use stays free', () => {
+  for (const n of ['End task', 'End process tree', 'End process', 'Снять задачу', 'Завершить процесс', 'Завершить дерево процессов', 'Termina attività'])
+    assert.equal(classifyDestructiveClick({elem: {controlType: 'Button', name: n}})?.what, 'destructive_action', n);
+  for (const n of ['Run new task', 'Запустить новую задачу', 'Efficiency mode', 'Details', 'Processes', 'Endpoint', 'Sending report'])
+    assert.equal(classifyDestructiveClick({elem: {controlType: 'Button', name: n}}), null, n);
+  const dlg = {title: 'Task Manager', text: ['Do you want to end the process tree of "app.exe"?', 'Unsaved data will be lost.']};
+  assert.equal(classifyDestructiveClick({elem: {controlType: 'Button', name: 'End process tree'}, dialog: dlg})?.what, 'destructive_action');
+  assert.equal(classifyDestructiveClick({elem: {controlType: 'Button', name: 'Cancel'}, dialog: dlg}), null);
+  assert.equal(classifyDestructiveKeys('delete', {elem: {controlType: 'TreeItem', name: 'app.exe'}})?.what, 'destructive_action', 'Del on a selected process row');
+});
