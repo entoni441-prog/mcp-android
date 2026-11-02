@@ -109,11 +109,23 @@ export function runUiaReal(args, {systemRoot = process.env.SystemRoot, tmpDir, t
     p.once('exit', code => {
       clearTimeout(timer);
       try {
-        if (code !== 0 || !fs.existsSync(out)) return reject(Object.assign(Error('uia_failed'), {detail: psErrorText(err).slice(0, 800)}));
+        if (code !== 0 || !fs.existsSync(out)) {
+          return reject(uiaFailure(err));
+        }
         resolve(JSON.parse(fs.readFileSync(out, 'utf8').replace(/^﻿/, '')));
       } catch { reject(Error('uia_bad_output')); } finally { fs.rmSync(out, {force: true}); }
     });
   });
+}
+
+/** 0.5.2 acceptance 02.11: Task Manager auto-elevates; Windows UIPI denies a non-elevated NEXUS (UIA FromPoint →
+ *  «Access is denied»). NEXUS does not elevate itself — the step is the owner's. Nothing was clicked or typed. */
+export function uiaFailure(rawStderr) {
+  const detail = psErrorText(rawStderr).slice(0, 800);
+  if (/access is denied|отказано в доступе|accesso negato|UnauthorizedAccess|E_ACCESSDENIED|0x80070005/i.test(detail)) {
+    return Object.assign(Error('target_elevated: this window runs with administrator rights; Windows blocks NEXUS (not elevated) from reading or controlling it. Nothing was done. Ask the owner to do this step.'), {detail});
+  }
+  return Object.assign(Error('uia_failed'), {detail});
 }
 
 /** 0.5.2: PowerShell stderr is CLIXML (progress records + <S S="Error"> lines) — keep only the error text with its

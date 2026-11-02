@@ -112,6 +112,17 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
         return {...out, createdByNexus: created,
           note: 'Only windows/tabs listed in createdByNexus may be closed without asking the owner.' + (created.pending ? ' The window was still opening; NEXUS keeps watching for ~10 s and will own it when it appears.' : '')};
       }
+      if (args.app === 'explorer' || args.app === 'file-explorer') {
+        // 0.5.2 acceptance 02.11: Win11 «File Explorer» Start entry is a shell item (no .exe target) → discovery missed it.
+        // Built-in path like Calculator: %SystemRoot%\explorer.exe, no arguments (opens Home; NEXUS navigates by GUI).
+        if (typeof systemRoot !== 'string' || !/^[a-zA-Z]:\\/.test(systemRoot)) throw Error('invalid_windows_system_root');
+        const g = appGate(caps, 'explorer.exe', {mode: 'focus'});
+        if (!g.allow) throw Error(`app_not_allowed: ${g.error}${g.reason ? ' ' + g.reason : ''}`);
+        const before = await gui.snapshotApp('explorer');
+        await launch(path.win32.join(systemRoot, 'explorer.exe'), []);
+        return {started: true, app: 'explorer', via: 'builtin', createdByNexus: await settle('explorer', before, {}, 'open_app:explorer', 15),
+          note: 'Only windows/tabs listed in createdByNexus may be closed without asking the owner. Deleting files needs owner consent.'};
+      }
       let exe = caps.launchApps?.[args.app] || null, via = 'granted';
       if (!exe && policyMode()) { const d = await disc.find(args.app); if (d) { exe = d.exe; via = 'discovered'; } }
       if (!exe) throw Error(policyMode() ? 'app_not_found: see manage_app_access list' : 'app_not_granted: use manage_app_access request');
@@ -147,7 +158,7 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
         if (isHardDenied(path.win32.basename(args.exe))) throw Error('app_hard_denied');
         if (platform === 'win32' && !exists(args.exe)) throw Error('app_exe_not_found');
         const name = (args.name ?? proc).toLowerCase();
-        if (!LAUNCH_NAME.test(name) || ['notepad', 'calculator'].includes(name)) bad();
+        if (!LAUNCH_NAME.test(name) || ['notepad', 'calculator', 'explorer', 'file-explorer'].includes(name)) bad();
         launchSpec = {name, exe: args.exe};
       } else if (args.name !== undefined) bad();
       const target = `разрешить NEXUS управление приложением «${proc}»` + (launchSpec ? ` и запуск ${launchSpec.exe} (open_app "${launchSpec.name}")` : '');

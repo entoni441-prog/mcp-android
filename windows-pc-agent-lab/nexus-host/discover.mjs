@@ -26,12 +26,12 @@ export function slug(name) {
 const NOISE = /(uninstall|удалить|деинсталл|disinstalla|readme|help|справка|documentation|website|license|release notes|changelog)/i;
 
 /** Pure: raw [{name, exe}] → [{app, name, exe, cls}], deduped, denied/unsafe removed, reserved names skipped. */
-export function buildIndex(raw, reserved = ['notepad', 'calculator']) {
+export function buildIndex(raw, reserved = ['notepad', 'calculator', 'explorer', 'file-explorer']) {
   const seenExe = new Set(), used = new Set(reserved), out = [];
   for (const r of Array.isArray(raw) ? raw : raw ? [raw] : []) {
     if (!r || typeof r.name !== 'string' || typeof r.exe !== 'string') continue;
     if (NOISE.test(r.name) || !launchableExe(r.exe)) continue;
-    if (/^(notepad|calc|calculatorapp)\.exe$/i.test(path.win32.basename(r.exe))) continue; // own paths in apps.mjs (A-02 rule, UWP)
+    if (/^(notepad|calc|calculatorapp|explorer)\.exe$/i.test(path.win32.basename(r.exe))) continue; // own paths in apps.mjs (A-02 rule, UWP)
     const key = r.exe.toLowerCase();
     if (seenExe.has(key)) continue;
     let app = slug(r.name);

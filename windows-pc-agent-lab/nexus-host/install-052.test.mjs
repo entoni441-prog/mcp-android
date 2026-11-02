@@ -48,3 +48,44 @@ test('Owner 02.11: ending a process in Task Manager needs consent; ordinary Task
   assert.equal(classifyDestructiveClick({elem: {controlType: 'Button', name: 'Cancel'}, dialog: dlg}), null);
   assert.equal(classifyDestructiveKeys('delete', {elem: {controlType: 'TreeItem', name: 'app.exe'}})?.what, 'destructive_action', 'Del on a selected process row');
 });
+
+// ── Acceptance run 02.11 (ChatGPT, 220e84a): Explorer app_not_found, Task Manager uia_failed (Access is denied) ──
+import os from 'node:os';
+import path from 'node:path';
+import {createApps} from './apps.mjs';
+import {createConsent} from './consent.mjs';
+import {validateCapabilities} from './capabilities.mjs';
+import {buildIndex} from './discover.mjs';
+
+function appsFake({caps = {}, snaps = []} = {}) {
+  const launched = []; let i = 0;
+  const launcher = (exe, args = []) => { launched.push([exe, args]); const h = {}; return {pid: 77, once: (ev, fn) => { if (ev === 'spawn') setImmediate(fn); return h; }, unref() {}}; };
+  const gui = {snapshotApp: async () => snaps[Math.min(i++, snaps.length - 1)] ?? []};
+  const a = createApps({caps: validateCapabilities(caps), store: null, consent: createConsent(), gui, workspace: fs.mkdtempSync(path.join(os.tmpdir(), 'nx-i052-')),
+    platform: 'win32', systemRoot: 'C:\\Windows', launcher, exists: () => true, wait: async () => {}, discovery: {list: async () => [], find: async () => null}});
+  return {a, launched};
+}
+
+test('open_app explorer / file-explorer: built-in %SystemRoot%\\explorer.exe without arguments, new window owned', async () => {
+  for (const name of ['explorer', 'file-explorer']) {
+    const {a, launched} = appsFake({snaps: [[{hwnd: 1, pid: 9, process: 'explorer', name: 'Taskbar', tabs: []}], [{hwnd: 1, pid: 9, process: 'explorer', name: 'Taskbar', tabs: []}, {hwnd: 2, pid: 9, process: 'explorer', name: 'Home', tabs: []}]]});
+    const r = await a.open_app({app: name});
+    assert.equal(r.started, true); assert.equal(r.via, 'builtin');
+    assert.deepEqual(launched, [['C:\\Windows\\explorer.exe', []]]);
+  }
+  const {a, launched} = appsFake({caps: {blockedApps: ['explorer']}});
+  await assert.rejects(a.open_app({app: 'explorer'}), /blocked_by_owner/);
+  assert.equal(launched.length, 0, 'owner block respected');
+  const {a: al} = appsFake({caps: {appAccess: 'allowlist'}});
+  await assert.rejects(al.open_app({app: 'explorer'}), /app_not_allowed/, 'allowlist mode keeps 0.5.1 behaviour');
+  assert.ok(!buildIndex([{name: 'File Explorer', exe: 'C:\\Windows\\explorer.exe'}]).length, 'discovery does not duplicate the built-in');
+});
+
+test('UIA «Access is denied» (elevated window, UIPI) → target_elevated, not a generic uia_failed', async () => {
+  const {uiaFailure} = await import('./gui.mjs');
+  const real = '#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><S S="Error">Exception calling "FromPoint" with "1" argument(s): "Access is denied"_x000D__x000A_</S><S S="Error">At line:134 char:5_x000D__x000A_</S></Objs>';
+  const e = uiaFailure(real);
+  assert.match(e.message, /^target_elevated:/); assert.match(e.detail, /line:134/);
+  assert.match(uiaFailure('<Objs><S S="Error">Отказано в доступе</S></Objs>').message, /^target_elevated/);
+  assert.equal(uiaFailure('<Objs><S S="Error">You cannot call a method on a null-valued expression.</S></Objs>').message, 'uia_failed');
+});
