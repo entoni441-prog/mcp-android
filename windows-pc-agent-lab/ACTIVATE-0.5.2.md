@@ -44,7 +44,9 @@ Settings → Plugins → NEXUS — Windows PC → **Refresh tools** → новы
 
 ## 5. Откат
 Host: остановить (2.1) → файлы из бэкапа, удалить `policy.mjs`, `handoff.mjs`, `discover.mjs` → Планировщик → `healthz` version 0.5.1.
-`capabilities.json` из бэкапа (0.5.1-b игнорирует новые ключи, но так чище). Шлюз: `src` из бэкапа → `npx wrangler deploy` или `npx wrangler rollback <Version ID 0.5.1-b>`.
+**`capabilities.json` — НЕ копировать из бэкапа целиком** (потеряются настройки, изменённые под 0.5.2). 0.5.1-b отвергает неизвестные ключи (`invalid_capabilities: unknown key`), поэтому до запуска 0.5.1-b удалить из текущего файла только ключи `appAccess`, `protectedPaths`, `blockedApps`; остальное (профиль, `inputApps`, `launchApps`, `tasks`) сохраняется. Пример PowerShell:
+`$p="$env:USERPROFILE\.nexus-host\capabilities.json"; $j=Get-Content $p -Raw | ConvertFrom-Json; 'appAccess','protectedPaths','blockedApps' | % { $j.PSObject.Properties.Remove($_) }; $j | ConvertTo-Json -Depth 10 | Set-Content $p -Encoding UTF8`
+Проверка: `get_capabilities` под 0.5.1-b → `fileError` пустой, профиль как до установки. Бэкап — только если файл повреждён. Приложения, заблокированные под 0.5.2 (`blockedApps`), в 0.5.1-b и так не входят в `inputApps` (revoke удаляет их оттуда). Шлюз: `src` из бэкапа → `npx wrangler deploy` или `npx wrangler rollback <Version ID 0.5.1-b>`.
 
 ## Отчёт
 Таблица шаг / факт / PASS-FAIL, HEAD, совпадение SHA-256, PID node/cloudflared, Version ID шлюза (если деплоился).
