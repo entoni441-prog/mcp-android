@@ -207,11 +207,12 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     let answered = null;
     if (prompt) {
       const d = await uia({mode: 'dialog', hwnd: Number(hwnd), choice: onPrompt});
-      answered = d.invoked ? onPrompt : (await clickPromptButton(d.rect, hwnd, pid, onPrompt)) ? onPrompt + ':click' : null;
-      if (!answered) return {closed: false, method: r.method, prompt: 'shown', answered: null, note: 'prompt button could not be pressed'};
+      const pressed = d.invoked ? 'invoke' : (await clickPromptButton(d.rect, hwnd, pid, onPrompt)) ? 'click' : null;
+      if (!pressed) return {closed: false, method: r.method, prompt: 'shown', answered: null, note: 'prompt button could not be pressed'};
+      answered = onPrompt; r.pressed = pressed;
       await sleep(600);
     }
-    return {closed: await gone(process, hwnd, rid), method: r.method, prompt: prompt ? 'shown' : null, answered};
+    return {closed: await gone(process, hwnd, rid), method: r.method, prompt: prompt ? 'shown' : null, answered, ...(r.pressed ? {pressedBy: r.pressed} : {})};
   }
   async function gone(process, hwnd, rid) {
     let wins; try { wins = await apps(process); } catch { return false; }
