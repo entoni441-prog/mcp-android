@@ -104,16 +104,27 @@ export function runUiaReal(args, {systemRoot = process.env.SystemRoot, tmpDir, t
     });
     let err = '';
     const timer = setTimeout(() => { p.kill(); reject(Error('uia_timeout')); }, timeoutMs);
-    p.stderr.on('data', c => { if (err.length < 2000) err += c; });
+    p.stderr.on('data', c => { if (err.length < 8000) err += c; });
     p.once('error', () => { clearTimeout(timer); reject(Error('powershell_launch_failed')); });
     p.once('exit', code => {
       clearTimeout(timer);
       try {
-        if (code !== 0 || !fs.existsSync(out)) return reject(Object.assign(Error('uia_failed'), {detail: err.slice(0, 500)}));
+        if (code !== 0 || !fs.existsSync(out)) return reject(Object.assign(Error('uia_failed'), {detail: psErrorText(err).slice(0, 800)}));
         resolve(JSON.parse(fs.readFileSync(out, 'utf8').replace(/^﻿/, '')));
       } catch { reject(Error('uia_bad_output')); } finally { fs.rmSync(out, {force: true}); }
     });
   });
+}
+
+/** 0.5.2: PowerShell stderr is CLIXML (progress records + <S S="Error"> lines) — keep only the error text with its
+ *  line/position so a uia_failed detail shows WHERE the script failed (install 02.11: 500 chars were all progress XML). */
+export function psErrorText(raw) {
+  const s = String(raw || '');
+  if (!s.includes('<Objs')) return s.trim();
+  const parts = [...s.matchAll(/<S S="Error">([\s\S]*?)<\/S>/g)].map(m => m[1]);
+  if (!parts.length) return s.trim();
+  return parts.join('').replace(/_x000D__x000A_/g, '\n').replace(/_x([0-9A-F]{4})_/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&').replace(/\n{2,}/g, '\n').trim();
 }
 
 // ───────────── coordinate mapping ─────────────

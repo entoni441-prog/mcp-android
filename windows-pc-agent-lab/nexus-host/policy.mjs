@@ -356,8 +356,9 @@ export function handoffSpec(proc, reason, title = '') {
  * Limits (documented): only what UI Automation exposes — custom-drawn UIs without UIA names, icon-only buttons without
  * a Name, and actions that delete without any of these words are not recognised.
  */
-const ACT_TYPES = new Set(['Button', 'MenuItem', 'SplitButton', 'Hyperlink']);
-const DLG_BTN_TYPES = new Set(['Button', 'Pane', 'Custom', 'MenuItem', 'SplitButton', 'Hyperlink']); // TaskDialog buttons are Pane
+// 'Unknown' = a control type managed UIA cannot name (uia-script NxType) — treated like a button: fail-closed.
+const ACT_TYPES = new Set(['Button', 'MenuItem', 'SplitButton', 'Hyperlink', 'Unknown']);
+const DLG_BTN_TYPES = new Set(['Button', 'Pane', 'Custom', 'MenuItem', 'SplitButton', 'Hyperlink', 'Unknown']); // TaskDialog buttons are Pane
 const SEL_TYPES = new Set(['ListItem', 'TreeItem', 'DataItem', 'List', 'Tree', 'DataGrid', 'Table', 'Row']);
 export const DESTRUCT_STRONG_RE = /(\bdelete\b|\bdel\b|\bremove\b|\buninstall|\berase\b|\bwipe\b|\bpurge\b|\bshred|\bdestroy|permanent|empty\s+(the\s+)?(recycle\s+bin|trash|bin)|move\s+to\s+(the\s+)?(recycle\s+bin|trash)|\bformat\s+(disk|drive|volume)|factory\s+reset|удал|стереть|уничтож|деинсталл|безвозвратн|очистить\s+корзину|в\s+корзину$|форматировать|\belimina|\brimuovi|disinstalla|cancella\s+definitiv|svuota\s+(il\s+)?cestino|\bsposta\s+nel\s+cestino)/i;
 export const DESTRUCT_WEAK_RE = /(\bclear\b|\breset\b|\bclean\s*(up)?\b|\bdiscard\b|\brevert\b|\brestore\s+defaults|очист|сброс|сбросить|отменить\s+изменения|\bpulisci|\bsvuota|\bripristina|\bcancella\b|\bazzera)/i;

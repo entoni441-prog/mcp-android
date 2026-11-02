@@ -26,12 +26,14 @@ Smart App Control / Defender / UAC, `main`, чужие Workers, автозапу
 ## 2. Host (без шлюза)
 1. Остановить Host: `DELETE /tunnel`, затем точные PID node и cloudflared из `host_diagnostics`.
 2. Скопировать все `nexus-host/*` из манифеста в рабочую папку Host (новые: `policy.mjs`, `handoff.mjs`, `discover.mjs`).
-3. Запуск только через Планировщик. В окне: `NEXUS Host 0.5.2 — ACTIVE`, `Tunnel registered`.
+3. Запуск только через Планировщик (разовая задача `NEXUS-Host-Run`, как в `RESTART-HOST.md`). **Задачу не удалять, пока не пройден весь smoke п.4** (установка 02.11: Host исчез без следа примерно через 8 с после удаления задачи; связь не доказана, но риск не нужен). После 0.5.2 любой выход Host, который видит Node, пишется в `tunnel.log` (`host_exit`, `uncaught_exception` со стеком); отсутствие `host_exit` после последнего события = процесс завершён извне.
+   В окне: `NEXUS Host — ACTIVE on 127.0.0.1:<port>` (номер версии в окне не печатается, версию подтверждает `healthz`), `Tunnel registered`.
 4. Локальный smoke (Bearer из token.txt, значение не выводить):
    - `GET /healthz` → `version:"0.5.2"`; `tools/list` → 37;
    - `get_capabilities` → `appAccess:"policy"`, `session.active:false`, профиль прежний (`gui`, `browser`, `live_view` как до установки);
    - `manage_app_access {action:"list"}` → непустой список приложений из «Пуск»;
-   - `live_frame` → `{"state":"off"}`; `finish_task` без сессии → `ended:false`.
+   - `inspect_ui` на окне Проводника (тестовая папка) → дерево, не `uia_failed` (исправление после установки 02.11);
+   - `live_frame` без активной сессии, кадр не захвачен: при `live_view:true` → `{"state":"ready"}`, при `live_view:false` → `{"state":"off"}`; `finish_task` без сессии → `ended:false`.
 5. Любой FAIL → откат (раздел 5), шлюз НЕ трогать.
 
 ## 3. Шлюз (только после PASS п.2 и отдельного «да» владельца)

@@ -25,6 +25,7 @@
 export const UIA_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 $a = $env:NEXUS_UIA_ARGS | ConvertFrom-Json
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
@@ -58,6 +59,9 @@ function NxTopWindows($procId) {
   return ,$out
 }
 
+# 0.5.2: managed UIA (.NET Framework) maps control-type ids it does not know (newer Windows: SemanticZoom, AppBar…)
+# to $null — calling .ProgrammaticName on it threw «method on a null-valued expression» (inspect_ui on Win11 Explorer).
+function NxType($e) { try { $ct = $e.Current.ControlType; if ($null -eq $ct -or $null -eq $ct.ProgrammaticName) { return 'Unknown' }; return ([string]$ct.ProgrammaticName).Replace('ControlType.', '') } catch { return 'Unknown' } }
 function NxStr($v, $n) { $t = [string]$v; if ($t.Length -gt $n) { return $t.Substring(0, $n) }; return $t }
 function NxRid($e) { try { return (($e.GetRuntimeId()) -join '.') } catch { return '' } }
 function NxTopOf($e) {
@@ -143,7 +147,7 @@ function NxDlg($w) {
   return @{ modal = $modal; className = $cls; title = (NxStr $w.Current.Name 200); text = @($txt) }
 }
 function NxElem($e) {
-  return @{ controlType = $e.Current.ControlType.ProgrammaticName.Replace('ControlType.', ''); name = (NxStr $e.Current.Name 120); id = (NxStr $e.Current.AutomationId 80) }
+  return @{ controlType = (NxType $e); name = (NxStr $e.Current.Name 120); id = (NxStr $e.Current.AutomationId 80) }
 }
 $res = @{ mode = $a.mode; root = (NxRect $AE::RootElement) }
 if ($null -ne $a.pid) { $res.target = @{ pid = [int]$a.pid; process = (NxPName ([int]$a.pid)) } }
@@ -153,12 +157,12 @@ switch ($a.mode) {
     $pt = New-Object System.Windows.Point ([double]$a.x), ([double]$a.y)
     $e = $AE::FromPoint($pt)
     $epid = $e.Current.ProcessId
-    $res.at = @{ pid = $epid; process = (NxPName $epid); controlType = $e.Current.ControlType.ProgrammaticName; elem = (NxElem $e) }
+    $res.at = @{ pid = $epid; process = (NxPName $epid); controlType = ('ControlType.' + (NxType $e)); elem = (NxElem $e) }
     $tab = NxTabOf $e
     if ($null -ne $tab) { $res.at.tab = @{ rid = (NxRid $tab); name = (NxStr $tab.Current.Name 120) } }
     $top = NxTopOf $e
     $res.at.window = NxWin $top
-    try { $p = $TW.GetParent($e); if ($null -ne $p) { $res.at.parentType = $p.Current.ControlType.ProgrammaticName.Replace('ControlType.', '') } } catch { }
+    try { $p = $TW.GetParent($e); if ($null -ne $p) { $res.at.parentType = (NxType $p) } } catch { }
     try { $res.at.dialog = NxDlg $top } catch { }
     $res.focused = NxFocused
   }
@@ -205,12 +209,15 @@ switch ($a.mode) {
     function NxWalk($e, $d) {
       if ($script:count -ge $max) { return $null }
       $script:count++
-      $nm = $e.Current.Name; if ($nm.Length -gt 80) { $nm = $nm.Substring(0, 80) }
-      $node = @{ type = $e.Current.ControlType.ProgrammaticName.Replace('ControlType.', ''); name = $nm; id = $e.Current.AutomationId; className = $e.Current.ClassName; rect = (NxRect $e); enabled = $e.Current.IsEnabled }
+      # 0.5.2: one unreadable/vanished element (Explorer views change while walked) must not fail the whole tree.
+      try {
+        $nm = NxStr $e.Current.Name 80
+        $node = @{ type = (NxType $e); name = $nm; id = $e.Current.AutomationId; className = $e.Current.ClassName; rect = (NxRect $e); enabled = $e.Current.IsEnabled }
+      } catch { return @{ type = 'Unknown'; name = ''; unreadable = $true } }
       if ($d -lt $depthMax) {
         $kids = New-Object System.Collections.ArrayList
-        $k = $TW.GetFirstChild($e)
-        while ($null -ne $k -and $script:count -lt $max) { $w = NxWalk $k ($d + 1); if ($null -ne $w) { [void]$kids.Add($w) }; $k = $TW.GetNextSibling($k) }
+        $k = $null; try { $k = $TW.GetFirstChild($e) } catch { }
+        while ($null -ne $k -and $script:count -lt $max) { $w = NxWalk $k ($d + 1); if ($null -ne $w) { [void]$kids.Add($w) }; try { $k = $TW.GetNextSibling($k) } catch { $k = $null } }
         if ($kids.Count -gt 0) { $node.children = @($kids) }
       }
       return $node
@@ -225,7 +232,7 @@ switch ($a.mode) {
       $res.elem = NxElem $f
       $top = NxTopOf $f
       $res.window = NxWin $top
-      try { $p = $TW.GetParent($f); if ($null -ne $p) { $res.parentType = $p.Current.ControlType.ProgrammaticName.Replace('ControlType.', '') } } catch { }
+      try { $p = $TW.GetParent($f); if ($null -ne $p) { $res.parentType = (NxType $p) } } catch { }
       try { $res.dialog = NxDlg $top } catch { }
     } catch { }
   }
@@ -307,7 +314,7 @@ switch ($a.mode) {
       $stack = New-Object System.Collections.Stack; $stack.Push(@($r, 0)); $seen = 0
       while ($stack.Count -gt 0 -and $seen -lt 600) {
         $item = $stack.Pop(); $e = $item[0]; $d = $item[1]; $seen++
-        $ct = $e.Current.ControlType.ProgrammaticName.Replace('ControlType.', '')
+        $ct = (NxType $e)
         $nm = [string]$e.Current.Name
         if (@('Button', 'Pane', 'Custom') -contains $ct -and $nm.Length -le 30) {
           $role = $null

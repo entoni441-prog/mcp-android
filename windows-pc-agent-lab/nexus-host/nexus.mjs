@@ -91,5 +91,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     setTimeout(() => process.exit(code), 500).unref();
   }
   process.on('SIGINT', () => stop(0)); process.on('SIGTERM', () => stop(0));
+  // 0.5.2 diagnostics (install 02.11: Host vanished with no trace). Every exit Node can see is written to tunnel.log:
+  // a crash records its stack (secrets redacted by sanitize); NO host_exit record after the last event = the process was
+  // killed from outside (window closed, taskkill, logoff) — Node gets no chance to write.
+  const fatal = kind => err => { note(kind, String(err?.stack || err).slice(0, 1500)); console.error(`NEXUS Host ${kind}:`, err); stop(1); setTimeout(() => process.exit(1), 3000).unref(); };
+  process.on('uncaughtException', fatal('uncaught_exception')); process.on('unhandledRejection', fatal('unhandled_rejection'));
+  process.on('exit', code => note('host_exit', String(code)));
   console.log('Close this window or press Ctrl+C to STOP all access.');
 }
