@@ -187,6 +187,9 @@ test('stage 2 appGate: policy vs allowlist mode, owner block, protected focus vs
   assert.deepEqual([appGate(caps, 'Bitwarden', {mode: 'read'}).consent, appGate(caps, 'Bitwarden').what], [2, 'protected_app']);
   assert.equal(appGate(caps, 'SystemSettings', {title: 'Display'}).allow, true);
   assert.deepEqual([appGate(caps, 'SystemSettings', {title: 'Windows Security'}).consent, appGate(caps, 'SystemSettings', {title: 'Windows Security', mode: 'read'}).allow], [3, true]);
+  for (const t of ['cleanmgr', 'msconfig', 'rstrui', 'SystemPropertiesProtection']) {
+    assert.deepEqual([appGate(caps, t, {mode: 'read'}).allow, appGate(caps, t).consent, appGate(caps, t).what], [true, 3, 'system_tool'], t);
+  }
   const legacy = {...caps, appAccess: 'allowlist'};
   assert.equal(appGate(legacy, 'Notepad').allow, true);
   assert.equal(appGate(legacy, 'chrome').error, 'not_in_allowlist');

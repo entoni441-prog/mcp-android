@@ -165,7 +165,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
    * 0.5.2: every target goes through policy.appGate. Returns null (go on) or a consent_required result whose
    * confirm_action replays the same tool once, for the same window (policyOk), and only for that need.
    */
-  const LABEL = {protected_app: 'защищённое приложение', security_page: 'страница безопасности', arbitrary_command: 'выполнение команды'};
+  const LABEL = {system_tool: 'системная утилита (изменения системы)', protected_app: 'защищённое приложение', security_page: 'страница безопасности', arbitrary_command: 'выполнение команды'};
   function describeInput(args, el) {
     if (typeof args?.text === 'string') return `ввод текста «${redactSecrets(args.text).text.slice(0, 200)}»`;
     if (typeof args?.keys === 'string') return `клавиши ${args.keys}`;

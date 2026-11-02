@@ -35,6 +35,10 @@ export const PROTECTED_APPS = Object.freeze(['bitwarden', 'keepass', 'keepassxc'
 export const IDE_APPS = Object.freeze(['code', 'code - insiders', 'cursor', 'vscodium']);
 /** System admin UIs: allowed with page-level bans (N-01 / 0.5.2 checkpoint). */
 export const ADMIN_APPS = Object.freeze(['systemsettings', 'control', 'taskmgr', 'mmc']);
+/** System maintenance tools: looking is fine, but every input may change the system irreversibly → level 3 per action. */
+export const SYSTEM_TOOLS = Object.freeze(['cleanmgr', 'dfrgui', 'msconfig', 'rstrui', 'recoverydrive', 'systempropertiesadvanced',
+  'systempropertiesprotection', 'systempropertiesremote', 'systempropertiesperformance', 'optionalfeatures', 'iscsicpl', 'odbcad32',
+  'tpminit', 'fsquirt', 'mrt', 'dism', 'sysprep', 'bootim', 'resetengine', 'systemreset']);
 /** Shell UI that is not an app window NEXUS should drive (Start, search, taskbar frames). */
 const SHELL_UI = Object.freeze(['applicationframehost', 'searchhost', 'startmenuexperiencehost', 'shellexperiencehost', 'textinputhost']);
 
@@ -56,6 +60,7 @@ export function classifyApp(proc, {title = ''} = {}) {
   if (IDE_APPS.includes(p)) return {cls: 'ide', level: 1};
   if (p === 'mmc') return MMC_ALLOWED_TITLE.test(String(title)) ? {cls: 'admin', level: 1} : {cls: 'admin', level: 'handoff', reason: 'mmc_snapin_not_allowed'};
   if (ADMIN_APPS.includes(p)) return {cls: 'admin', level: 1};
+  if (SYSTEM_TOOLS.includes(p)) return {cls: 'system_tool', level: 1};
   if (p === 'explorer') return {cls: 'file_manager', level: 1};
   return {cls: 'ordinary', level: 1};
 }
@@ -272,6 +277,7 @@ export function appGate(caps, proc, {title = '', mode = 'input'} = {}) {
   if (c.level === 'handoff') return {allow: false, error: 'owner_handoff_required', reason: c.reason};
   if (c.cls === 'protected') return mode === 'focus' ? {allow: true, cls: c.cls} : {allow: false, consent: 2, what: 'protected_app', cls: c.cls};
   if (c.cls === 'admin' && mode === 'input' && adminPage(p, {title})?.level === 3) return {allow: false, consent: 3, what: 'security_page', cls: c.cls};
+  if (c.cls === 'system_tool' && mode === 'input') return {allow: false, consent: 3, what: 'system_tool', cls: c.cls};
   return {allow: true, cls: c.cls};
 }
 
