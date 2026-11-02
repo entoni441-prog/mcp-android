@@ -35,7 +35,7 @@ const onlyKeys = (a, allowed) => isObj(a) && Object.keys(a).every(k => allowed.i
 const bad = () => { throw Error('invalid_args'); };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-export function createApps({caps, store, consent, gui, workspace, platform = process.platform, systemRoot = process.env.SystemRoot,
+export function createApps({caps, store, consent, gui, handoff = null, workspace, platform = process.platform, systemRoot = process.env.SystemRoot,
   launcher = spawn, exists = fs.existsSync, wait = sleep, execDeps = {}, discovery = null}) {
   const disc = discovery || createDiscovery({platform, systemRoot});
   const policyMode = () => caps.appAccess !== 'allowlist';
@@ -71,8 +71,14 @@ export function createApps({caps, store, consent, gui, workspace, platform = pro
         const nd = notepadLaunchDecision({running: Array.isArray(before) ? before.length > 0 : undefined});
         if (NOTEPAD_COLD_START_BLOCKED && nd.level !== 1) {
           fs.rmSync(file, {force: true});
-          return {started: false, status: 'owner_action_required', reason: nd.reason, app: 'notepad',
+          const legacy = {started: false, status: 'owner_action_required', reason: nd.reason, app: 'notepad',
             instruction: 'Notepad is not running. A cold start would restore the owner\'s previous Notepad session (it may contain secrets). Ask the owner to open Notepad themselves, then call open_app notepad again — or use another editor.'};
+          if (typeof handoff !== 'function') return legacy;
+          // 0.5.2 N-03: verified handoff — NEXUS waits for a Notepad window, screen capture paused (restored tabs may hold secrets).
+          return {...handoff({reason: nd.reason, what: 'Откройте Блокнот сами (NEXUS не запускает его с нуля: Блокнот восстанавливает ваши прошлые вкладки).',
+            where: 'меню «Пуск» → Блокнот', check: 'NEXUS проверит, что окно Блокнота появилось, затем откроет в нём свою отдельную вкладку',
+            verify: {kind: 'app_window', process: 'notepad'}, pause: {input: true, capture: true}, resume: {tool: 'open_app', args: {app: 'notepad'}}}),
+            started: false, app: 'notepad', instruction: legacy.instruction};
         }
         await launch(path.win32.join(systemRoot, 'System32', 'notepad.exe'), [file]);
         const created = await settle('notepad', before, {token}, 'open_app:notepad');

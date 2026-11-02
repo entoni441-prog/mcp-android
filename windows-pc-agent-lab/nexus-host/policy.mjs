@@ -316,3 +316,27 @@ export function redactDeep(x, depth = 0, cnt = {n: 0}) {
 
 /** Marker NEXUS puts in place of a secret. Writing it back would destroy the owner's real value. */
 export const REDACTED_MARK = '«redacted»';
+
+// ── N-03: which denied targets become an Owner Handoff (instead of a plain refusal) ─────────────────────────────────
+/** UAC and logon run on the secure desktop: UIA of the user desktop does NOT see them, so «window gone» proves nothing. */
+const SECURE_DESKTOP = new Set(['consent', 'logonui', 'lockapp']);
+const CREDENTIAL_UI = new Set(['credentialuibroker']);
+const SHELLS = new Set(['cmd', 'powershell', 'pwsh', 'powershell_ise', 'windowsterminal', 'wt', 'conhost', 'openconsole', 'bash', 'wsl', 'wslhost',
+  'git-bash', 'mintty', 'ssh', 'putty', 'regedit']);
+/**
+ * Pure. For a target that appGate refused with owner_handoff_required, return a handoff spec, or null when the target
+ * is simply not for NEXUS (system processes, NEXUS's own runtime, shell UI) — then the caller keeps the refusal.
+ */
+export function handoffSpec(proc, reason, title = '') {
+  const p = norm(proc), t = String(title || '').slice(0, 80), w = t ? ` «${t}»` : '';
+  if (CREDENTIAL_UI.has(p)) return {reason: 'credential_prompt', what: `Введите учётные данные в окне Windows${w} сами — не сообщайте пароль или код в чат.`,
+    where: `${proc}${w}`, check: 'NEXUS проверит, что окно запроса учётных данных закрыто', verify: {kind: 'no_window', process: proc}, pause: {input: true, capture: true}};
+  if (SECURE_DESKTOP.has(p)) return {reason: 'uac_or_logon', what: 'Подтвердите или отклоните запрос Windows (UAC/вход) сами.',
+    where: 'защищённый рабочий стол Windows', check: 'NEXUS не видит защищённый рабочий стол: результат проверяется по последствию (например, появилось окно запущенной программы)',
+    verify: {kind: 'none'}, pause: {input: true, capture: true}};
+  if (SHELLS.has(p)) return {reason: 'shell_command', what: `NEXUS не вводит команды в ${proc}${w}. Если согласны, выполните нужную команду сами.`,
+    where: `${proc}${w}`, check: 'Результат команды NEXUS проверяет по её последствиям (файлы, окна), не по словам в чате', verify: {kind: 'none'}, pause: {input: true, capture: false}};
+  if (p === 'mmc' && reason === 'mmc_snapin_not_allowed') return {reason: 'mmc_snapin', what: `Консоль${w} закрыта для NEXUS. Выполните действие в ней сами.`,
+    where: `mmc${w}`, check: 'проверка по последствиям действия', verify: {kind: 'none'}, pause: {input: true, capture: false}};
+  return null;
+}

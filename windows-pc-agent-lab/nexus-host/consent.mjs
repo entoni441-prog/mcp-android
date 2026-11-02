@@ -59,7 +59,11 @@ export function classifyClick(action, at) {
   return null;
 }
 
-export function createConsent({audit = () => {}, now = () => Date.now()} = {}) {
+/**
+ * `journal` (0.5.2 N-08, optional): {keyFor(what, target) → idempotency key or null (not external), alreadyDone(key) → {at, task}|null}.
+ * A repeat of an external operation that already ran is shown to the owner as «ПОВТОР…» — never silently re-run.
+ */
+export function createConsent({audit = () => {}, now = () => Date.now(), journal = null} = {}) {
   // apps: process names that hold NEXUS-owned windows/tabs (where cleanup must look);
   // scratch: hwnd/rid of NEXUS scratch documents (identified by token) — on close their prompt is answered «Save»
   // (into the NEXUS scratch file), never «Don't save», so nothing typed into them is lost.
@@ -180,10 +184,15 @@ export function createConsent({audit = () => {}, now = () => Date.now()} = {}) {
     requestGrant({what, target, apply, replay = null}) {
       if (typeof target !== 'string' || !target || typeof apply !== 'function') throw Error('invalid_args');
       const id = crypto.randomBytes(6).toString('hex');
-      pending.set(id, {id, c: {kind: 'grant', what}, replay, apply, target, expires: now() + TTL_MS});
+      const idemKey = journal?.keyFor(what, target) || null;
+      const prev = idemKey ? journal.alreadyDone(idemKey) : null;
+      const base = target;
+      if (prev) target = `ПОВТОР (уже выполнено ${String(prev.at).slice(0, 16).replace('T', ' ')} UTC): ${base}`;
+      pending.set(id, {id, c: {kind: 'grant', what}, replay, apply, target, idemKey, baseTarget: base, repeat: !!prev, expires: now() + TTL_MS});
       for (const [k, v] of pending) if (v.expires < now()) pending.delete(k);
       audit({event: 'consent_required', consentId: id, kind: 'grant', what, target});
       return {status: 'consent_required', consentId: id, kind: 'grant', what, target, options: ['allow', 'cancel'], expiresInSec: TTL_MS / 1000,
+        ...(prev ? {alreadyDone: {at: prev.at, task: prev.task}, warning: 'This external operation ALREADY RAN. First check its result with read tools; repeat only if the owner explicitly wants it done twice.'} : {}),
         instruction: `This needs the owner's permission (${target}). Ask the owner in chat. If the owner agrees, call confirm_action with consentId, decision "allow", and target exactly "${target}". Never decide for the owner.`};
     },
 

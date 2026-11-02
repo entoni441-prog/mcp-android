@@ -24,7 +24,7 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {UIA_SCRIPT} from './uia-script.mjs';
 import {requireCap} from './capabilities.mjs';
-import {appGate, classifyIdeInput, classifyIdeClick, redactSecrets} from './policy.mjs';
+import {appGate, classifyIdeInput, classifyIdeClick, redactSecrets, handoffSpec} from './policy.mjs';
 import {classifyKeys, classifyClick, createConsent} from './consent.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -145,7 +145,7 @@ export function testPng(size = 64) {
 }
 
 // ───────────── tools ─────────────
-export function createGui({caps, home, workspace, platform = process.platform, runUia, robot, consent = createConsent(), sleep = ms => new Promise(r => setTimeout(r, ms))}) {
+export function createGui({caps, home, workspace, platform = process.platform, runUia, robot, consent = createConsent(), handoff = null, sleep = ms => new Promise(r => setTimeout(r, ms))}) {
   const tmpDir = path.join(home, 'tmp');
   const uia = runUia || (args => runUiaReal(args, {tmpDir}));
   let daemon = robot || null;
@@ -174,7 +174,12 @@ export function createGui({caps, home, workspace, platform = process.platform, r
   }
   function policy({proc, title = '', mode, hwnd = null, tool, args, opts, legacy, extra = null, el = null}) {
     const g = appGate(caps, proc, {title, mode});
-    if (!g.allow && !g.consent) throw Error(`${legacy}: ${g.error}${g.reason ? ' ' + g.reason : ''}`);
+    if (!g.allow && !g.consent) {
+      // 0.5.2 N-03: an action only the owner may do (UAC, credential prompt, shell command) → Owner Handoff, not a dead end.
+      const spec = g.error === 'owner_handoff_required' && mode !== 'read' && typeof handoff === 'function' ? handoffSpec(proc, g.reason, title) : null;
+      if (spec) return handoff(spec);
+      throw Error(`${legacy}: ${g.error}${g.reason ? ' ' + g.reason : ''}`);
+    }
     const need = g.consent ? {level: g.consent, what: g.what} : extra;
     if (!need) return null;
     const pc = opts?.policyOk;

@@ -233,3 +233,19 @@ test('non-Windows platforms refuse GUI tools', async () => {
   await assert.rejects(g.capture_screen({}), /windows_only/);
   await assert.rejects(g.mouse_action({action: 'move', x: 1, y: 1}), /windows_only/);
 });
+
+test('0.5.2 N-03: input into a shell / credential prompt → Owner Handoff (no keys sent); reads and system processes stay refused', async () => {
+  const specs = [];
+  const mk = proc => { const f = fakes({focused: {ok: true, pid: 77, process: proc}});
+    return {f, g: createGui({caps: caps(), home: tmp, workspace: tmp, platform: 'win32', runUia: f.uia, robot: f.robot, handoff: s => { specs.push(s); return {status: 'owner_action_required', handoffId: 'h-test'}; }})}; };
+  for (const [proc, reason] of [['cmd', 'shell_command'], ['CredentialUIBroker', 'credential_prompt'], ['consent', 'uac_or_logon']]) {
+    const {f, g} = mk(proc);
+    const r = await g.keyboard_action({text: 'dir'});
+    assert.equal(r.status, 'owner_action_required', proc); assert.equal(specs.at(-1).reason, reason);
+    assert.equal(f.robotCmds.filter(c => c.startsWith('paste') || c.startsWith('key')).length, 0, 'nothing typed');
+  }
+  await assert.rejects(mk('svchost').g.keyboard_action({text: 'x'}), /focus_not_allowed/);
+  // without a handoff dependency → the 0.5.1 refusal is unchanged
+  const f2 = fakes({focused: {ok: true, pid: 77, process: 'cmd'}});
+  await assert.rejects(gui(f2).keyboard_action({text: 'dir'}), /focus_not_allowed/);
+});

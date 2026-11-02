@@ -28,7 +28,8 @@ import {searchFiles, fileAction} from './files.mjs';
 import {createCapStore} from './capstore.mjs';
 import {createConsent} from './consent.mjs';
 import {createLive} from './live.mjs';
-import {createSession} from './session.mjs';
+import {createSession, WORK_TOOLS} from './session.mjs';
+import {createTaskLog, createHandoffs, isExternal, idemKey} from './handoff.mjs';
 import {createApps} from './apps.mjs';
 import {resourceDecision, writeDecision, isProtectedPath, shortDiff, redactDeep, REDACTED_MARK} from './policy.mjs';
 
@@ -117,22 +118,29 @@ export function loadConfig(env = process.env) {
 
 /** One runtime per host process: Java daemon, browser, task table. Tests inject fakes via deps.runtime. */
 export function createRuntime(cfg, deps = {}) {
-  const {procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, sessionDeps: _sd, appsDeps: _ad, principal: _p, accessVerifier: _v, runtime: _r, trace: _t, ...execDeps} = deps;
+  const {procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, sessionDeps: _sd, appsDeps: _ad, taskDeps: _td, handoffDeps: _hd, principal: _p, accessVerifier: _v, runtime: _r, trace: _t, ...execDeps} = deps;
   const store = createCapStore({file: cfg.capabilitiesFile || null, initial: cfg.caps || validateCapabilities(DEFAULT_CAPABILITIES), audit: e => audit(cfg, e)});
   store.watch();
   const caps = store.view;
-  const consent = createConsent({audit: e => audit(cfg, e)});
-  const procs = createProcs({caps, cfg, consent, ...(deps.procsDeps || {})});
-  const gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, ...(deps.guiDeps || {})});
-  const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
+  // 0.5.2 N-08: task checkpoints + idempotency journal; N-03: owner handoffs (verified by Windows state, not chat words).
+  const tasks = createTaskLog({dir: path.join(cfg.home, 'tasks'), audit: e => audit(cfg, e), ...(deps.taskDeps || {})});
+  const consent = createConsent({audit: e => audit(cfg, e),
+    journal: {keyFor: (what, target) => (isExternal(what, target) ? idemKey(what, target) : null), alreadyDone: k => tasks.alreadyDone(k)}});
   const session = createSession({caps, audit: e => audit(cfg, e), ...(deps.sessionDeps || {})});
+  let gui = null;
+  const handoffs = createHandoffs({tasks, session, audit: e => audit(cfg, e), probe: {apps: n => gui.snapshotApp(n)}, ...(deps.handoffDeps || {})});
+  const handoff = spec => handoffs.request(spec);
+  const procs = createProcs({caps, cfg, consent, ...(deps.procsDeps || {})});
+  gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, handoff, ...(deps.guiDeps || {})});
+  const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
   const live = createLive({caps, store, session, capture: (w, q) => gui.frameJpeg(w, q), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
   // End of every session: stream off at the source first, then clean up what NEXUS itself opened.
   session.onEnd(async () => { live.sessionEnded(); return {liveActive: false}; });
   session.onEnd(async (reason, s) => (typeof procs.cancelSession === 'function' ? {tasks: await procs.cancelSession(reason, s)} : {}));
   session.onEnd(async reason => (typeof gui.cleanupOwned === 'function' ? {windows: await gui.cleanupOwned(reason)} : {}));
   session.onEnd(async reason => (typeof browser.cleanupSession === 'function' ? {browser: await browser.cleanupSession(reason)} : {}));
-  const apps = createApps({caps, store, consent, gui, workspace: cfg.workspace, execDeps,
+  session.onEnd(async reason => { handoffs.abandon(); const id = tasks.close(reason); return id ? {task: id, taskStatus: reason === 'finish_task' ? 'finished' : 'interrupted'} : {}; });
+  const apps = createApps({caps, store, consent, gui, handoff, workspace: cfg.workspace, execDeps,
     ...(execDeps.platform ? {platform: execDeps.platform} : {}), ...(execDeps.systemRoot ? {systemRoot: execDeps.systemRoot} : {}),
     ...(execDeps.launcher ? {launcher: execDeps.launcher} : {}), ...(deps.appsDeps || {})});
   const ws = {workspace: cfg.workspace};
@@ -140,14 +148,29 @@ export function createRuntime(cfg, deps = {}) {
     image_selftest: a => gui.image_selftest(a), capture_screen: a => gui.capture_screen(a), focus_window: a => gui.focus_window(a),
     window_info: a => gui.window_info(a), close_window: a => gui.close_window(a), inspect_ui: a => gui.inspect_ui(a), mouse_action: a => gui.mouse_action(a), keyboard_action: a => gui.keyboard_action(a),
     list_processes: a => procs.list_processes(a), process_action: a => procs.process_action(a), run_task: a => procs.run_task(a),
-    task_status: a => procs.task_status(a), task_cancel: a => procs.task_cancel(a), read_audit_log: a => procs.read_audit_log(a),
+    // 0.5.2 N-03: handoff ids (h-…) go through the existing task tools — the gateway catalog is unchanged until stage 6.
+    task_status: async a => {
+      if (a && typeof a.id === 'string' && a.id.startsWith('h-')) return handoffs.check(a.id);
+      let out = {};
+      if (a?.id !== undefined || caps.run_task === true) out = await procs.task_status(a);
+      return a?.id !== undefined ? out : {...out, ownerAction: handoffs.pending(), checkpoint: tasks.summary(), lastInterrupted: tasks.lastInterrupted()};
+    },
+    task_cancel: a => (a && typeof a.id === 'string' && a.id.startsWith('h-') ? handoffs.decline(a.id) : procs.task_cancel(a)),
+    read_audit_log: a => procs.read_audit_log(a),
     search_files: a => searchFiles(a, ws), file_action: a => fileAction(a, ws),
     confirm_action: async a => {
       if (!a || typeof a !== 'object' || Object.keys(a).some(k => !['consentId', 'decision', 'target'].includes(k)) ||
           typeof a.consentId !== 'string' || typeof a.target !== 'string') throw Error('invalid_args');
       const p = consent.take(a.consentId, a.decision, a.target);
       if (a.decision === 'cancel') return {cancelled: true, target: p.target};
-      if (p.c.kind === 'grant') return {confirmed: true, decision: 'allow', target: p.target, result: await p.apply()};
+      if (p.c.kind === 'grant') {
+        // N-08: external operations are journaled with their idempotency key (success only counts as «done»).
+        let result;
+        try { result = await p.apply(); } catch (e) { if (p.idemKey) tasks.recordOp({key: p.idemKey, what: p.c.what, target: p.baseTarget, ok: false, repeat: p.repeat}); throw e; }
+        const ok = !(result && typeof result.status === 'string' && /required|refused|error/.test(result.status));
+        if (p.idemKey) tasks.recordOp({key: p.idemKey, what: p.c.what, target: p.baseTarget, ok, repeat: p.repeat});
+        return {confirmed: true, decision: 'allow', target: p.target, result, ...(p.idemKey ? {journaled: ok} : {})};
+      }
       const opts = {consented: p, decision: a.decision};
       const out = p.replay.tool === 'process_action' ? await procs.process_action(p.replay.args, opts) : await gui[p.replay.tool](p.replay.args, opts);
       return {confirmed: true, decision: a.decision, target: p.target, result: out,
@@ -176,8 +199,12 @@ export function createRuntime(cfg, deps = {}) {
     manage_app_access: a => apps.manage_app_access(a), browser_tabs: a => browser.browser_tabs(a),
     browser_open: a => browser.browser_open(a), browser_snapshot: a => browser.browser_snapshot(a), browser_action: a => browser.browser_action(a),
   };
-  handlers.open_app = a => apps.open_app(a);
-  return {caps, store, consent, handlers, gui, procs, browser, live, apps, session,
+  handlers.open_app = async a => {
+    const out = await apps.open_app(a);
+    const c = out?.createdByNexus; if (c && (c.windows?.length || c.tabs?.length)) tasks.created([...(c.windows || []), ...(c.tabs || [])], 'open_app:' + a?.app);
+    return out;
+  };
+  return {caps, store, consent, handlers, gui, procs, browser, live, apps, session, tasks, handoffs,
     stop() { session.end('host_stop').catch(() => {}); session.stop(); store.stop(); live.stop(); gui.stop(); browser.stop(); procs.stopAll(); }};
 }
 
@@ -200,6 +227,7 @@ export function diagnostics(cfg) {
       cloudflaredAlive: t.alive ?? null, lastEvents: (t.events || []).slice(-20)} : 'not started by nexus.mjs',
     capabilitiesFileError: cfg.runtime?.store?.status().fileError ?? null,
     pendingConsents: cfg.runtime?.consent?.pendingCount() ?? 0,
+    ownerAction: cfg.runtime?.handoffs?.pending() ? {handoffId: cfg.runtime.handoffs.pending().handoffId, reason: cfg.runtime.handoffs.pending().reason} : null,
     liveView: cfg.runtime?.live?.status() ?? null,
     tunnelHealth: t ? tunnelHealth(t.events || []) : null,
   };
@@ -266,14 +294,18 @@ export async function handleRpc(msg, cfg, deps = {}) {
       if (!TOOLS.some(t => t.name === name)) return rpcError(id, -32602, 'unknown_tool');
       const started = Date.now();
       try {
-        const {principal: _p, accessVerifier: _v, runtime: _r, procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, sessionDeps: _sd, appsDeps: _ad, trace: _t, ...execDeps} = deps;
+        const {principal: _p, accessVerifier: _v, runtime: _r, procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, sessionDeps: _sd, appsDeps: _ad, taskDeps: _td, handoffDeps: _hd, trace: _t, ...execDeps} = deps;
         const rt = deps.runtime || (cfg.runtime ||= createRuntime(cfg, deps));
         rt.store?.refresh('file');
         let out;
         if (name === 'list_windows') out = await listWindows(args, {tmpDir: path.join(cfg.home, 'tmp'), ...execDeps});
         else {
           const call = () => (rt.handlers[name] ? rt.handlers[name](args) : executeJob(name, args, {workspace: cfg.workspace, ...execDeps}));
-          const guarded = async () => (rt.consent && fileGuard(name, args, {workspace: cfg.workspace, caps: rt.caps, consent: rt.consent, run: call})) || await call();
+          rt.handoffs?.guard(name); // N-03: input/capture paused while the owner acts
+          const guarded = async () => {
+            if (rt.tasks && WORK_TOOLS.has(name) && rt.session?.active()) rt.tasks.stage(name, rt.session.status().session);
+            return (rt.consent && fileGuard(name, args, {workspace: cfg.workspace, caps: rt.caps, consent: rt.consent, run: call})) || await call();
+          };
           out = rt.session ? await rt.session.around(name, guarded) : await guarded();
           if (name === 'search_files') out = hideProtected(out, {workspace: cfg.workspace, caps: rt.caps});
         }
@@ -286,6 +318,10 @@ export async function handleRpc(msg, cfg, deps = {}) {
       } catch (e) {
         const code = e?.code === 'ENOENT' ? 'not_found' : /^[a-z0-9_]+(?:: [\w -]+)?$/.test(e?.message) ? e.message : 'internal_error';
         audit(cfg, {by: deps.principal, trace: deps.trace, tool: name, ok: false, error: code, detail: e?.detail, args: auditArgs(args)});
+        try { if (cfg.runtime?.tasks?.peek()) cfg.runtime.tasks.error(name, code); } catch {}
+        if (code === 'owner_handoff_active') {
+          return rpcResult(id, {content: [{type: 'text', text: `error: owner_handoff_active — the owner is doing an action (${e.detail}); input/capture is paused. Call task_status {"id":"${e.detail}"} or task_cancel to end it.`}], isError: true});
+        }
         return rpcResult(id, {content: [{type: 'text', text: `error: ${code}${deps.trace ? ` [trace: ${deps.trace}]` : ''}`}], isError: true});
       }
     }

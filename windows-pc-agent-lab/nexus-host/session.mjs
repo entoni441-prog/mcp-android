@@ -38,6 +38,7 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
   let last = null;         // summary of the last ended session
   let ownerLiveOptOut = false;
   const hooks = [];        // async (reason, session) => partial report
+  const holds = new Map(); // 0.5.2 N-03: key → {until, pauseLive} — an owner action is pending; the idle lease must not end the task
 
   const timer = setIntervalFn(() => { tick().catch(() => {}); }, tickMs);
   timer?.unref?.();
@@ -53,6 +54,7 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
   async function end(reason) {
     if (!s) return {ended: false, reason, active: false};
     const cur = s; s = null; // live goes off synchronously: no frame can be produced after this line
+    holds.clear();
     const report = {ended: true, session: cur.id, reason, sec: Math.round((now() - cur.startedAt) / 1000), calls: cur.calls};
     for (const h of hooks) {
       try { Object.assign(report, await h(reason, cur)); } catch (e) { (report.hookErrors ||= []).push(String(e?.message || e).slice(0, 120)); }
@@ -65,7 +67,8 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
   async function tick() {
     if (!s) return;
     const t = now();
-    if (s.inflight === 0 && t - s.lastWork > idleMs) await end('lease_expired');
+    for (const [k, h] of holds) if (h.until < t) holds.delete(k);
+    if (s.inflight === 0 && holds.size === 0 && t - s.lastWork > idleMs) await end('lease_expired');
     else if (t - s.startedAt > maxMs) await end('max_duration');
   }
 
@@ -85,10 +88,14 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
     onEnd(h) { hooks.push(h); },
     /** Owner said "no Live View" — respected until the owner asks to watch again. */
     optOutLive() { ownerLiveOptOut = true; if (s) s.live = false; },
-    liveActive: () => !!s && s.live && caps.live_view === true,
+    /** 0.5.2: an owner action is pending — keep the session (bounded by `ms`); optionally stop Live View frames meanwhile. */
+    hold(key, ms, {pauseLive = true} = {}) { if (!s) return false; holds.set(key, {until: now() + ms, pauseLive}); return true; },
+    release(key) { const had = holds.delete(key); if (s && had) s.lastWork = now(); return had; },
+    liveActive: () => !!s && s.live && caps.live_view === true && ![...holds.values()].some(h => h.pauseLive),
     active: () => !!s,
     status: () => ({
-      active: !!s, liveActive: !!s && s.live && caps.live_view === true, ownerLiveOptOut,
+      active: !!s, liveActive: !!s && s.live && caps.live_view === true && ![...holds.values()].some(h => h.pauseLive), ownerLiveOptOut,
+      ...(holds.size ? {heldFor: [...holds.keys()]} : {}),
       ...(s ? {session: s.id, kind: s.kind, sinceSec: Math.round((now() - s.startedAt) / 1000),
         idleSec: Math.round((now() - s.lastWork) / 1000), inflight: s.inflight, expiresInSec: Math.max(0, Math.round((idleMs - (now() - s.lastWork)) / 1000))} : {}),
       leaseIdleSec: idleMs / 1000, lastEnded: last,
