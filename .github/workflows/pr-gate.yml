@@ -1,0 +1,49 @@
+# Required status check "gate" for PRs into main (ruleset main-autonomous-protection).
+# Always runs and always reports, so PRs never hang on a missing check.
+# Runs only the fast suites relevant to the changed paths; heavy Windows/real-GUI CI stays on branch pushes.
+name: pr-gate
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: pr-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Changed paths
+        id: diff
+        run: |
+          git diff --name-only "origin/${{ github.base_ref }}...HEAD" > changed.txt
+          echo "files: $(wc -l < changed.txt)"; cat changed.txt
+          grep -q '^windows-pc-agent-lab/nexus-host/' changed.txt && echo "host=1" >> "$GITHUB_OUTPUT" || true
+          grep -q '^windows-pc-agent-lab/nexus-gateway/' changed.txt && echo "gateway=1" >> "$GITHUB_OUTPUT" || true
+      - name: Secret scan of added lines (fails on private keys / known token formats)
+        run: |
+          git diff "origin/${{ github.base_ref }}...HEAD" --unified=0 | grep '^+' | grep -v '^+++' > added.txt || true
+          if grep -nE -- '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{60,}|gh[osu]_[A-Za-z0-9]{36}|AKIA[0-9A-Z]{16}|sk-(ant-|proj-)?[A-Za-z0-9_-]{32,}|xox[baprs]-[A-Za-z0-9-]{20,}|AIza[0-9A-Za-z_-]{35}' added.txt; then
+            echo "::error::Possible secret in added lines"; exit 1; fi
+          echo "no secrets matched"
+      - name: Workflow YAML parses
+        run: python3 -c "import sys,yaml,glob; [yaml.safe_load(open(f)) for f in glob.glob('.github/workflows/*.y*ml')]; print('ok')"
+      - uses: actions/setup-node@v4
+        if: steps.diff.outputs.host || steps.diff.outputs.gateway
+        with: {node-version: 22}
+      - uses: actions/setup-java@v4
+        if: steps.diff.outputs.host
+        with: {distribution: temurin, java-version: '17'}
+      - name: NEXUS host unit + integration tests (fake GUI)
+        if: steps.diff.outputs.host
+        working-directory: windows-pc-agent-lab/nexus-host
+        run: node --test $(ls *.test.mjs | grep -vE 'real|^windows|^browser\.test|^egress-proxy')
+      - name: NEXUS gateway tests
+        if: steps.diff.outputs.gateway
+        working-directory: windows-pc-agent-lab/nexus-gateway
+        run: npm install --no-audit --no-fund && node --test test/*.test.mjs
