@@ -132,8 +132,10 @@ function NxDlg($w) {
   $stack = New-Object System.Collections.Stack; $stack.Push(@($w, 0)); $seen = 0
   while ($stack.Count -gt 0 -and $seen -lt 250 -and $txt.Count -lt 12) {
     $item = $stack.Pop(); $e = $item[0]; $d = $item[1]; $seen++
-    $ct = $e.Current.ControlType
-    if ($ct -eq [System.Windows.Automation.ControlType]::Text) { $nm = NxStr $e.Current.Name 200; if ($nm) { [void]$txt.Add($nm) } }
+    # Windows CI 41477712638: in a real MessageBox UIA exposes the message (and the buttons) as Pane, not Text —
+    # so every named descendant except the window itself is collected; buttons («Yes»/«No») never match the
+    # confirmation wording, so they do not change the decision.
+    if ($seen -gt 1) { $nm = NxStr $e.Current.Name 200; if ($nm) { [void]$txt.Add($nm) } }
     if ($d -ge 8) { continue }
     $k = $TW.GetFirstChild($e)
     while ($null -ne $k) { $stack.Push(@($k, ($d + 1))); $k = $TW.GetNextSibling($k) }

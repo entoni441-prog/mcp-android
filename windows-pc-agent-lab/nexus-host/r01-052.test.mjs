@@ -49,6 +49,13 @@ test('R-01 confirmation dialogs: affirmative → consent, negative/Save → free
   // real Windows: FromPoint over a MessageBox button returned the dialog Window → button unknown → refused, never free
   assert.equal(C(B('NEXUS R01 Delete File', 'Window', {dialog: DLG})).refuse, true);
   assert.equal(C(B('', 'Group', {dialog: DLG})).refuse, true);
+  // dialog text unreadable: affirmative needs consent, negative stays free
+  const MUTE = {modal: false, className: '#32770', title: 'X', text: []};
+  assert.ok(isC(C(B('Yes', 'Pane', {dialog: MUTE})))); assert.equal(C(B('No', 'Pane', {dialog: MUTE})), null);
+  // real MessageBox shape (CI 41477712638): message and buttons are Pane descendants, all collected as text
+  const MB = {modal: false, className: '#32770', title: 'NEXUS R01 Delete File', text: ['Are you sure you want to permanently delete report.docx?', 'Yes', 'No']};
+  assert.ok(isC(C(B('Yes', 'Pane', {dialog: MB})))); assert.equal(C(B('No', 'Pane', {dialog: MB})), null);
+  assert.equal(C(B('NEXUS R01 Delete File', 'Window', {dialog: MB})).refuse, true);
 });
 
 test('R-01 keys: Del/Shift+Del only on selected items; free in text; Ctrl+Shift+Del always; Enter in a confirmation', () => {
