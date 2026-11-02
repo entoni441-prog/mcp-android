@@ -167,6 +167,6 @@ test('/healthz is unauthenticated and leaks nothing; trace id reaches errors and
     assert.match(auditOf(h), /"trace":"abcdef0123456789"/);
     assert.ok(!auditOf(h).includes('not a trace'));
     const cs = (await h.call('connection_status')).structuredContent;
-    assert.equal(cs.host, 'reachable'); assert.equal(cs.version, '0.5.1');
+    assert.equal(cs.host, 'reachable'); assert.equal(cs.version, '0.5.2');
   } finally { h.stop(); }
 });

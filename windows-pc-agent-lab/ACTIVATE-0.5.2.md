@@ -1,0 +1,50 @@
+# ACTIVATE NEXUS 0.5.2 — установка 0.5.1-b → 0.5.2 (для локального Claude Code на ПК владельца)
+
+**Выполнять только после отдельной команды владельца «устанавливай 0.5.2» (этап 6).**
+Ветка `experiment/nexus-0.5.2-owner-access-20261102`, HEAD = коммит из чекпоинта. Файлы и SHA-256 — `MANIFEST-0.5.2.sha256`.
+Сейчас на ПК: Host 0.5.1-b (`92b848f`), профиль `autonomous`; шлюз — 0.5.1-b.
+
+## Что меняется для владельца
+- **Любое установленное приложение** (по ярлыку меню «Пуск») открывается без отдельного разрешения: `capabilities.json` без поля `appAccess` = `policy`. Защищённые/системные (Bitwarden, Диспетчер задач, Параметры безопасности…) — с согласием. Откат к поведению 0.5.1: вручную `"appAccess": "allowlist"` в `%USERPROFILE%\.nexus-host\capabilities.json` (Host перечитывает за ~2 с; `nexus-profile.mjs` этот ключ не меняет).
+- **Блокнот:** если он не запущен, NEXUS не стартует его сам (Блокнот восстановил бы ваши вкладки) → просит открыть его вручную (Owner Handoff), захват экрана на паузе.
+- **Удаление (R-01)**, **защищённые файлы (N-02)**, **произвольные команды в VS Code/Cursor** — через согласие.
+- Новые файлы Host: `policy.mjs`, `handoff.mjs`, `discover.mjs`; новая папка `%USERPROFILE%\.nexus-host\tasks\` (чекпоинты задач, без секретов).
+- Каталог инструментов: 37, как раньше; изменены только описание `open_app` и номер версии.
+
+## Не менять
+Smart App Control / Defender / UAC, `main`, чужие Workers, автозапуск Windows, `wrangler.toml`, секреты шлюза, профиль `autonomous`.
+Не трогать открытые окна владельца. Не запускать Блокнот с нуля.
+
+## 0. Подготовка
+1. `Documents\NEXUS\_src-0.5.2`: клон ветки (или `git fetch` + checkout), HEAD = коммит чекпоинта.
+2. Тесты: все `windows-pc-agent-lab/nexus-host/*.test.mjs`, кроме `*-real*`, `browser.test.mjs`, `egress-proxy.test.mjs` → PASS; затем `node --test --test-force-exit egress-proxy.test.mjs browser.test.mjs` → PASS. `nexus-gateway`: `npm install` + `node --test test/*.test.mjs` → PASS.
+3. SHA-256 всех файлов из `MANIFEST-0.5.2.sha256` (`Get-FileHash -Algorithm SHA256`, без учёта регистра) → все совпадают.
+
+## 1. Резервная копия 0.5.1-b → `_backup-0.5.1b-<дата>`
+Все `.mjs` + `NexusRobot.java` рабочей папки Host → `nexus-host\`; `src\*.mjs` шлюза → `nexus-gateway-src\`; `capabilities.json` → корень бэкапа; SHA-256 бэкапа → `SHA256.txt`.
+
+## 2. Host (без шлюза)
+1. Остановить Host: `DELETE /tunnel`, затем точные PID node и cloudflared из `host_diagnostics`.
+2. Скопировать все `nexus-host/*` из манифеста в рабочую папку Host (новые: `policy.mjs`, `handoff.mjs`, `discover.mjs`).
+3. Запуск только через Планировщик. В окне: `NEXUS Host 0.5.2 — ACTIVE`, `Tunnel registered`.
+4. Локальный smoke (Bearer из token.txt, значение не выводить):
+   - `GET /healthz` → `version:"0.5.2"`; `tools/list` → 37;
+   - `get_capabilities` → `appAccess:"policy"`, `session.active:false`, профиль прежний (`gui`, `browser`, `live_view` как до установки);
+   - `manage_app_access {action:"list"}` → непустой список приложений из «Пуск»;
+   - `live_frame` → `{"state":"off"}`; `finish_task` без сессии → `ended:false`.
+5. Любой FAIL → откат (раздел 5), шлюз НЕ трогать.
+
+## 3. Шлюз (только после PASS п.2 и отдельного «да» владельца)
+Без деплоя Host 0.5.2 работает полностью; ChatGPT лишь видит старое описание `open_app` и версию 0.5.1 в serverInfo.
+1. Скопировать `nexus-gateway/src/catalog.mjs` и `widget.mjs` (остальные файлы `src` не менялись — сверить по манифесту).
+2. `npx wrangler deploy` → записать Version ID. 3. `GET https://nexus-gateway.entoni441.workers.dev/health` → ok.
+
+## 4. ChatGPT (владелец)
+Settings → Plugins → NEXUS — Windows PC → **Refresh tools** → новый чат. Затем приёмка — `NEXUS-0.5.2-ACCEPTANCE.md`.
+
+## 5. Откат
+Host: остановить (2.1) → файлы из бэкапа, удалить `policy.mjs`, `handoff.mjs`, `discover.mjs` → Планировщик → `healthz` version 0.5.1.
+`capabilities.json` из бэкапа (0.5.1-b игнорирует новые ключи, но так чище). Шлюз: `src` из бэкапа → `npx wrangler deploy` или `npx wrangler rollback <Version ID 0.5.1-b>`.
+
+## Отчёт
+Таблица шаг / факт / PASS-FAIL, HEAD, совпадение SHA-256, PID node/cloudflared, Version ID шлюза (если деплоился).
