@@ -1,7 +1,7 @@
 name: nexus-host-ci
 on:
   push:
-    branches: [experiment/nexus-host-mcp-20261101, experiment/nexus-0.4.0-20261101, experiment/nexus-0.4.1-20261101, experiment/nexus-0.4.2-20261101, experiment/nexus-0.4.3-ownership-20261101, experiment/nexus-0.5.0-unified-20261101, experiment/nexus-0.5.1-cleanup-stop-20261102]
+    branches: [experiment/nexus-host-mcp-20261101, experiment/nexus-0.4.0-20261101, experiment/nexus-0.4.1-20261101, experiment/nexus-0.4.2-20261101, experiment/nexus-0.4.3-ownership-20261101, experiment/nexus-0.5.0-unified-20261101, experiment/nexus-0.5.1-cleanup-stop-20261102, experiment/nexus-0.5.2-owner-access-20261102]
     paths: ['windows-pc-agent-lab/nexus-host/**', 'windows-pc-agent-lab/nexus-gateway/**', 'windows-pc-agent-lab/v3/actions.mjs', '.github/workflows/nexus-host-ci.yml']
   workflow_dispatch:
 permissions:
@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: '17'}
       - name: Unit + integration tests (fake GUI, real files/tasks/HTTP)
-        run: node --test windows-pc-agent-lab/nexus-host/server.test.mjs windows-pc-agent-lab/nexus-host/access.test.mjs windows-pc-agent-lab/nexus-host/e2e-gateway.test.mjs windows-pc-agent-lab/nexus-host/windows.test.mjs windows-pc-agent-lab/nexus-host/gui.test.mjs windows-pc-agent-lab/nexus-host/modules.test.mjs windows-pc-agent-lab/nexus-host/capstore.test.mjs windows-pc-agent-lab/nexus-host/consent.test.mjs windows-pc-agent-lab/nexus-host/server-042.test.mjs windows-pc-agent-lab/nexus-host/server-050.test.mjs windows-pc-agent-lab/nexus-host/session.test.mjs windows-pc-agent-lab/nexus-host/cleanup-051.test.mjs windows-pc-agent-lab/nexus-host/browser-risk.test.mjs windows-pc-agent-lab/nexus-host/profile-051.test.mjs
+        run: node --test windows-pc-agent-lab/nexus-host/server.test.mjs windows-pc-agent-lab/nexus-host/access.test.mjs windows-pc-agent-lab/nexus-host/e2e-gateway.test.mjs windows-pc-agent-lab/nexus-host/windows.test.mjs windows-pc-agent-lab/nexus-host/gui.test.mjs windows-pc-agent-lab/nexus-host/modules.test.mjs windows-pc-agent-lab/nexus-host/capstore.test.mjs windows-pc-agent-lab/nexus-host/consent.test.mjs windows-pc-agent-lab/nexus-host/server-042.test.mjs windows-pc-agent-lab/nexus-host/server-050.test.mjs windows-pc-agent-lab/nexus-host/session.test.mjs windows-pc-agent-lab/nexus-host/cleanup-051.test.mjs windows-pc-agent-lab/nexus-host/browser-risk.test.mjs windows-pc-agent-lab/nexus-host/profile-051.test.mjs windows-pc-agent-lab/nexus-host/policy.test.mjs
       - name: Egress proxy + real browser over CDP incl. SSRF/redirect/DNS negatives (Chrome on Linux, Edge on Windows)
         run: node --test --test-force-exit --test-reporter=spec windows-pc-agent-lab/nexus-host/egress-proxy.test.mjs windows-pc-agent-lab/nexus-host/browser.test.mjs
       - name: Real Java 17 Robot under Xvfb
