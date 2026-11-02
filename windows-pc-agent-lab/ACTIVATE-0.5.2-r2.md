@@ -6,7 +6,7 @@
 ## 0. Исходники без потерь
 В `Documents\NEXUS\_src-0.5.2`:
 1. `git status --porcelain` и `git stash list`. Если вывод НЕ пуст — **стоп**: ничего не сбрасывать, `git diff > %TEMP%\nexus-src-uncommitted-<время>.diff`, перечислить файлы в отчёте, ждать решения владельца.
-2. Только при пустом выводе: `git fetch origin experiment/nexus-0.5.2-owner-access-20261102` → `git checkout --detach a22fae6` (не `reset --hard`). `git rev-parse HEAD` = `a22fae6…`.
+2. Только при пустом выводе: `git fetch origin experiment/nexus-0.5.2-owner-access-20261102` → `git checkout --detach 4e316c6` (не `reset --hard`; код = `a22fae6`, позже менялся только этот документ). `git rev-parse HEAD` = `4e316c6…`.
 3. `sha256sum -c windows-pc-agent-lab/MANIFEST-0.5.2-r2.sha256` (или `Get-FileHash` по тем же строкам) — все OK.
 
 ## 1. Тесты
