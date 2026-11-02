@@ -15,6 +15,7 @@
  */
 import path from 'node:path';
 import crypto from 'node:crypto';
+import {isHardDenied} from './capabilities.mjs';
 
 const norm = s => String(s ?? '').toLowerCase().replace(/\.exe$/i, '').trim();
 
@@ -168,6 +169,8 @@ export function classifyIdeInput({keys, text, elem} = {}) {
   if (IDE_COMMAND_CTX.test(name)) return {level: 3, reason: 'arbitrary_command', via: 'command_context'};
   if ((elem?.controlType === 'Edit' && /^>/.test(value)) || (typeof text === 'string' && /^>/.test(text) && !IDE_EDITOR_CTX.test(name)))
     return {level: 3, reason: 'arbitrary_command', via: 'quick_open_command_prefix'};
+  // Enter on a file-tree / list row opens a file — unless the row looks like a command («Tasks: Run Task»).
+  if (k === 'enter' && ['TreeItem', 'ListItem'].includes(elem?.controlType) && !/^[^:]{1,40}:\s/.test(name)) return {level: 1};
   const submits = k === 'enter' || (typeof text === 'string' && /[\r\n]/.test(text));
   if (submits && !IDE_EDITOR_CTX.test(name)) return {level: 3, reason: 'arbitrary_command', via: 'submit_outside_editor'};
   return {level: 1};
@@ -248,3 +251,62 @@ export function notepadLaunchDecision({running}) {
   if (running === false) return {level: 'handoff', reason: 'notepad_cold_start_session_restore'};
   return {level: 'handoff', reason: 'notepad_state_unknown'};
 }
+
+// ── Stage 2: one gate for every GUI target (replaces gui.allowedApp / procs isAllowedApp) ─────────────────────────
+/**
+ * appGate(caps, proc, {title, mode}) → {allow:true, cls} | {allow:false, error, reason} | {allow:false, consent:2|3, what}.
+ *  caps.appAccess 'policy' (default 0.5.2): any app by class, owner may block apps (caps.blockedApps).
+ *  caps.appAccess 'allowlist': legacy 0.5.1 behaviour (inputApps, HARD_DENY) — owner's fallback switch.
+ *  mode 'read' (window list/UIA tree), 'focus', 'input' (mouse/keyboard), 'close' (process close).
+ * Errors keep the 0.5.1 prefix (caller's legacy code) so existing clients keep working.
+ */
+export function appGate(caps, proc, {title = '', mode = 'input'} = {}) {
+  const p = norm(proc);
+  if (!p) return {allow: false, error: 'target_unknown'};
+  if ((caps?.blockedApps || []).some(a => norm(a) === p)) return {allow: false, error: 'blocked_by_owner'};
+  if (caps?.appAccess === 'allowlist') {
+    const ok = !isHardDenied(p) && (caps.inputApps || []).some(a => norm(a) === p);
+    return ok ? {allow: true, cls: 'allowlisted'} : {allow: false, error: 'not_in_allowlist'};
+  }
+  const c = classifyApp(p, {title});
+  if (c.level === 'handoff') return {allow: false, error: 'owner_handoff_required', reason: c.reason};
+  if (c.cls === 'protected') return mode === 'focus' ? {allow: true, cls: c.cls} : {allow: false, consent: 2, what: 'protected_app', cls: c.cls};
+  if (c.cls === 'admin' && mode === 'input' && adminPage(p, {title})?.level === 3) return {allow: false, consent: 3, what: 'security_page', cls: c.cls};
+  return {allow: true, cls: c.cls};
+}
+
+/** Clicking an IDE control that RUNS something (Run, Debug, Run Task, ▶) = arbitrary_command. UNVERIFIED names. */
+const IDE_RUN_CLICK = /^(?:▶|run\b|debug\b|start debugging|run without debugging|run (?:python|code|task|test|script|cell)|run all|запуск|запустить|выполнить|отладка|начать отладку|esegui|avvia debug)/i;
+export function classifyIdeClick(elem) {
+  const t = elem?.controlType, n = String(elem?.name ?? '').trim();
+  if (!['Button', 'MenuItem', 'SplitButton', 'Hyperlink', 'ListItem'].includes(t)) return {level: 1};
+  return IDE_RUN_CLICK.test(n) ? {level: 3, reason: 'arbitrary_command', via: 'click:' + n.slice(0, 60)} : {level: 1};
+}
+
+/** Short line diff for executor-file consent (redacted, bounded). */
+export function shortDiff(oldText, newText, max = 40) {
+  const a = String(oldText ?? '').split(/\r?\n/), b = String(newText ?? '').split(/\r?\n/);
+  const A = new Set(a), B = new Set(b), out = [];
+  for (const l of a) if (!B.has(l)) out.push('- ' + l);
+  for (const l of b) if (!A.has(l)) out.push('+ ' + l);
+  const lines = out.slice(0, max).map(l => redactSecrets(l.slice(0, 300)).text);
+  return {lines, truncated: out.length > max, removed: out.filter(l => l[0] === '-').length, added: out.filter(l => l[0] === '+').length};
+}
+
+/** Deep-redact secrets in a tool result. Image payloads (data/base64 of images) are never touched. */
+export function redactDeep(x, depth = 0, cnt = {n: 0}) {
+  if (depth > 12) return x;
+  if (typeof x === 'string') { if (x.length > 200_000) return x; const r = redactSecrets(x); cnt.n += r.redacted; return r.text; }
+  if (Array.isArray(x)) return x.map(v => redactDeep(v, depth + 1, cnt));
+  if (x && typeof x === 'object') {
+    if (x.type === 'image' && typeof x.data === 'string') return x;
+    const o = {};
+    for (const [k, v] of Object.entries(x)) o[k] = k === 'jpeg' || k === 'png' ? v : redactDeep(v, depth + 1, cnt);
+    if (depth === 0 && cnt.n && !Array.isArray(x)) o.secretsRedacted = cnt.n;
+    return o;
+  }
+  return x;
+}
+
+/** Marker NEXUS puts in place of a secret. Writing it back would destroy the owner's real value. */
+export const REDACTED_MARK = '«redacted»';

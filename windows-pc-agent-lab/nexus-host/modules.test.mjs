@@ -104,7 +104,9 @@ test('process_action: capability, allowlist, kill only NEXUS-owned, never termin
   assert.equal((await p.process_action({pid: 50, action: 'close'})).requested, true);
   assert.deepEqual(calls.at(-1), ['taskkill.exe', '/pid', '50']);
   await assert.rejects(p.process_action({pid: 66, action: 'close'}), /process_not_allowed/);
-  await assert.rejects(p.process_action({pid: 70, action: 'close'}), /process_not_allowed/);
+  await assert.rejects(procsWith({process_control: true, appAccess: 'allowlist'}, LIST).p.process_action({pid: 70, action: 'close'}), /process_not_allowed/);
+  assert.equal((await p.process_action({pid: 70, action: 'close'})).requested, true, '0.5.2 policy mode: any ordinary app (runtime asks the owner for non-owned)');
+  await assert.rejects(procsWith({process_control: true, blockedApps: ['chrome']}, LIST).p.process_action({pid: 70, action: 'close'}), /process_not_allowed/);
   await assert.rejects(p.process_action({pid: 50, action: 'kill'}), /process_not_allowed/);
   p.registerOwned(80, 'task:x');
   await p.process_action({pid: 80, action: 'kill'});

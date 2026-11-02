@@ -96,17 +96,20 @@ test('manage_app_access: grant only via consent+exact target; HARD_DENY never; r
     assert.match((await h.call('manage_app_access', {action: 'request', process: 'mspaint', exe: 'C:\\x\\run.bat'})).content[0].text, /app_exe_invalid/);
     assert.match((await h.call('manage_app_access', {action: 'request', process: 'mspaint', exe: '\\\\srv\\share\\a.exe'})).content[0].text, /app_exe_invalid/);
     assert.match((await h.call('manage_app_access', {action: 'request', process: 'x', exe: 'C:\\Windows\\System32\\cmd.exe'})).content[0].text, /app_hard_denied|app_exe_invalid/);
+    // 0.5.2 policy mode: an ordinary app needs no grant; revoke = owner block; unblocking needs consent again
+    const a0 = (await h.call('manage_app_access', {action: 'request', process: 'mspaint'})).structuredContent;
+    assert.deepEqual([a0.alreadyAllowed, a0.cls], [true, 'ordinary']);
+    const rv = (await h.call('manage_app_access', {action: 'revoke', process: 'mspaint'})).structuredContent;
+    assert.ok(rv.blockedApps.includes('mspaint'));
+    assert.ok(JSON.parse(fs.readFileSync(path.join(h.home, 'capabilities.json'), 'utf8')).blockedApps.includes('mspaint'));
     const r = (await h.call('manage_app_access', {action: 'request', process: 'mspaint'})).structuredContent;
     assert.equal(r.status, 'consent_required'); assert.equal(r.kind, 'grant'); assert.deepEqual(r.options, ['allow', 'cancel']);
-    assert.ok(!(await h.call('get_capabilities')).structuredContent.grants.inputApps.includes('mspaint'), 'nothing granted before consent');
+    assert.ok((await h.call('get_capabilities')).structuredContent.grants.blockedApps.includes('mspaint'), 'still blocked before consent');
     assert.match((await h.call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target + ' '})).content[0].text, /consent_target_mismatch/);
     assert.match((await h.call('confirm_action', {consentId: r.consentId, decision: 'close_discard', target: r.target})).content[0].text, /invalid_args/);
     const c = (await h.call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target})).structuredContent;
-    assert.equal(c.confirmed, true); assert.ok(c.result.inputApps.includes('mspaint'));
+    assert.equal(c.confirmed, true); assert.ok(!c.result.blockedApps.includes('mspaint'));
     assert.match((await h.call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target})).content[0].text, /consent_expired_or_unknown/);
-    assert.ok(JSON.parse(fs.readFileSync(path.join(h.home, 'capabilities.json'), 'utf8')).inputApps.includes('mspaint'));
-    const rv = (await h.call('manage_app_access', {action: 'revoke', process: 'mspaint'})).structuredContent;
-    assert.ok(!rv.inputApps.includes('mspaint'));
     // a hand-edited file that tries to sneak a denied app in is filtered by validation
     assert.match(auditOf(h), /"event":"capabilities_changed"/);
   } finally { h.stop(); }

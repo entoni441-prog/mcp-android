@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-import {executeJob} from '../v3/actions.mjs';
+import {executeJob, safePath} from '../v3/actions.mjs';
 import {listWindows} from './windows.mjs';
 import {TOOLS, VERSION, PROTOCOL_VERSIONS} from './catalog.mjs';
 import {loadCapabilities, validateCapabilities, DEFAULT_CAPABILITIES} from './capabilities.mjs';
@@ -30,6 +30,53 @@ import {createConsent} from './consent.mjs';
 import {createLive} from './live.mjs';
 import {createSession} from './session.mjs';
 import {createApps} from './apps.mjs';
+import {resourceDecision, writeDecision, isProtectedPath, shortDiff, redactDeep, REDACTED_MARK} from './policy.mjs';
+
+/**
+ * 0.5.2 N-02: file tools never read, list, change or move a protected resource without a consent for exactly that
+ * operation and path; writing an executor file (package.json, hooks, .vscode/*.json, *.ps1…) needs level 3 with diff.
+ * Returns null (go on) or a consent_required result. `run` re-executes the same call after the owner allows it.
+ */
+export function fileGuard(name, args, {workspace, caps, consent, run}) {
+  const roots = caps?.protectedPaths || [];
+  const abs = rel => (typeof rel === 'string' ? path.join(workspace, rel) : null);
+  const checks = [];
+  if (name === 'list_dir') checks.push(['list', args?.path ?? '']);
+  else if (name === 'read_text') checks.push(['read', args?.path]);
+  else if (name === 'make_dir') checks.push(['modify', args?.path]);
+  else if (name === 'write_text') checks.push(['write', args?.path]);
+  else if (name === 'file_action') { checks.push([args?.action === 'copy' ? 'copy' : args?.action === 'delete' ? 'delete' : 'modify', args?.path]); if (args?.to) checks.push(['modify', args.to]); }
+  else return null;
+  for (const [op, rel] of checks) {
+    if (typeof rel !== 'string' || (rel !== '' && !safePath(rel))) return null; // invalid → the tool itself rejects it
+    if (op === 'write') {
+      // A file read through NEXUS has its secrets replaced by the marker; writing the marker back would erase them.
+      if (String(args?.content ?? '').includes(REDACTED_MARK)) {
+        let old = ''; try { old = fs.readFileSync(abs(rel), 'utf8'); } catch {}
+        if (!old.includes(REDACTED_MARK)) throw Error('redacted_content_write_refused: edit only the lines without secrets');
+      }
+      const d = writeDecision(rel, []);
+      const prot = resourceDecision('modify', abs(rel), roots);
+      if (prot.level === 2) return ask('protected_file', `изменение защищённого файла «${rel}» (${prot.reason}); содержимое файла будет заменено`);
+      if (d.level === 3) {
+        let old = ''; try { old = fs.readFileSync(abs(rel), 'utf8'); } catch {}
+        const diff = shortDiff(old, String(args?.content ?? ''));
+        return {...ask('executor_file_write', `запись NEXUS в исполняемый файл «${rel}»: −${diff.removed} / +${diff.added} строк; этот файл выполняется при сборке/тестах/коммите`), diff};
+      }
+      continue;
+    }
+    const r = resourceDecision(op, abs(rel), roots);
+    if (r.level === 2) return ask('protected_file', `${{list: 'просмотр списка файлов', read: 'чтение', copy: 'копирование', modify: 'изменение/перемещение', delete: 'удаление (в .nexus-trash)'}[op]} защищённого ресурса «${rel || '.'}» (${r.reason}); прочитанное будет передано в ChatGPT`);
+  }
+  return null;
+  function ask(what, target) { return consent.requestGrant({what, target, apply: () => run()}); }
+}
+/** search_files: protected entries are hidden (their names may themselves be sensitive). */
+function hideProtected(out, {workspace, caps}) {
+  if (!out || !Array.isArray(out.results)) return out;
+  const keep = out.results.filter(r => !isProtectedPath(path.join(workspace, r.path) + (r.type === 'dir' ? path.sep : ''), caps?.protectedPaths || []));
+  return {...out, results: keep, protectedHidden: out.results.length - keep.length};
+}
 const MAX_BODY = 64 * 1024;
 
 export function loadConfig(env = process.env) {
@@ -224,8 +271,13 @@ export async function handleRpc(msg, cfg, deps = {}) {
         rt.store?.refresh('file');
         let out;
         if (name === 'list_windows') out = await listWindows(args, {tmpDir: path.join(cfg.home, 'tmp'), ...execDeps});
-        else if (rt.handlers[name]) out = rt.session ? await rt.session.around(name, () => rt.handlers[name](args)) : await rt.handlers[name](args);
-        else out = await executeJob(name, args, {workspace: cfg.workspace, ...execDeps});
+        else {
+          const call = () => (rt.handlers[name] ? rt.handlers[name](args) : executeJob(name, args, {workspace: cfg.workspace, ...execDeps}));
+          const guarded = async () => (rt.consent && fileGuard(name, args, {workspace: cfg.workspace, caps: rt.caps, consent: rt.consent, run: call})) || await call();
+          out = rt.session ? await rt.session.around(name, guarded) : await guarded();
+          if (name === 'search_files') out = hideProtected(out, {workspace: cfg.workspace, caps: rt.caps});
+        }
+        out = redactDeep(out); // N-09: no secrets in any tool result (images untouched)
         if (name !== 'live_frame') audit(cfg, {by: deps.principal, trace: deps.trace, tool: name, ok: true, ms: Date.now() - started, args: auditArgs(args)});
         if (out && Array.isArray(out.content) && Object.hasOwn(out, 'structured')) {
           return rpcResult(id, {content: out.content, structuredContent: out.structured, isError: false});

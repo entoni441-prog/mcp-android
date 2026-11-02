@@ -21,6 +21,14 @@ import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {executeJob} from '../v3/actions.mjs';
 import {isHardDenied, launchExeOk, APP_NAME, LAUNCH_NAME} from './capabilities.mjs';
+import {appGate, classifyApp, notepadLaunchDecision, launchableExe} from './policy.mjs';
+import {createDiscovery} from './discover.mjs';
+
+/**
+ * 0.5.2 TEMPORARY (A-02): Windows 11 Notepad restores the owner's previous session on a cold start. Until stage 4
+ * hides restored tabs from captures/UIA and this is verified on the owner's PC, NEXUS does not cold-start Notepad.
+ */
+export const NOTEPAD_COLD_START_BLOCKED = true;
 
 const isObj = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const onlyKeys = (a, allowed) => isObj(a) && Object.keys(a).every(k => allowed.includes(k));
@@ -28,7 +36,9 @@ const bad = () => { throw Error('invalid_args'); };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 export function createApps({caps, store, consent, gui, workspace, platform = process.platform, systemRoot = process.env.SystemRoot,
-  launcher = spawn, exists = fs.existsSync, wait = sleep, execDeps = {}}) {
+  launcher = spawn, exists = fs.existsSync, wait = sleep, execDeps = {}, discovery = null}) {
+  const disc = discovery || createDiscovery({platform, systemRoot});
+  const policyMode = () => caps.appAccess !== 'allowlist';
 
   async function settle(proc, before, opts, source, rounds = 8) {
     let after = before;
@@ -58,6 +68,12 @@ export function createApps({caps, store, consent, gui, workspace, platform = pro
         const file = path.join(dir, token + '.txt');
         fs.writeFileSync(file, '', {flag: 'wx'});
         const before = await gui.snapshotApp('notepad');
+        const nd = notepadLaunchDecision({running: Array.isArray(before) ? before.length > 0 : undefined});
+        if (NOTEPAD_COLD_START_BLOCKED && nd.level !== 1) {
+          fs.rmSync(file, {force: true});
+          return {started: false, status: 'owner_action_required', reason: nd.reason, app: 'notepad',
+            instruction: 'Notepad is not running. A cold start would restore the owner\'s previous Notepad session (it may contain secrets). Ask the owner to open Notepad themselves, then call open_app notepad again — or use another editor.'};
+        }
         await launch(path.win32.join(systemRoot, 'System32', 'notepad.exe'), [file]);
         const created = await settle('notepad', before, {token}, 'open_app:notepad');
         return {started: true, app: 'notepad', scratchFile: '.nexus-scratch/' + token + '.txt', createdByNexus: created,
@@ -87,23 +103,35 @@ export function createApps({caps, store, consent, gui, workspace, platform = pro
         return {...out, createdByNexus: created,
           note: 'Only windows/tabs listed in createdByNexus may be closed without asking the owner.' + (created.pending ? ' The window was still opening; NEXUS keeps watching for ~10 s and will own it when it appears.' : '')};
       }
-      const exe = caps.launchApps?.[args.app];
-      if (!exe) throw Error('app_not_granted: use manage_app_access request');
-      if (!launchExeOk(exe) || !exists(exe)) throw Error('app_exe_invalid');
+      let exe = caps.launchApps?.[args.app] || null, via = 'granted';
+      if (!exe && policyMode()) { const d = await disc.find(args.app); if (d) { exe = d.exe; via = 'discovered'; } }
+      if (!exe) throw Error(policyMode() ? 'app_not_found: see manage_app_access list' : 'app_not_granted: use manage_app_access request');
+      { // 0.5.2: launching follows the app class (focus semantics: a protected app may be opened, never read without consent)
+        const g = appGate(caps, path.win32.basename(exe), {mode: 'focus'});
+        if (!g.allow) throw Error(`app_not_allowed: ${g.error}${g.reason ? ' ' + g.reason : ''}`);
+      }
+      if (!(policyMode() ? launchableExe(exe) : launchExeOk(exe)) || !exists(exe)) throw Error('app_exe_invalid');
       const proc = path.win32.basename(exe).replace(/\.exe$/i, '');
       const before = await gui.snapshotApp(proc);
       const pid = await launch(exe, []);
-      return {started: true, app: args.app, pid, createdByNexus: await settle(proc, before, {}, 'open_app:' + args.app),
+      return {started: true, app: args.app, via, pid, createdByNexus: await settle(proc, before, {}, 'open_app:' + args.app),
         note: 'Only windows/tabs listed in createdByNexus may be closed without asking the owner.'};
     },
 
     manage_app_access(args) {
       if (!onlyKeys(args, ['action', 'process', 'exe', 'name']) || !['request', 'revoke', 'list'].includes(args.action)) bad();
-      if (args.action === 'list') return {inputApps: caps.inputApps, launchApps: Object.entries(caps.launchApps || {}).map(([name, exe]) => ({name, exe}))};
+      if (args.action === 'list') {
+        const base = {appAccess: caps.appAccess, blockedApps: caps.blockedApps, inputApps: caps.inputApps, launchApps: Object.entries(caps.launchApps || {}).map(([name, exe]) => ({name, exe}))};
+        if (!policyMode()) return base;
+        return disc.list().then(all => ({...base, note: 'Policy mode: any listed app can be opened with open_app {app} and used without a grant; protected apps (password managers) need consent to be read; shells/UAC → owner.',
+          installed: all.slice(0, 300).map(({app, name, cls}) => ({app, name, cls})), installedTotal: all.length}));
+      }
       if (typeof args.process !== 'string' || !APP_NAME.test(args.process)) bad();
       const proc = args.process.replace(/\.exe$/i, '');
       if (isHardDenied(proc)) throw Error('app_hard_denied');
       if (args.action === 'revoke') return {revoked: proc, ...store.revokeApp(proc, 'manage_app_access')};
+      if (policyMode() && args.exe === undefined && appGate(caps, proc, {mode: 'input'}).allow)
+        return {granted: false, alreadyAllowed: true, process: proc, cls: classifyApp(proc).cls, note: 'No grant needed in policy mode.'};
       let launchSpec = null;
       if (args.exe !== undefined) {
         if (!launchExeOk(args.exe)) throw Error('app_exe_invalid');

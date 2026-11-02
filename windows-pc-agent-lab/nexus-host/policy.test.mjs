@@ -175,3 +175,28 @@ test('N-05/A-02: Notepad is never cold-started for tests; warm start redacts for
   assert.equal(notepadLaunchDecision({running: false}).level, 'handoff');
   assert.equal(notepadLaunchDecision({running: undefined}).reason, 'notepad_state_unknown');
 });
+
+test('stage 2 appGate: policy vs allowlist mode, owner block, protected focus vs read, security pages', async () => {
+  const {appGate, classifyIdeClick} = await import('./policy.mjs');
+  const caps = {appAccess: 'policy', blockedApps: ['Spotify'], inputApps: ['Notepad']};
+  assert.deepEqual(appGate(caps, 'chrome'), {allow: true, cls: 'ordinary'});
+  assert.equal(appGate(caps, 'spotify.exe').error, 'blocked_by_owner');
+  assert.equal(appGate(caps, '').error, 'target_unknown');
+  assert.deepEqual([appGate(caps, 'cmd').error, appGate(caps, 'cmd').reason], ['owner_handoff_required', 'hard_deny']);
+  assert.equal(appGate(caps, 'Bitwarden', {mode: 'focus'}).allow, true);
+  assert.deepEqual([appGate(caps, 'Bitwarden', {mode: 'read'}).consent, appGate(caps, 'Bitwarden').what], [2, 'protected_app']);
+  assert.equal(appGate(caps, 'SystemSettings', {title: 'Display'}).allow, true);
+  assert.deepEqual([appGate(caps, 'SystemSettings', {title: 'Windows Security'}).consent, appGate(caps, 'SystemSettings', {title: 'Windows Security', mode: 'read'}).allow], [3, true]);
+  const legacy = {...caps, appAccess: 'allowlist'};
+  assert.equal(appGate(legacy, 'Notepad').allow, true);
+  assert.equal(appGate(legacy, 'chrome').error, 'not_in_allowlist');
+  for (const name of ['Run', 'Run and Debug', 'Start Debugging (F5)', 'Run Task', 'Запустить', '▶']) assert.equal(classifyIdeClick({controlType: 'Button', name}).level, 3, name);
+  for (const name of ['Explorer', 'Source Control', 'Runtime.md', 'Close']) assert.equal(classifyIdeClick({controlType: 'Button', name}).level, 1, name);
+  assert.equal(classifyIdeClick({controlType: 'Text', name: 'Run'}).level, 1, 'plain text is not a control');
+});
+
+test('stage 2 IDE: Enter on a file-tree/list row is autonomous unless the row is a command', () => {
+  assert.equal(classifyIdeInput({keys: 'enter', elem: {controlType: 'TreeItem', name: 'server.mjs'}}).level, 1);
+  assert.equal(classifyIdeInput({keys: 'enter', elem: {controlType: 'ListItem', name: 'policy.test.mjs, nexus-host'}}).level, 1);
+  assert.equal(classifyIdeInput({keys: 'enter', elem: {controlType: 'ListItem', name: 'Tasks: Run Task'}}).level, 3);
+});

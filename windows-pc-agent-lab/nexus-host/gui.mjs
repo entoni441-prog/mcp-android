@@ -23,7 +23,8 @@ import zlib from 'node:zlib';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {UIA_SCRIPT} from './uia-script.mjs';
-import {requireCap, isHardDenied} from './capabilities.mjs';
+import {requireCap} from './capabilities.mjs';
+import {appGate, classifyIdeInput, classifyIdeClick, redactSecrets} from './policy.mjs';
 import {classifyKeys, classifyClick, createConsent} from './consent.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -127,8 +128,6 @@ export function mapping(info, root) {
   };
 }
 
-const allowedApp = (caps, name) => typeof name === 'string' && name !== '' && !isHardDenied(name) &&
-  caps.inputApps.some(a => a.toLowerCase() === name.toLowerCase());
 
 // ───────────── tiny PNG (image_selftest) ─────────────
 function crc32(buf) { let c, crc = ~0; for (const b of buf) { c = (crc ^ b) & 0xff; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; crc = (crc >>> 8) ^ c; } return ~crc >>> 0; }
@@ -162,10 +161,36 @@ export function createGui({caps, home, workspace, platform = process.platform, r
   let infoCache = null, rootCache = null;
   const info = async () => (infoCache ||= await getRobot().cmd('info'));
 
-  async function checkPid(pid) {
+  /**
+   * 0.5.2: every target goes through policy.appGate. Returns null (go on) or a consent_required result whose
+   * confirm_action replays the same tool once, for the same window (policyOk), and only for that need.
+   */
+  const LABEL = {protected_app: 'защищённое приложение', security_page: 'страница безопасности', arbitrary_command: 'выполнение команды'};
+  function describeInput(args, el) {
+    if (typeof args?.text === 'string') return `ввод текста «${redactSecrets(args.text).text.slice(0, 200)}»`;
+    if (typeof args?.keys === 'string') return `клавиши ${args.keys}`;
+    if (args?.action) return `${args.action} по «${String(el?.name ?? '').slice(0, 80)}»`;
+    return 'чтение окна';
+  }
+  function policy({proc, title = '', mode, hwnd = null, tool, args, opts, legacy, extra = null, el = null}) {
+    const g = appGate(caps, proc, {title, mode});
+    if (!g.allow && !g.consent) throw Error(`${legacy}: ${g.error}${g.reason ? ' ' + g.reason : ''}`);
+    const need = g.consent ? {level: g.consent, what: g.what} : extra;
+    if (!need) return null;
+    const pc = opts?.policyOk;
+    if (pc) {
+      if (pc.what === need.what && pc.hwnd === String(hwnd ?? '')) return null;
+      throw Error('consent_target_changed');
+    }
+    const target = `${LABEL[need.what] || need.what} — ${proc}${title ? ` «${String(title).slice(0, 80)}»` : ''}: ${describeInput(args, el)}${need.via ? ` [${need.via}]` : ''}`;
+    return consent.requestGrant({what: need.what, target, apply: () => api[tool](args, {policyOk: {what: need.what, hwnd: String(hwnd ?? '')}})});
+  }
+
+  async function checkPid(pid, mode = 'read', tool = null, args = null, opts = null) {
     const r = await uia({mode: 'windows', pid});
-    if (!allowedApp(caps, r.target?.process)) throw Error('app_not_allowed');
-    return r;
+    const w0 = (r.windows || [])[0] || {};
+    const g = policy({proc: r.target?.process, title: w0.name, mode, hwnd: w0.hwnd ?? 'pid:' + pid, tool, args, opts, legacy: 'app_not_allowed'});
+    return g ? {consentResult: g} : r;
   }
 
   const NEW_KEYS = new Set(['ctrl+n', 'ctrl+t', 'ctrl+shift+n', 'shift+ctrl+n']);
@@ -246,7 +271,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     return !w || (!!rid && !tabsOf(w).some(t => t.rid === rid));
   }
 
-  return {
+  const api = {
     consent,
     /** Snapshot all windows+tabs of a process name (used around open_app / new-tab keys to record NEXUS-created ones). */
     async snapshotApp(name) { if (platform !== 'win32') return []; try { return await apps(name); } catch { return null; } },
@@ -385,23 +410,25 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       } finally { fs.rmSync(file, {force: true}); }
     },
 
-    async window_info(args) {
+    async window_info(args, opts = null) {
       requireCap(caps, 'ui_read'); winOnly();
       if (!onlyKeys(args, ['pid']) || !int(args.pid, 1, 2 ** 31)) bad();
-      const r = await checkPid(args.pid);
+      const r = await checkPid(args.pid, 'read', 'window_info', args, opts);
+      if (r.consentResult) return r.consentResult;
       const m = mapping(await info(), r.root);
       return {pid: args.pid, process: r.target.process, foreground: r.focused?.pid === args.pid, coordinateMapping: !!m,
         windows: (r.windows || []).slice(0, 20).map(w => ({name: String(w.name || '').slice(0, 200), className: w.className, rect: m ? m.rectToScreen(w.rect) : null}))};
     },
 
-    async inspect_ui(args) {
+    async inspect_ui(args, opts = null) {
       requireCap(caps, 'ui_read'); winOnly();
       if (!onlyKeys(args, ['pid', 'maxDepth', 'maxNodes', 'includeText']) || !int(args.pid, 1, 2 ** 31)) bad();
       const depth = args.maxDepth ?? 4, max = args.maxNodes ?? 150;
       if (!int(depth, 1, 8) || !int(max, 1, 400)) bad();
       if (args.includeText !== undefined && typeof args.includeText !== 'boolean') bad();
       const r = await uia({mode: 'tree', pid: args.pid, depth, max});
-      if (!allowedApp(caps, r.target?.process)) throw Error('app_not_allowed');
+      const pg = policy({proc: r.target?.process, title: r.tree?.[0]?.name, mode: 'read', hwnd: 'pid:' + args.pid, tool: 'inspect_ui', args, opts, legacy: 'app_not_allowed'});
+      if (pg) return pg;
       const m = mapping(await info(), r.root);
       // 0.5.0 data protection: the Name of a Document/Edit control IS the document text (e.g. a password file open in
       // Notepad). Redacted unless includeText=true; only the length is returned.
@@ -415,7 +442,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     async focus_window(args) {
       requireCap(caps, 'ui_read'); winOnly();
       if (!onlyKeys(args, ['pid']) || !int(args.pid, 1, 2 ** 31)) bad();
-      const w = await checkPid(args.pid);
+      const w = await checkPid(args.pid, 'focus');
       if (!w.windows?.length) throw Error('window_not_found');
       const hwnds = new Set(w.windows.filter(x => x.hwnd).map(x => String(x.hwnd)));
       const isOn = f => f?.ok === true && (f.pid === args.pid || (!!f.topHwnd && hwnds.has(String(f.topHwnd))));
@@ -462,7 +489,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         hint: caps.gui_input ? 'Window not reachable (covered or minimised?). No input was sent to other windows.' : 'Enable gui_input to allow the safe title-bar fallback.'};
     },
 
-    async mouse_action(args, {consented = null, decision = null} = {}) {
+    async mouse_action(args, {consented = null, decision = null, policyOk = null} = {}) {
       requireCap(caps, 'gui_input'); winOnly();
       if (!onlyKeys(args, ['action', 'x', 'y', 'x2', 'y2', 'amount'])) bad();
       const A = ['move', 'click', 'double_click', 'right_click', 'scroll', 'drag'];
@@ -480,7 +507,10 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         const u = m.toUia(x, y);
         const at = await uia({mode: 'at', x: u.x, y: u.y});
         if (JSON.stringify(at.root) !== JSON.stringify(rootCache)) { rootCache = at.root; infoCache = null; throw Error('screen_changed_retry'); }
-        if (!allowedApp(caps, at.at?.process)) throw Error('target_not_allowed');
+        const ide = appGate(caps, at.at?.process, {title: at.at?.window?.name, mode: 'input'}).cls === 'ide' ? classifyIdeClick(at.at?.elem) : null;
+        const pg = policy({proc: at.at?.process, title: at.at?.window?.name, mode: 'input', hwnd: at.at?.window?.hwnd, tool: 'mouse_action', args,
+          opts: {policyOk}, legacy: 'target_not_allowed', el: at.at?.elem, extra: ide?.level === 3 ? {level: 3, what: 'arbitrary_command', via: ide.via} : null});
+        if (pg) return pg;
         target = {process: at.at.process, pid: at.at.pid, control: at.at.controlType, name: at.at.elem?.name};
         lastAt = at.at;
       }
@@ -500,7 +530,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       return {done: true, action: args.action, target, foregroundAfter: after.focused?.process || null, ...(c ? {closeAction: c.kind, consented: !!consented} : {})};
     },
 
-    async keyboard_action(args, {consented = null, decision = null} = {}) {
+    async keyboard_action(args, {consented = null, decision = null, policyOk = null} = {}) {
       requireCap(caps, 'gui_input'); winOnly();
       if (!onlyKeys(args, ['text', 'keys'])) bad();
       const hasText = typeof args.text === 'string', hasKeys = typeof args.keys === 'string';
@@ -509,7 +539,15 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       if (hasKeys && !/^(?:(?:ctrl|shift|alt)\+){0,3}(?:enter|tab|esc|backspace|delete|space|up|down|left|right|home|end|pageup|pagedown|f(?:[1-9]|1[0-2])|[a-z0-9])$/.test(args.keys)) bad();
       if (hasKeys && /^(?=.*ctrl)(?=.*alt)/.test(args.keys)) bad(); // Ctrl+Alt+… = AltGr / system chords: refused
       const before = await uia({mode: 'context'});
-      if (!before.focused?.ok || !allowedApp(caps, before.focused.process)) throw Error('focus_not_allowed');
+      if (!before.focused?.ok) throw Error('focus_not_allowed');
+      {
+        const title = before.window?.name;
+        const ide = appGate(caps, before.focused.process, {title, mode: 'input'}).cls === 'ide'
+          ? classifyIdeInput({keys: hasKeys ? args.keys : null, text: hasText ? args.text : undefined, elem: before.elem}) : null;
+        const pg = policy({proc: before.focused.process, title, mode: 'input', hwnd: before.window?.hwnd, tool: 'keyboard_action', args,
+          opts: {policyOk}, legacy: 'focus_not_allowed', el: before.elem, extra: ide?.level === 3 ? {level: 3, what: 'arbitrary_command', via: ide.via} : null});
+        if (pg) return pg;
+      }
       const c = hasKeys ? classifyKeys(args.keys, before) : null;
       if (c && consented) {
         const sel = (before.window?.tabs || []).find(t => t.selected);
@@ -531,4 +569,5 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         ...(c ? {closeAction: c.kind, consented: !!consented} : {}), ...(created ? {createdByNexus: created} : {})};
     },
   };
+  return api;
 }

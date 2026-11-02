@@ -11,7 +11,9 @@ const cfg = loadConfig({NEXUS_HOME: path.join(tmp, 'home'), NEXUS_WORKSPACE: pat
 const launched = [];
 const launchedArgs = [];
 const fakeLauncher = (exe, args = []) => { launched.push(exe); launchedArgs.push(args); const h = {}; return {once: (ev, fn) => { if (ev === 'spawn') setImmediate(fn); return h; }, unref() {}}; };
-const server = createServer(cfg, {platform: 'win32', systemRoot: 'C:\\Windows', launcher: fakeLauncher});
+// 0.5.2: Notepad is opened only when it already runs (A-02) — the fake UIA reports one owner Notepad window.
+const guiDeps = {platform: 'win32', runUia: async a => (a.mode === 'apps' ? {apps: a.name === 'notepad' ? [{hwnd: 1, pid: 5, process: 'Notepad', name: 'owner', tabs: []}] : []} : {})};
+const server = createServer(cfg, {platform: 'win32', systemRoot: 'C:\\Windows', launcher: fakeLauncher, guiDeps, appsDeps: {discovery: {list: async () => [], find: async () => null}, wait: async () => {}}});
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${server.address().port}/mcp`;
 test.after(() => server.close());

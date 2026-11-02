@@ -19,6 +19,8 @@ function diff(a, b) {
   const changes = {};
   for (const k of FLAGS) if (a[k] !== b[k]) changes[k] = [a[k], b[k]];
   if (JSON.stringify(a.inputApps) !== JSON.stringify(b.inputApps)) changes.inputApps = [a.inputApps, b.inputApps];
+  if (JSON.stringify(a.blockedApps) !== JSON.stringify(b.blockedApps)) changes.blockedApps = [a.blockedApps, b.blockedApps];
+  if (a.appAccess !== b.appAccess) changes.appAccess = [a.appAccess, b.appAccess];
   if (JSON.stringify(a.tasks) !== JSON.stringify(b.tasks)) changes.tasks = [Object.keys(a.tasks), Object.keys(b.tasks)];
   if (JSON.stringify(a.launchApps) !== JSON.stringify(b.launchApps)) changes.launchApps = [Object.keys(a.launchApps || {}), Object.keys(b.launchApps || {})];
   for (const k of ['javaPath', 'edgePath']) if (a[k] !== b[k]) changes[k] = [a[k], b[k]];
@@ -87,16 +89,20 @@ export function createCapStore({file, initial, audit = () => {}, intervalMs = 20
       const list = Array.isArray(raw.inputApps) ? raw.inputApps : [...caps.inputApps];
       if (!list.some(a => a.toLowerCase() === proc.toLowerCase())) list.push(proc);
       raw.inputApps = list;
+      if (Array.isArray(raw.blockedApps)) raw.blockedApps = raw.blockedApps.filter(a => a.toLowerCase() !== proc.toLowerCase());
       if (launch) raw.launchApps = {...(raw.launchApps || {}), [launch.name]: launch.exe};
     }, source);
-    return {inputApps: caps.inputApps, launchApps: Object.keys(caps.launchApps || {})};
+    return {inputApps: caps.inputApps, blockedApps: caps.blockedApps, launchApps: Object.keys(caps.launchApps || {})};
   }
   function revokeApp(proc, source = 'tool') {
     edit(raw => {
       raw.inputApps = (Array.isArray(raw.inputApps) ? raw.inputApps : [...caps.inputApps]).filter(a => a.toLowerCase() !== proc.toLowerCase());
       if (raw.launchApps) for (const k of Object.keys(raw.launchApps)) if (k === proc.toLowerCase()) delete raw.launchApps[k];
+      const bl = Array.isArray(raw.blockedApps) ? raw.blockedApps : [];
+      if (!bl.some(a => a.toLowerCase() === proc.toLowerCase())) bl.push(proc);
+      raw.blockedApps = bl;
     }, source);
-    return {inputApps: caps.inputApps, launchApps: Object.keys(caps.launchApps || {})};
+    return {inputApps: caps.inputApps, blockedApps: caps.blockedApps, launchApps: Object.keys(caps.launchApps || {})};
   }
 
   const view = new Proxy({}, {
@@ -110,7 +116,7 @@ export function createCapStore({file, initial, audit = () => {}, intervalMs = 20
   return {
     view, refresh, set, grantApp, revokeApp, edit,
     get: () => caps,
-    status: () => ({...Object.fromEntries(FLAGS.map(k => [k, caps[k]])), inputApps: caps.inputApps, launchApps: Object.keys(caps.launchApps || {}), tasks: Object.keys(caps.tasks), fileError: lastError, settableFromChat: SETTABLE}),
+    status: () => ({...Object.fromEntries(FLAGS.map(k => [k, caps[k]])), appAccess: caps.appAccess, blockedApps: caps.blockedApps, inputApps: caps.inputApps, launchApps: Object.keys(caps.launchApps || {}), tasks: Object.keys(caps.tasks), fileError: lastError, settableFromChat: SETTABLE}),
     watch() { if (file && !timer) { timer = setInterval(() => refresh('file'), intervalMs); timer.unref?.(); } },
     stop() { clearInterval(timer); timer = null; },
   };

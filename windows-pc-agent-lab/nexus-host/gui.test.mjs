@@ -58,12 +58,72 @@ test('mouse click on allowlisted app: checked point mapped to UIA space, then Ro
   assert.ok(f.robotCmds.includes('click 400 300 left 1'));
 });
 
-test('mouse refused over a terminal, UAC, desktop or non-allowlisted app; Robot never called', async () => {
-  for (const proc of ['powershell', 'WindowsTerminal', 'cmd', 'consent', 'explorer', 'chrome', '']) {
+test('mouse refused over a terminal, UAC, shell UI or unknown target; Robot never called', async () => {
+  for (const proc of ['powershell', 'WindowsTerminal', 'cmd', 'consent', 'ApplicationFrameHost', 'SearchHost', '']) {
     const f = fakes({at: {pid: 9, process: proc}});
     await assert.rejects(gui(f).mouse_action({action: 'click', x: 1, y: 1}), /target_not_allowed/, proc);
     assert.ok(!f.robotCmds.some(c => c.startsWith('click')), proc);
   }
+});
+
+test('0.5.2 allowlist mode (owner fallback) keeps the 0.5.1 behaviour: non-listed apps refused', async () => {
+  for (const proc of ['explorer', 'chrome', 'Code']) {
+    const f = fakes({at: {pid: 9, process: proc}});
+    await assert.rejects(gui(f, {appAccess: 'allowlist'}).mouse_action({action: 'click', x: 1, y: 1}), /target_not_allowed: not_in_allowlist/, proc);
+    assert.ok(!f.robotCmds.some(c => c.startsWith('click')), proc);
+  }
+});
+
+test('0.5.2 N-01: ordinary apps, explorer and IDE need no allowlist in policy mode', async () => {
+  for (const proc of ['chrome', 'explorer', 'mspaint', 'Code', 'WINWORD']) {
+    const f = fakes({at: {pid: 9, process: proc}});
+    const r = await gui(f).mouse_action({action: 'click', x: 1, y: 1});
+    assert.equal(r.done, true, proc);
+  }
+});
+
+test('0.5.2: owner-blocked app is refused even in policy mode', async () => {
+  const f = fakes({at: {pid: 9, process: 'chrome'}});
+  await assert.rejects(gui(f, {blockedApps: ['chrome']}).mouse_action({action: 'click', x: 1, y: 1}), /target_not_allowed: blocked_by_owner/);
+  assert.ok(!f.robotCmds.some(c => c.startsWith('click')));
+});
+
+test('0.5.2 N-02: input/reading in a password manager needs one-time consent; replay runs once for that window only', async () => {
+  const {createConsent} = await import('./consent.mjs');
+  const consent = createConsent();
+  const f = fakes({at: {pid: 9, process: 'Bitwarden', window: {hwnd: 77, name: 'Bitwarden'}}});
+  const g = createGui({caps: caps(), home: tmp, workspace: tmp, platform: 'win32', runUia: f.uia, robot: f.robot, consent});
+  const r = await g.mouse_action({action: 'click', x: 1, y: 1});
+  assert.equal(r.status, 'consent_required'); assert.equal(r.what, 'protected_app');
+  assert.match(r.target, /защищённое приложение — Bitwarden/);
+  assert.ok(!f.robotCmds.some(c => c.startsWith('click')), 'nothing sent before consent');
+  const p = consent.take(r.consentId, 'allow', r.target);
+  const out = await p.apply();
+  assert.equal(out.done, true);
+  assert.equal(f.robotCmds.filter(c => c.startsWith('click')).length, 1);
+  assert.throws(() => consent.take(r.consentId, 'allow', r.target), /expired_or_unknown/, 'single use');
+  // focusing a protected app is allowed (showing it to the owner is not reading it)
+  const f2 = fakes(); const uia0 = f2.uia;
+  f2.uia = async a => (a.mode === 'windows' ? {...(await uia0(a)), target: {pid: a.pid, process: 'Bitwarden'}} : uia0(a));
+  const g2 = createGui({caps: caps(), home: tmp, workspace: tmp, platform: 'win32', runUia: f2.uia, robot: f2.robot, consent});
+  assert.equal((await g2.window_info({pid: 9})).status, 'consent_required', 'window titles of a vault = reading');
+});
+
+test('0.5.2 IDE: typing into the VS Code terminal or pressing F5 needs consent; editing code does not', async () => {
+  const {createConsent} = await import('./consent.mjs');
+  const mk = elem => {
+    const f = fakes({focused: {ok: true, pid: 70, process: 'Code'}}); const uia0 = f.uia;
+    f.uia = async a => (a.mode === 'context' ? {...(await uia0(a)), elem} : uia0(a));
+    return {f, g: createGui({caps: caps(), home: tmp, workspace: tmp, platform: 'win32', runUia: f.uia, robot: f.robot, consent: createConsent()})};
+  };
+  let {f, g} = mk({controlType: 'Edit', name: 'Terminal 1, powershell'});
+  let r = await g.keyboard_action({text: 'npm publish'});
+  assert.equal(r.what, 'arbitrary_command'); assert.match(r.target, /ввод текста «npm publish»/);
+  assert.ok(!f.robotCmds.some(c => c.startsWith('paste')));
+  ({f, g} = mk({controlType: 'Edit', name: 'Editor content;Press Alt+F1'}));
+  assert.equal((await g.keyboard_action({keys: 'f5'})).what, 'arbitrary_command');
+  assert.equal((await g.keyboard_action({text: 'const x = 1;\n'})).done, true);
+  assert.equal((await g.keyboard_action({keys: 'ctrl+s'})).done, true);
 });
 
 test('hard-denied apps cannot be allowlisted via capabilities.json', async () => {
@@ -74,7 +134,7 @@ test('hard-denied apps cannot be allowlisted via capabilities.json', async () =>
 test('drag checks both end points', async () => {
   const f = fakes();
   let n = 0; const uia0 = f.uia;
-  f.uia = async a => { if (a.mode === 'at' && ++n === 2) return {root: ROOT, at: {pid: 1, process: 'explorer'}}; return uia0(a); };
+  f.uia = async a => { if (a.mode === 'at' && ++n === 2) return {root: ROOT, at: {pid: 1, process: 'cmd'}}; return uia0(a); };
   await assert.rejects(gui(f).mouse_action({action: 'drag', x: 1, y: 1, x2: 500, y2: 500}), /target_not_allowed/);
   assert.ok(!f.robotCmds.some(c => c.startsWith('drag')));
 });

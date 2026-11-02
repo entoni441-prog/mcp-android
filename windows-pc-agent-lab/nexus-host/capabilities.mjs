@@ -19,6 +19,9 @@ export const DEFAULT_CAPABILITIES = Object.freeze({
   live_view: false,          // 0.5.0: live screen stream (watch_nexus widget, gateway /live) — shows everything on screen
   grantsFromChat: true,      // 0.5.1: owner switch — may set_capability RAISE a grant from chat? (lowering is always allowed)
   inputApps: ['Notepad', 'CalculatorApp'],
+  appAccess: 'policy',       // 0.5.2: 'policy' = any app by class (policy.mjs); 'allowlist' = 0.5.1 inputApps only
+  protectedPaths: [],        // 0.5.2: absolute folders/files the owner marked protected (N-02), in addition to built-ins
+  blockedApps: [],           // 0.5.2: apps the owner blocked (revoke) — never a target in policy mode
   launchApps: {},            // 0.5.0: owner-approved launchable apps {name: absolute exe path}; added via manage_app_access
   tasks: {},
   javaPath: null,
@@ -61,6 +64,23 @@ export function validateCapabilities(raw) {
     if (typeof raw[k] !== 'boolean') throw Error('invalid_capabilities: ' + k);
     c[k] = raw[k];
   }
+  if (Object.hasOwn(raw, 'appAccess')) {
+    if (!['policy', 'allowlist'].includes(raw.appAccess)) throw Error('invalid_capabilities: appAccess');
+    c.appAccess = raw.appAccess;
+  }
+  c.blockedApps = [];
+  if (Object.hasOwn(raw, 'blockedApps')) {
+    if (!Array.isArray(raw.blockedApps) || raw.blockedApps.length > 100 || !raw.blockedApps.every(a => typeof a === 'string' && APP_NAME.test(a))) throw Error('invalid_capabilities: blockedApps');
+    c.blockedApps = raw.blockedApps.map(a => a.replace(/\.exe$/i, ''));
+  }
+  Object.freeze(c.blockedApps);
+  c.protectedPaths = [];
+  if (Object.hasOwn(raw, 'protectedPaths')) {
+    const P = raw.protectedPaths;
+    if (!Array.isArray(P) || P.length > 100 || !P.every(x => typeof x === 'string' && x.length <= 400 && !x.includes('\0') && (path.win32.isAbsolute(x) || path.posix.isAbsolute(x)))) throw Error('invalid_capabilities: protectedPaths');
+    c.protectedPaths = [...P];
+  }
+  Object.freeze(c.protectedPaths);
   if (Object.hasOwn(raw, 'inputApps')) {
     if (!Array.isArray(raw.inputApps) || raw.inputApps.length > 20 || !raw.inputApps.every(a => typeof a === 'string' && /^[A-Za-z0-9._-]{1,60}$/.test(a))) throw Error('invalid_capabilities: inputApps');
     c.inputApps = raw.inputApps.map(a => a.replace(/\.exe$/i, '')).filter(a => !isHardDenied(a));

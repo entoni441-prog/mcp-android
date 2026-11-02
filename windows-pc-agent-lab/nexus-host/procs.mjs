@@ -9,7 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
-import {requireCap, isHardDenied} from './capabilities.mjs';
+import {requireCap} from './capabilities.mjs';
+import {appGate} from './policy.mjs';
 
 const isObj = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const onlyKeys = (a, allowed) => isObj(a) && Object.keys(a).every(k => allowed.includes(k));
@@ -72,7 +73,9 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
       const p = (await listAll()).find(x => x.pid === args.pid);
       if (!p) throw Error('process_not_found');
       const isOwned = owned.has(p.pid) || !!consent?.owned.pids.has(p.pid);
-      const isAllowedApp = !isHardDenied(p.process) && caps.inputApps.some(a => a.toLowerCase() === p.process.toLowerCase());
+      // 0.5.2: any app allowed by policy (a protected app is closable too — closing a non-owned app always asks the owner).
+      const pg = appGate(caps, p.process, {mode: 'close'});
+      const isAllowedApp = pg.allow || !!pg.consent;
       if (args.action === 'kill' ? !isOwned : !(isOwned || isAllowedApp)) throw Error('process_not_allowed');
       // 0.4.2: closing an allowlisted app NEXUS did not start (it may hold the owner's documents) needs owner consent.
       if (args.action === 'close' && !isOwned && consent) {
