@@ -39,6 +39,15 @@ test('NexusRobot.java: info, capture, input, defence-in-depth validation', {skip
     assert.equal(fr.imageW, Math.min(480, info.w));
     assert.equal(fr.cursorX, cx); assert.equal(fr.cursorY, cy);
     await assert.rejects(d.cmd(`frame 480 5 ${Buffer.from(jf).toString('base64')}`), /out_of_range/);
+    // 0.5.2 owner 02.11: pointer = where the mouse is (owner-activity guard); caption bar drawn into the Live View frame
+    assert.deepEqual(await d.cmd('pointer'), {x: cx, y: cy});
+    const plain = fs.statSync(jf).size;
+    const capFr = await d.cmd(`frame 480 60 ${Buffer.from(jf).toString('base64')} - ${Buffer.from('NEXUS working | keyboard_action -> Notepad | ok | 1s ago').toString('base64')}`);
+    assert.equal(capFr.imageW, fr.imageW);
+    const withCap = fs.readFileSync(jf);
+    assert.deepEqual([...withCap.subarray(0, 3)], [0xff, 0xd8, 0xff]);
+    console.log('frame bytes plain/caption', plain, withCap.length);
+    await assert.rejects(d.cmd(`frame 480 60 ${Buffer.from(jf).toString('base64')} - x y`), /invalid_args/);
     // 0.5.2 A-02: redaction masks are painted BEFORE encoding (whole screen masked → one sampled colour)
     const mc = await d.cmd(`capture 640 ${Buffer.from(file).toString('base64')} ${info.x},${info.y},${info.w},${info.h}`);
     console.log('robot capture masked', JSON.stringify(mc));

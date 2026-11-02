@@ -77,8 +77,12 @@ export function createLive({caps, store, capture, session = null, audit = () => 
       return f;
     },
     live_control(args = {}) {
-      if (!onlyKeys(args, ['action']) || !['status', 'stop'].includes(args.action)) bad();
+      if (!onlyKeys(args, ['action']) || !['status', 'stop', 'resume'].includes(args.action)) bad();
+      if (args.action === 'resume') return {resumed: session?.resumeAfterStop?.() || false, state: state()};
       if (args.action === 'stop') {
+        // Owner requirement 02.11: STOP on the phone stops the whole task (session end: NEXUS windows closed, tasks
+        // cancelled) and blocks new work for a while — the agent must wait for the owner's go-ahead in chat.
+        if (session?.ownerStop) { session.optOutLive(); session.ownerStop().catch(() => {}); setViewing(false, 'stop'); return {state: state(), stopped: true, streaming: false, taskStopped: true}; }
         // 0.5.1: STOP ends the stream now (source side) and keeps it off for the rest of this session.
         // The persistent grant is not revoked — revoking it is set_capability live_view=false.
         if (session) { session.optOutLive(); if (session.status().kind === 'watch') session.end('live_stop').catch(() => {}); }

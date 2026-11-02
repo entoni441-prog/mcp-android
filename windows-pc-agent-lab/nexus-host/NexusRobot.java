@@ -127,11 +127,14 @@ public class NexusRobot {
       case "frame": {
         // 0.5.0 Live View: JPEG of the primary screen with the mouse cursor drawn in (Robot does not capture it).
         // frame <maxW> <quality 10..95> <base64 file>
-        if (p.length != 4 && p.length != 5) throw new IllegalArgumentException("invalid_args");
+        // 0.5.2 (owner 02.11): optional 6th arg = base64 UTF-8 caption (what NEXUS is doing), drawn as a bar at the bottom.
+        if (p.length < 4 || p.length > 6) throw new IllegalArgumentException("invalid_args");
         int maxW = num(p[1], 200, 4000);
         int q = num(p[2], 10, 95);
         String file = new String(Base64.getDecoder().decode(p[3]), StandardCharsets.UTF_8);
-        List<Rectangle> ms = masks(p.length == 5 ? p[4] : null);
+        List<Rectangle> ms = masks(p.length >= 5 ? p[4] : null);
+        String caption = p.length == 6 ? new String(Base64.getDecoder().decode(p[5]), StandardCharsets.UTF_8) : null;
+        if (caption != null && caption.length() > 160) caption = caption.substring(0, 160);
         Rectangle b = primary();
         long t = System.nanoTime();
         BufferedImage img = robot.createScreenCapture(b);
@@ -158,6 +161,14 @@ public class NexusRobot {
             g.setColor(new Color(255, 60, 60, 160)); g.setStroke(new BasicStroke(2f)); g.drawOval(x - 9, y - 9, 18, 18);
           }
         }
+        if (caption != null && !caption.isEmpty()) {
+          int fh = Math.max(12, Math.min(22, oh / 40));
+          g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, fh));
+          int bh = fh + 10;
+          g.setColor(new Color(0, 0, 0, 185)); g.fillRect(0, oh - bh, ow, bh);
+          g.setColor(caption.contains("ERROR") || caption.contains("STOPPED") ? new Color(255, 120, 120) : Color.WHITE);
+          g.drawString(caption, 8, oh - 6);
+        }
         g.dispose();
         ImageWriter wr = ImageIO.getImageWritersByFormatName("jpg").next();
         ImageWriteParam prm = wr.getDefaultWriteParam();
@@ -168,6 +179,13 @@ public class NexusRobot {
         } finally { wr.dispose(); }
         return String.format(Locale.ROOT, "{\"screenW\":%d,\"screenH\":%d,\"imageW\":%d,\"imageH\":%d,\"cursorX\":%d,\"cursorY\":%d,\"masked\":%d,\"ms\":%d}",
           b.width, b.height, ow, oh, cx, cy, masked, (System.nanoTime() - t) / 1_000_000);
+      }
+      case "pointer": {
+        // 0.5.2 (owner 02.11): where the mouse is now — NEXUS compares it with where it left the mouse (owner activity).
+        PointerInfo pp = MouseInfo.getPointerInfo();
+        if (pp == null) return "{\"x\":null,\"y\":null}";
+        Point q2 = pp.getLocation();
+        return String.format(Locale.ROOT, "{\"x\":%d,\"y\":%d}", q2.x, q2.y);
       }
       case "move": {
         int x = num(p[1], -100000, 100000), y = num(p[2], -100000, 100000);

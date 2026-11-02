@@ -37,7 +37,7 @@ const mk = (st, log = []) => {
   const consent = createConsent({audit: e => log.push(e)});
   return {log, consent, g: createGui({caps: validateCapabilities({gui_input: true}), home: tmp, workspace: tmp, platform: 'win32', runUia: a => st.uia(a), robot: {cmd: c => st.robot.cmd(c), start: async () => {}, stop() {}}, consent, sleep: async () => {}})};
 };
-const sent = st => st.robot.cmds.filter(c => c !== 'info');
+const sent = st => st.robot.cmds.filter(c => c !== 'info' && c !== 'pointer'); // 'pointer' = read-only owner-activity check (0.5.2)
 
 test('classification: close chords, close/discard buttons, menu items; normal input is not a close', () => {
   const ctxTabs = {window: {tabs: [TAB('a', 'x', true)]}, elem: {controlType: 'Document'}};

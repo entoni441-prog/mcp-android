@@ -117,6 +117,14 @@ export function loadConfig(env = process.env) {
 
 
 /** One runtime per host process: Java daemon, browser, task table. Tests inject fakes via deps.runtime. */
+/** Journal (owner requirement 02.11): tools that only poll/observe are not listed. */
+const QUIET_TOOLS = new Set(['live_frame', 'live_control', 'get_capabilities', 'host_diagnostics', 'connection_status', 'task_status']);
+/** Process / app name the call acted on — names only (journal and Live View caption never carry arguments or text). */
+export function journalTarget(out, args) {
+  const pick = v => (typeof v === 'string' ? v : v && typeof v.process === 'string' ? v.process : null);
+  return pick(out?.target) || pick(out?.process) || (typeof out?.app === 'string' ? out.app : null) || (typeof args?.app === 'string' ? args.app : null) || null;
+}
+
 export function createRuntime(cfg, deps = {}) {
   const {procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, sessionDeps: _sd, appsDeps: _ad, taskDeps: _td, handoffDeps: _hd, principal: _p, accessVerifier: _v, runtime: _r, trace: _t, ...execDeps} = deps;
   const store = createCapStore({file: cfg.capabilitiesFile || null, initial: cfg.caps || validateCapabilities(DEFAULT_CAPABILITIES), audit: e => audit(cfg, e)});
@@ -133,7 +141,7 @@ export function createRuntime(cfg, deps = {}) {
   const procs = createProcs({caps, cfg, consent, ...(deps.procsDeps || {})});
   gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, handoff, ...(deps.guiDeps || {})});
   const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
-  const live = createLive({caps, store, session, capture: (w, q) => gui.frameJpeg(w, q), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
+  const live = createLive({caps, store, session, capture: (w, q) => gui.frameJpeg(w, q, session.caption()), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
   // End of every session: stream off at the source first, then clean up what NEXUS itself opened.
   session.onEnd(async () => { const m = live.sessionEnded() || {}; return {liveActive: false, liveLastFrameAt: m.lastFrameAt ?? null, liveFramesDropped: m.droppedAfterStop ?? 0}; }, 'live');
   session.onEnd(async (reason, s) => (typeof procs.cancelSession === 'function' ? {tasks: await procs.cancelSession(reason, s)} : {}), 'tasks');
@@ -312,13 +320,16 @@ export async function handleRpc(msg, cfg, deps = {}) {
         }
         out = redactDeep(out); // N-09: no secrets in any tool result (images untouched)
         if (name !== 'live_frame') audit(cfg, {by: deps.principal, trace: deps.trace, tool: name, ok: true, ms: Date.now() - started, args: auditArgs(args)});
+        if (!QUIET_TOOLS.has(name)) rt.session?.note?.({tool: name, ok: true, target: journalTarget(out, args)});
         if (out && Array.isArray(out.content) && Object.hasOwn(out, 'structured')) {
           return rpcResult(id, {content: out.content, structuredContent: out.structured, isError: false});
         }
         return rpcResult(id, {content: [{type: 'text', text: JSON.stringify(out)}], structuredContent: out, isError: false});
       } catch (e) {
-        const code = e?.code === 'ENOENT' ? 'not_found' : /^[a-z0-9_]+(?:: [\w -]+)?$/.test(e?.message) ? e.message : 'internal_error';
+        // 0.5.2: own descriptive messages («code: explanation») may contain punctuation; no newlines/backslashes (paths, stacks).
+        const code = e?.code === 'ENOENT' ? 'not_found' : /^[a-z0-9_]+(?:: [^\r\n\\]{1,400})?$/.test(e?.message) ? e.message : 'internal_error';
         audit(cfg, {by: deps.principal, trace: deps.trace, tool: name, ok: false, error: code, detail: e?.detail, args: auditArgs(args)});
+        try { if (!QUIET_TOOLS.has(name)) cfg.runtime?.session?.note?.({tool: name, ok: false, code, target: journalTarget(null, args)}); } catch {}
         try { if (cfg.runtime?.tasks?.peek()) cfg.runtime.tasks.error(name, code); } catch {}
         if (code === 'owner_handoff_active') {
           return rpcResult(id, {content: [{type: 'text', text: `error: owner_handoff_active — the owner is doing an action (${e.detail}); input/capture is paused. Call task_status {"id":"${e.detail}"} or task_cancel to end it.`}], isError: true});

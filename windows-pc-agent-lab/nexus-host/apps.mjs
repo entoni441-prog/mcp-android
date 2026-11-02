@@ -38,6 +38,9 @@ const onlyKeys = (a, allowed) => isObj(a) && Object.keys(a).every(k => allowed.i
 const bad = () => { throw Error('invalid_args'); };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/** Owner requirement 02.11: NEXUS keeps at most this many of its own windows/tabs open at once. */
+export const MAX_OWN_WINDOWS = 2;
+
 export function createApps({caps, store, consent, gui, handoff = null, workspace, platform = process.platform, systemRoot = process.env.SystemRoot,
   launcher = spawn, exists = fs.existsSync, wait = sleep, execDeps = {}, discovery = null}) {
   const disc = discovery || createDiscovery({platform, systemRoot});
@@ -60,10 +63,29 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
     return new Promise((resolve, reject) => { p.once('error', () => reject(Error('app_launch_failed'))); p.once('spawn', () => { p.unref?.(); resolve(p.pid); }); });
   }
 
-  return {
-    async open_app(args) {
+  /** Owner requirement 02.11: NEXUS windows/tabs still open now (owned by NEXUS AND present on screen). */
+  async function openOwned() {
+    const o = consent.owned, out = [];
+    for (const app of o.apps) {
+      const ws = await gui.snapshotApp(app).catch(() => null);
+      if (!Array.isArray(ws)) continue;
+      for (const w of ws) {
+        if (o.windows.has(String(w.hwnd))) out.push({app, hwnd: w.hwnd});
+        else for (const t of w.tabs || []) if (o.tabs.has(t.rid)) out.push({app, hwnd: w.hwnd, tab: true});
+      }
+    }
+    return out;
+  }
+
+  async function openApp(args) {
       if (!onlyKeys(args, ['app']) || typeof args.app !== 'string' || !LAUNCH_NAME.test(args.app)) bad();
       if (platform !== 'win32') throw Error('windows_only');
+      { // open → act → check → close: at most MAX_OWN_WINDOWS of NEXUS's own windows/tabs at a time (2 = justified pair)
+        const open = await openOwned();
+        if (open.length >= MAX_OWN_WINDOWS) {
+          throw Error(`nexus_window_limit: NEXUS already has ${open.length} of its own windows open (${[...new Set(open.map(w => w.app))].join(', ')}) - close the one you have finished with (close_window) before opening another; work one window at a time`);
+        }
+      }
       if (args.app === 'notepad') {
         if (typeof systemRoot !== 'string' || !/^[a-zA-Z]:\\/.test(systemRoot)) throw Error('invalid_windows_system_root');
         const token = 'NEXUS-' + crypto.randomBytes(3).toString('hex');
@@ -136,6 +158,13 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
       const pid = await launch(exe, []);
       return {started: true, app: args.app, via, pid, createdByNexus: await settle(proc, before, {}, 'open_app:' + args.app),
         note: 'Only windows/tabs listed in createdByNexus may be closed without asking the owner.'};
+  }
+
+  return {
+    async open_app(args) {
+      const r = await openApp(args);
+      if (r?.started) gui.forgetNexusWindow?.(); // the new window is NEXUS's: the next input adopts it
+      return r;
     },
 
     manage_app_access(args) {

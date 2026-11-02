@@ -195,7 +195,7 @@ export function testPng(size = 64) {
 }
 
 // ───────────── tools ─────────────
-export function createGui({caps, home, workspace, platform = process.platform, runUia, robot, consent = createConsent(), handoff = null, sleep = ms => new Promise(r => setTimeout(r, ms))}) {
+export function createGui({caps, home, workspace, platform = process.platform, runUia, robot, consent = createConsent(), handoff = null, sleep = ms => new Promise(r => setTimeout(r, ms)), now = () => Date.now()}) {
   const tmpDir = path.join(home, 'tmp');
   const uia = runUia || (args => runUiaReal(args, {tmpDir}));
   let daemon = robot || null;
@@ -348,6 +348,30 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     return !w || (!!rid && !tabsOf(w).some(t => t.rid === rid));
   }
 
+  // ── Owner requirement 02.11 (VISIBILITY & WINDOW LIFECYCLE): do not fight the owner for the mouse/keyboard ─────────
+  // NEXUS remembers where IT left the mouse and which window IT worked in. Before new input:
+  //  - the mouse is elsewhere → the owner moved it → owner_active (input paused) until the mouse rests ≥ OWNER_QUIET_MS;
+  //  - typing: the foreground window changed to ANOTHER process not by NEXUS → owner_active (never type into the
+  //    owner's window); the agent may take the window back only explicitly (focus_window), which is also guarded.
+  // Limit: keyboard-only owner activity inside NEXUS's own window is not visible (no native input hook by design).
+  const OWNER_QUIET_MS = 3000;
+  let lastPointer = null, ownerSeen = null, nexusWin = null;
+  const far = (a, b) => Math.abs(a.x - b.x) > 4 || Math.abs(a.y - b.y) > 4;
+  async function pointer() { try { const r = await getRobot().cmd('pointer'); return Number.isInteger(r?.x) && Number.isInteger(r?.y) ? r : null; } catch { return null; } }
+  async function ownerGuard() {
+    const p = await pointer();
+    if (!p) return; // pointer unreadable: no evidence of the owner — the other policy checks still apply
+    if (!lastPointer || !far(p, lastPointer)) { lastPointer = lastPointer || p; ownerSeen = null; return; }
+    if (ownerSeen && !far(p, ownerSeen) && now() - ownerSeen.t >= OWNER_QUIET_MS) { lastPointer = p; ownerSeen = null; return; }
+    if (!ownerSeen || far(p, ownerSeen)) ownerSeen = {x: p.x, y: p.y, t: now()};
+    throw Error(`owner_active: the owner is using the mouse - NEXUS paused its input; retry in ${Math.ceil(OWNER_QUIET_MS / 1000) + 1} s (input resumes once the mouse has been still for ${OWNER_QUIET_MS / 1000} s)`);
+  }
+  async function afterInput(f) {
+    const p = await pointer(); if (p) lastPointer = p;
+    if (f?.ok && f.topHwnd) nexusWin = {hwnd: String(f.topHwnd), pid: f.pid ?? null, process: f.process || null};
+  }
+  function resetFocusState() { lastPointer = null; ownerSeen = null; nexusWin = null; }
+
   const api = {
     consent,
     /** Snapshot all windows+tabs of a process name (used around open_app / new-tab keys to record NEXUS-created ones). */
@@ -359,7 +383,11 @@ export function createGui({caps, home, workspace, platform = process.platform, r
      * is answered «Save» (into the NEXUS scratch file — no data loss, no hanging dialog). Other NEXUS-opened windows
      * with unsaved changes: prompt answered «Cancel», window left open, reported (the owner decides).
      */
+    resetFocusState,
+    /** open_app / handoff created a new foreground window: the next input adopts it (no stale-window refusal). */
+    forgetNexusWindow() { nexusWin = null; },
     async cleanupOwned(reason) {
+      resetFocusState();
       const o = consent.owned;
       const report = {closed: [], left: []};
       if (platform !== 'win32' || (!o.windows.size && !o.tabs.size)) return report;
@@ -479,13 +507,14 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     },
 
     /** 0.5.0 Live View: one JPEG frame (cursor drawn in). Capability checks are done by live.mjs. */
-    async frameJpeg(maxW, quality) {
+    async frameJpeg(maxW, quality, caption = null) {
       winOnly();
       fs.mkdirSync(tmpDir, {recursive: true});
       const file = path.join(tmpDir, 'frm-' + crypto.randomBytes(8).toString('hex') + '.jpg');
       try {
         const mk = await captureMasks('live');
-        const r = await getRobot().cmd(`frame ${maxW} ${quality} ${Buffer.from(file).toString('base64')} ${maskArg(mk.masks)}`);
+        const cap = typeof caption === 'string' && caption ? ' ' + Buffer.from(caption.replace(/[^\x20-\x7e]/g, '?').slice(0, 160), 'utf8').toString('base64') : '';
+        const r = await getRobot().cmd(`frame ${maxW} ${quality} ${Buffer.from(file).toString('base64')} ${maskArg(mk.masks)}${cap}`);
         return {jpeg: fs.readFileSync(file), meta: r};
       } finally { fs.rmSync(file, {force: true}); }
     },
@@ -527,6 +556,12 @@ export function createGui({caps, home, workspace, platform = process.platform, r
 
     async focus_window(args) {
       requireCap(caps, 'ui_read'); winOnly();
+      if (caps.gui_input === true) await ownerGuard();
+      const r = await api.focusWindowInner(args);
+      if (r?.focused) await afterInput({ok: true, topHwnd: r.hwnd, pid: args.pid});
+      return r;
+    },
+    async focusWindowInner(args) {
       if (!onlyKeys(args, ['pid']) || !int(args.pid, 1, 2 ** 31)) bad();
       const w = await checkPid(args.pid, 'focus');
       if (!w.windows?.length) throw Error('window_not_found');
@@ -611,12 +646,14 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         const g = consent.gate(c, lastAt.window, lastAt.tab, {tool: 'mouse_action', args});
         if (g) return g;
       }
+      await ownerGuard();
       const R = getRobot();
       const cmd = {move: `move ${args.x} ${args.y}`, click: `click ${args.x} ${args.y} left 1`, double_click: `click ${args.x} ${args.y} left 2`,
         right_click: `click ${args.x} ${args.y} right 1`, scroll: `scroll ${args.x} ${args.y} ${args.amount}`, drag: `drag ${args.x} ${args.y} ${args.x2} ${args.y2}`}[args.action];
       await R.cmd(cmd);
       if (c && consented && decision === 'close_discard') consent.armDiscard(lastAt.window?.hwnd);
       const after = await uia({mode: 'focused'});
+      await afterInput(after.focused);
       return {done: true, action: args.action, target, foregroundAfter: after.focused?.process || null, ...(c ? {closeAction: c.kind, consented: !!consented} : {})};
     },
 
@@ -630,6 +667,9 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       if (hasKeys && /^(?=.*ctrl)(?=.*alt)/.test(args.keys)) bad(); // Ctrl+Alt+… = AltGr / system chords: refused
       const before = await uia({mode: 'context'});
       if (!before.focused?.ok) throw Error('focus_not_allowed');
+      if (nexusWin && before.window?.hwnd && String(before.window.hwnd) !== nexusWin.hwnd && before.focused.pid !== nexusWin.pid) {
+        throw Error(`owner_active: the foreground window is now ${before.focused.process || 'another app'}, switched not by NEXUS (the owner may be working there) - typing refused; if the owner is not using the PC, call focus_window for your window (pid ${nexusWin.pid ?? '?'}) and retry`);
+      }
       {
         const title = before.window?.name;
         const ide = appGate(caps, before.focused.process, {title, mode: 'input'}).cls === 'ide'
@@ -651,12 +691,14 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       }
       const creating = hasKeys && NEW_KEYS.has(args.keys) && before.window?.process;
       const snap = creating ? await apps(before.window.process).catch(() => null) : null;
+      await ownerGuard();
       const R = getRobot();
       const r = hasText ? await R.cmd('paste ' + Buffer.from(args.text, 'utf8').toString('base64')) : await R.cmd('key ' + args.keys);
       if (c && consented && decision === 'close_discard') consent.armDiscard(before.window?.hwnd);
       let created;
       if (creating) { await sleep(700); created = consent.recordCreated(snap, await apps(before.window.process).catch(() => null), 'keys:' + args.keys); }
       const after = await uia({mode: 'focused'});
+      await afterInput(after.focused);
       return {done: true, target: before.focused.process, foregroundAfter: after.focused?.process || null,
         ...(hasText ? {chars: args.text.length, clipboardRestored: r.clipboardRestored, ...(r.clipboard ? {clipboard: r.clipboard} : {})} : {keys: args.keys}),
         ...(c ? {closeAction: c.kind, consented: !!consented} : {}), ...(created ? {createdByNexus: created} : {})};
