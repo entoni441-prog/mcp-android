@@ -61,7 +61,8 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
 
   function launch(exe, args) {
     const p = launcher(exe, args, {detached: true, stdio: 'ignore', windowsHide: false, shell: false});
-    return new Promise((resolve, reject) => { p.once('error', () => reject(Error('app_launch_failed'))); p.once('spawn', () => { p.unref?.(); resolve(p.pid); }); });
+    // NEXT NX-052-22: an exact reason instead of a bare app_launch_failed (elevation → owner handoff, never bypassed).
+    return new Promise((resolve, reject) => { p.once('error', e => reject(Error(launchError(e)))); p.once('spawn', () => { p.unref?.(); resolve(p.pid); }); });
   }
 
   /** Owner requirement 02.11: NEXUS windows/tabs still open now (owned by NEXUS AND present on screen). */
@@ -202,4 +203,13 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
       return consent.requestGrant({what: 'app_access', target, apply: () => ({granted: proc, ...store.grantApp(proc, launchSpec, 'consent')})});
     },
   };
+}
+
+/** NEXT NX-052-22: spawn error → precise, owner-readable reason. */
+export function launchError(e) {
+  const c = String(e?.code || '');
+  if (c === 'ENOENT') return 'app_launch_failed: exe_not_found — the program file does not exist (uninstalled or moved); check manage_app_access list / system_info';
+  if (c === 'EACCES' || c === 'EPERM' || e?.errno === 740) return 'app_launch_failed: requires_elevation_or_access_denied — the program asks for administrator rights (UAC) or is blocked; NEXUS never raises rights: ask the owner to start it himself (UAC is his)';
+  if (c === 'UNKNOWN' || c === 'EINVAL') return 'app_launch_failed: not_a_launchable_exe — Windows refused to start this file (blocked by policy such as Smart App Control, or not a program)';
+  return 'app_launch_failed: ' + (/^[A-Z0-9_]{2,20}$/.test(c) ? c.toLowerCase() : 'unknown');
 }
