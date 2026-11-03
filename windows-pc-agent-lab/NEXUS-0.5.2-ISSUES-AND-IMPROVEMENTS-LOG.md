@@ -11,7 +11,7 @@
 
 | ID | Приоритет | Статус | Тема |
 |---|---|---|---|
-| NX-052-01 | P1 | CONFIRMED / DECISION NEEDED | GUI Claude запрещён как `hard_deny`; пользователь не может поручить даже прокрутку |
+| NX-052-01 | P1 обязательное исправление | OPEN / HOST POLICY FIX REQUIRED / НЕ ИСПРАВЛЕНО | Claude Desktop GUI: `hard_deny` в NEXUS Host; обеспечить безопасные focus/read/scroll/click/type без разблокировки Claude CLI |
 | NX-052-02 | P1 review | SECURITY REVIEW | Скриншот/Live View показывают читаемый текст Claude при запрете прямого UIA/ввода |
 | NX-052-03 | P2 | CONFIRMED | `open_app chatgpt` → `app_not_found` при установленном, закреплённом ChatGPT |
 | NX-052-04 | P2 | PARTIAL | Resume снимает owner-pause, но прежний task ID не восстанавливается после lease expiry |
@@ -55,6 +55,21 @@
 - **Критерий будущего PASS:** в установленном GUI Claude `window_info`, разрешённый `inspect_ui` и безопасная `scroll` работают по политике владельца; для CLI, терминалов, логинов и защищённых контекстов сохраняется отказ. Тесты выполнять только с фиктивным текстом.
 
 **Claude GUI retest 03.11.2026 22:02 UTC — still BLOCKED:** `watch_nexus` enabled (`streaming:true`) before any action. `list_windows` confirmed existing Claude desktop process `pid:7712`. `manage_app_access list` had no discoverable Claude launch name. One direct `focus_window({pid:7712})` returned `app_not_allowed: owner_handoff_required hard_deny`, trace `8757522a9057bdf4`. No scrolling or alternate route attempted, no owner content read; `finish_task` → `ended:true`, `windows.left:[]`, `framesAfterStop:0` (existing owner Claude not closed). **This is the same pre-existing NX-052-01 limitation, not a new numbered defect.**
+
+### NX-052-01 — уточнение обязательного задания разработчику, 03.11.2026
+
+**СТАТУС: ОТКРЫТО, P1, ИСПРАВЛЕНИЕ ОБЯЗАТЕЛЬНО.** Владелец уже просил именно **исправить**, а не только зарегистрировать проблему. Прежняя запись «решение требуется» недостаточна. В старом едином ТЗ пункт NX-052-01 был ошибочно отнесён к `P2 / external`, а в NEXUS-NEXT-ACCEPTANCE — к «внешнему блокеру»; это классификационная ошибка, поскольку нынешняя проверенная ошибка поступает **от Host: `app_not_allowed: owner_handoff_required hard_deny`**, а не из внешнего OpenAI tool safety gate. Отдельные внешние блокировки при других сценариях продолжать классифицировать отдельно и не обходить.
+
+**Технические факты:** `nexus-host/policy.mjs` в экспериментальной ветке содержит `'claude'` в `DENY_APPS`; `classifyApp` относит такой процесс к `{cls:"deny",level:"handoff",reason:"hard_deny"}`. Повтор 03.11: существующий Windows Claude `pid:7712`; `focus_window({pid:7712})` → `app_not_allowed: owner_handoff_required hard_deny`, trace `8757522a9057bdf4`. Реальный скролл не состоялся; обхода не было.
+
+**Конкретное задание в следующую экспериментальную сборку:**
+1. Разделить доверенное графическое Claude Desktop и Claude Code CLI по проверяемой identity (подписанный image path, издатель, package/window/process ancestry); один basename `claude` не даёт основания открыть CLI.
+2. Для подтверждённого GUI в пределах поручения и с Live View/STOP включить `window_info`, `inspect_ui` с защитой текста, `focus_window`, `mouse_action scroll/click`, безопасный `keyboard_action`. Сохранить защиту приватных данных и явную политику на отправку сообщений.
+3. Оставить запреты на оболочки, команды, UAC, чужие окна, а также на процессы с неопределённой идентичностью. Не обходить блокировки сторонних инструментов.
+4. Добавить автоматические tests: GUI идентифицирован → разрешён; CLI/pseudo-GUI/подменённый exe → отказ; unknown identity → fail-closed; приватное содержимое → редактирование или отказ; STOP и owner pause прерывают ввод.
+5. Реальная приёмка: `watch_nexus` первым → открыть **либо использовать существующее** окно доверенного Claude Desktop без изменения прежних пользовательских разговоров → безопасно перевести фокус → прокрутить **исключительно фиктивный** тестовый текст → проверить фактическое изменение положения → закрыть только созданное NEXUS окно; владельческое Claude окно не закрывать. Итог **PASS** только после наблюдаемого результата; нынешний статус **BLOCKED/OPEN**.
+
+**Причина пропуска в релизе не подтверждена**: метка `external` в ТЗ могла привести к исключению из работ, но нельзя приписывать разработчику это решение без записи из его отчёта. Требование отныне отражено как обязательная Host-policy доработка и отдельно в регламенте приёмки.
 
 ### NX-052-02 — видимость Claude через screenshot при hard deny (P1 security review)
 - **Факт:** `capture_screen` возвращал изображение, где текст сообщения Claude можно было визуально прочитать и пересказать; `watch_nexus` давал `streaming:true`. Одновременно `window_info` и `mouse_action scroll` для `claude` отклонены `hard_deny`.
