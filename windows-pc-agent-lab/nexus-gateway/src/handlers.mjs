@@ -50,6 +50,7 @@ export async function handleDefault(request, env, {fetcher = fetch} = {}) {
   const url = new URL(request.url);
   if (url.pathname === '/health') return json(200, {ok: true, service: 'nexus-gateway'});
   if (url.pathname === '/tunnel') return handleTunnel(request, env);
+  if (url.pathname === '/sentinel') return handleSentinel(request, env);
   if (url.pathname === '/live' || url.pathname.startsWith('/live/')) return handleLive(request, env, {sha256hex, callHost: (name, args) => callHost(env, name, args, {fetcher})});
   if (url.pathname !== '/authorize') return new Response('Not found', {status: 404});
   const expected = secret(env.OWNER_PASSPHRASE_SHA256 || '').toLowerCase();
@@ -104,6 +105,37 @@ export async function handleTunnel(request, env) {
   if (typeof body?.url !== 'string' || !TUNNEL_RE.test(body.url)) return json(400, {error: 'invalid_tunnel_url'});
   await env.OAUTH_KV.put('tunnel', JSON.stringify({url: body.url, registeredAt: Date.now()}));
   return json(200, {ok: true});
+}
+
+/**
+ * NEXUS NEXT: the PC's Sentinel (SYSTEM task at boot, before sign-in) reports a state word. Auth: Bearer SENTINEL_TOKEN
+ * (a separate secret — it can only set this word). Stored in KV 'sentinel'; read by connection_status.
+ */
+export const SENTINEL_STATES = ['booting', 'logon_screen', 'logon_screen_or_unknown', 'locked', 'user_session', 'host_up'];
+export async function handleSentinel(request, env) {
+  if (!env.OAUTH_KV || !env.SENTINEL_TOKEN) return json(503, {error: 'not_configured'});
+  if (!(await bearerOk(request, secret(env.SENTINEL_TOKEN)))) return json(401, {error: 'unauthorized'});
+  if (request.method !== 'POST') return json(405, {error: 'method_not_allowed'});
+  let b; try { b = await request.json(); } catch { return json(400, {error: 'bad_json'}); }
+  const iso = v => typeof v === 'string' && v.length <= 40 && !Number.isNaN(Date.parse(v));
+  if (!SENTINEL_STATES.includes(b?.state) || !iso(b.bootAt) || !iso(b.at)) return json(400, {error: 'invalid_report'});
+  const rec = {state: b.state, bootAt: b.bootAt, reportedAt: Date.now(), hostVersion: typeof b.hostVersion === 'string' ? b.hostVersion.slice(0, 20) : null};
+  await env.OAUTH_KV.put('sentinel', JSON.stringify(rec));
+  return json(200, {ok: true});
+}
+
+/** Pure: combine tunnel probe + sentinel record into one verdict (FR-01.2 statuses). */
+export function pcVerdict({probeStatus, registrationStale, sentinel, now = Date.now()}) {
+  const fresh = sentinel && now - sentinel.reportedAt < 3 * 60_000;
+  if (probeStatus === 200) return null; // host answered — the host-side verdict decides
+  if (fresh) {
+    if (sentinel.state === 'logon_screen' || sentinel.state === 'logon_screen_or_unknown') return {verdict: 'awaiting_owner_logon', recovery: 'Windows is on and waits at the sign-in screen. Only the owner signs in (at the PC or via his remote logon channel); NEXUS Host starts by itself after that.'};
+    if (sentinel.state === 'booting') return {verdict: 'booting', recovery: 'Windows is starting. Wait 1–2 min and call connection_status again.'};
+    if (sentinel.state === 'locked') return {verdict: 'pc_locked', recovery: 'Windows is locked. GUI work needs the owner to unlock it.'};
+    return {verdict: 'host_offline', recovery: 'Windows is on and the owner is signed in, but NEXUS Host/tunnel is not answering: the logon task restarts it within minutes; if not, restart NEXUS Host on the PC.'};
+  }
+  if (probeStatus === 530) return {verdict: registrationStale ? 'pc_offline_stale_registration' : 'tunnel_unavailable', recovery: registrationStale ? 'No tunnel refresh for >25 min and no Sentinel report: the PC is probably asleep, off or without network.' : 'The tunnel is not connected (Cloudflare 530). Wait 30–60 s and call connection_status again.'};
+  return {verdict: registrationStale ? 'pc_offline_stale_registration' : 'tunnel_down_or_reconnecting', recovery: 'Wait 30–60 s and call connection_status again; sleep and shutdown cannot be told apart without an independent device.'};
 }
 
 const rpcOk = (id, result) => json(200, {jsonrpc: '2.0', id, result});
@@ -224,7 +256,12 @@ export async function callHost(env, name, args, {fetcher = fetch, trace = newTra
 export async function connectionStatus(env, {fetcher = fetch, trace = newTrace()} = {}) {
   const out = {gateway: 'ok', trace, checkedAt: new Date().toISOString()};
   const raw = await env.OAUTH_KV.get('tunnel');
-  if (!raw) return result({...out, registration: null, verdict: 'pc_not_connected', recovery: 'Start NEXUS Host on the PC (Task Scheduler entry) and wait for «Tunnel registered».'});
+  if (!raw) {
+    let s = null; try { s = JSON.parse(await env.OAUTH_KV.get('sentinel') || 'null'); } catch {}
+    const v = s && Date.now() - s.reportedAt < 3 * 60_000 ? pcVerdict({probeStatus: 0, registrationStale: false, sentinel: s}) : null;
+    if (v) return result({...out, registration: null, sentinel: {state: s.state, bootAt: s.bootAt, ageSec: Math.round((Date.now() - s.reportedAt) / 1000)}, ...v});
+    return result({...out, registration: null, verdict: 'pc_not_connected', recovery: 'Start NEXUS Host on the PC (Task Scheduler entry) and wait for «Tunnel registered».'});
+  }
   let reg; try { reg = JSON.parse(raw); } catch { reg = {}; }
   const age = reg.registeredAt ? Math.round((Date.now() - reg.registeredAt) / 1000) : null;
   out.registration = {ageSec: age, stale: age !== null && age > 25 * 60};
@@ -236,6 +273,7 @@ export async function connectionStatus(env, {fetcher = fetch, trace = newTrace()
     probe = {status: r.status, ms: Date.now() - t0};
   } catch (e) { probe = {status: 0, error: e?.name === 'TimeoutError' ? 'timeout' : 'network'}; }
   out.tunnelProbe = probe;
+  try { const s = JSON.parse(await env.OAUTH_KV.get('sentinel') || 'null'); if (s) out.sentinel = {state: s.state, bootAt: s.bootAt, ageSec: Math.round((Date.now() - s.reportedAt) / 1000), hostVersion: s.hostVersion}; } catch { /* optional */ }
   if (probe.status === 200) {
     const h = await callHost(env, 'connection_status', {}, {fetcher, trace});
     const hs = h.ok ? h.result?.structuredContent : null;
@@ -244,8 +282,8 @@ export async function connectionStatus(env, {fetcher = fetch, trace = newTrace()
     out.verdict = !h.ok ? 'host_reachable_but_mcp_failed' : v === 'idle_timeouts_recovered' ? 'online_with_recent_reconnects' : v && v !== 'ok' ? v : 'online';
     out.recovery = out.verdict === 'online' ? 'none' : out.verdict === 'online_with_recent_reconnects' ? 'none needed: cloudflared reconnected by itself; repeat only read-only calls, verify effects before repeating actions.' : 'Restart NEXUS Host on the PC if the problem persists.';
   } else if (probe.status === 530 || probe.status === 0) {
-    out.verdict = out.registration.stale ? 'pc_offline_stale_registration' : 'tunnel_down_or_reconnecting';
-    out.recovery = out.registration.stale ? 'The PC has not refreshed its tunnel for >25 min: NEXUS Host or the PC is probably off/asleep. Start it on the PC.' : 'Wait 30–60 s and call connection_status again; if still down, restart NEXUS Host on the PC.';
+    const v = pcVerdict({probeStatus: probe.status, registrationStale: out.registration.stale, sentinel: out.sentinel ? {...out.sentinel, reportedAt: Date.now() - out.sentinel.ageSec * 1000} : null});
+    out.verdict = v.verdict; out.recovery = v.recovery;
   } else {
     out.verdict = `tunnel_http_${probe.status}`; out.recovery = 'Restart NEXUS Host on the PC.';
   }

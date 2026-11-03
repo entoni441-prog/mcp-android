@@ -28,7 +28,7 @@ export const WORK_TOOLS = Object.freeze(new Set([
   'browser_open', 'browser_action', 'browser_tabs', 'process_action', 'run_task',
 ]));
 /** Tools that may run during a session and renew it, but never start one. */
-export const RENEW_TOOLS = Object.freeze(new Set(['inspect_ui', 'window_info', 'capture_screen', 'browser_snapshot', 'list_windows', 'task_status']));
+export const RENEW_TOOLS = Object.freeze(new Set(['inspect_ui', 'window_info', 'capture_screen', 'browser_snapshot', 'list_windows', 'task_status', 'run_command', 'command_plan', 'system_info', 'files_scoped', 'download_verify', 'get_capabilities']));
 
 /**
  * NEXUS NEXT: while a TASK is open (tasks.peek().status === 'active') the lease is the task heartbeat — any tool call,

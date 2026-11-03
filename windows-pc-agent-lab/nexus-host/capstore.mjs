@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import {validateCapabilities} from './capabilities.mjs';
 
 export const SETTABLE = Object.freeze(['gui_input', 'live_view']);
-const FLAGS = ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser', 'live_view', 'grantsFromChat'];
+const FLAGS = ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser', 'live_view', 'grantsFromChat', 'diagnostics', 'commands', 'power'];
 
 function diff(a, b) {
   const changes = {};

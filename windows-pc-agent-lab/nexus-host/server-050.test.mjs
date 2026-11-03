@@ -29,8 +29,8 @@ function host(capsJson = {}, extra = {}) {
 }
 const auditOf = h => fs.readFileSync(h.cfg.auditFile, 'utf8');
 
-test('catalog 0.5.1: 37 tools; live_frame is app-only; widget tools point at the ui:// resource', () => {
-  assert.equal(TOOLS.length, 37);
+test('catalog NEXT: 43 tools; live_frame is app-only; widget tools point at the ui:// resource', () => {
+  assert.equal(TOOLS.length, 43);
   const lf = TOOLS.find(t => t.name === 'live_frame');
   assert.deepEqual(lf._meta.ui.visibility, ['app']);
   assert.equal(lf._meta.ui.resourceUri, LIVE_UI);
@@ -167,6 +167,6 @@ test('/healthz is unauthenticated and leaks nothing; trace id reaches errors and
     assert.match(auditOf(h), /"trace":"abcdef0123456789"/);
     assert.ok(!auditOf(h).includes('not a trace'));
     const cs = (await h.call('connection_status')).structuredContent;
-    assert.equal(cs.host, 'reachable'); assert.equal(cs.version, '0.5.2');
+    assert.equal(cs.host, 'reachable'); assert.equal(cs.version, '0.6.0-next');
   } finally { h.stop(); }
 });

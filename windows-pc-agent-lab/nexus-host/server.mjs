@@ -31,6 +31,10 @@ import {createLive} from './live.mjs';
 import {createSession, WORK_TOOLS} from './session.mjs';
 import {createTaskLog, createHandoffs, isExternal, idemKey} from './handoff.mjs';
 import {createApps} from './apps.mjs';
+import {createRunner} from './runner.mjs';
+import {createDiag} from './diag.mjs';
+import {createScoped} from './scoped.mjs';
+import {createPower} from './power.mjs';
 import {resourceDecision, writeDecision, isProtectedPath, shortDiff, redactDeep, REDACTED_MARK} from './policy.mjs';
 
 /**
@@ -129,7 +133,7 @@ export function journalTarget(out, args) {
 }
 
 export function createRuntime(cfg, deps = {}) {
-  const {procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, sessionDeps: _sd, appsDeps: _ad, taskDeps: _td, handoffDeps: _hd, principal: _p, accessVerifier: _v, runtime: _r, trace: _t, ...execDeps} = deps;
+  const {runnerDeps: _rd, diagDeps: _dd, scopedDeps: _sc, powerDeps: _pw, resumePlans: _rp, procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, sessionDeps: _sd, appsDeps: _ad, taskDeps: _td, handoffDeps: _hd, principal: _p, accessVerifier: _v, runtime: _r, trace: _t, ...execDeps} = deps;
   const store = createCapStore({file: cfg.capabilitiesFile || null, initial: cfg.caps || validateCapabilities(DEFAULT_CAPABILITIES), audit: e => audit(cfg, e)});
   store.watch();
   const caps = store.view;
@@ -147,12 +151,25 @@ export function createRuntime(cfg, deps = {}) {
   const handoffs = createHandoffs({tasks, session, audit: e => audit(cfg, e), probe: {apps: n => gui.snapshotApp(n)}, ...(deps.handoffDeps || {})});
   const handoff = spec => handoffs.request(spec);
   const procs = createProcs({caps, cfg, consent, ...(deps.procsDeps || {})});
-  gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, handoff, onOwnerActive: why => session.pauseForOwner(why), ...(deps.guiDeps || {})});
+  // NEXT: command runner + diagnostics (FR-03). Commands are killed by STOP/owner pause/finish/cancel, not by a lease end.
+  const runner = createRunner({caps, cfg, consent, tasks, audit: e => audit(cfg, e), ...(deps.runnerDeps || {})});
+  const diag = createDiag({caps, ...(deps.diagDeps || {})});
+  const scoped = createScoped({caps, cfg, consent, audit: e => audit(cfg, e), ...(deps.scopedDeps || {})});
+  const power = createPower({caps, consent, audit: e => audit(cfg, e), onLock: () => { session.end('locked').catch(() => {}); },
+    facts: async () => {
+      let autostartVerified = false, sleepStates = [], unsavedOwnerDocs = [];
+      try { const a = await diag.system_info({topic: 'autostart_nexus'}); autostartVerified = (a.data?.tasks || []).some(t => /NEXUS-Host-Logon/i.test(t.name) && (t.triggers || []).some(x => /Logon/i.test(x)) && t.state !== 'Disabled'); } catch {}
+      try { const p = await diag.system_info({topic: 'power'}); sleepStates = (p.data?.sleepStates || []).map(String); } catch {}
+      try { const w = await listWindows({includeTitles: true}, {tmpDir: path.join(cfg.home, 'tmp')}); unsavedOwnerDocs = (w.windows || []).filter(x => /^\*|\*\s*[-–]|•/.test(String(x.title || ''))).map(x => x.process); } catch {}
+      return {autostartVerified, logonChannelVerified: caps.logonChannelVerified === true, wakeDevice: caps.wakeDevice || null, sleepStates, unsavedOwnerDocs};
+    }, ...(deps.powerDeps || {})});
+  gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, handoff, onOwnerActive: why => { session.pauseForOwner(why); runner.cancelAll('owner_paused').catch(() => {}); }, ...(deps.guiDeps || {})});
   const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
   const live = createLive({caps, store, session, onResume: () => gui.ownerResumed?.(), onStopResume: () => tasks.allowResume(), capture: (w, q) => gui.frameJpeg(w, q, session.caption()), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
   // End of every session: stream off at the source first, then clean up what NEXUS itself opened.
   session.onEnd(async () => { const m = live.sessionEnded() || {}; return {liveActive: false, liveLastFrameAt: m.lastFrameAt ?? null, liveFramesDropped: m.droppedAfterStop ?? 0}; }, 'live');
   session.onEnd(async (reason, s) => (typeof procs.cancelSession === 'function' ? {tasks: await procs.cancelSession(reason, s)} : {}), 'tasks');
+  session.onEnd(async reason => (['view_idle', 'lease_expired', 'max_duration'].includes(reason) ? {} : {commands: await runner.cancelAll(reason)}), 'commands');
   session.onEnd(async reason => (typeof gui.cleanupOwned === 'function' ? {windows: await gui.cleanupOwned(reason, {ownerPaused: session.ownerPaused?.() === true})} : {}), 'windows');
   session.onEnd(async reason => (typeof browser.cleanupSession === 'function' ? {browser: await browser.cleanupSession(reason)} : {}), 'browser');
   session.onEnd(async reason => { handoffs.abandon(); const id = tasks.close(reason); const st = tasks.state(); return id ? {task: id, taskStatus: st?.task === id ? st.status : 'finished', ...(st?.task === id ? {resumable: true, next: 'The task is kept (same task id). The next desktop tool call resumes it; check what was already done (task_status checkpoint) before repeating anything. finish_task ends it for good.'} : {})} : {}; }, 'task');
@@ -176,7 +193,7 @@ export function createRuntime(cfg, deps = {}) {
     },
     task_cancel: a => (a && typeof a.id === 'string' && a.id.startsWith('h-') ? handoffs.decline(a.id) : procs.task_cancel(a)),
     read_audit_log: a => procs.read_audit_log(a),
-    search_files: a => searchFiles(a, ws), file_action: a => fileAction(a, ws),
+    search_files: a => searchFiles(a, ws), file_action: a => fileAction(a, {...ws, maxCopyBytes: (caps.limits?.maxCopyMB ?? 50) * 1024 * 1024}),
     confirm_action: async a => {
       if (!a || typeof a !== 'object' || Object.keys(a).some(k => !['consentId', 'decision', 'target'].includes(k)) ||
           typeof a.consentId !== 'string' || typeof a.target !== 'string') throw Error('invalid_args');
@@ -212,12 +229,16 @@ export function createRuntime(cfg, deps = {}) {
     finish_task: async a => {
       if (a && Object.keys(a).length) throw Error('invalid_args');
       const r = await session.end('finish_task');
+      if (!r.ended) { const c = await runner.cancelAll('finish_task'); if (c.cancelled.length) r.commands = c; }
+      if (caps.lockAfterTask === true) r.locked = await power.lockNow().catch(e => ({accepted: false, error: String(e.message).slice(0, 60)}));
       // NEXT: a task interrupted/stopped while no session runs is closed too (closing never acts on the desktop).
       if (!r.ended && tasks.peek()) { r.task = tasks.close('finish_task'); r.taskStatus = 'finished'; }
       rtRef.reobserve = null;
       return {...r, verified: {liveActive: session.status().liveActive, live: live.status().state, sessionActive: session.active()}};
     },
     live_frame: a => live.live_frame(a), watch_nexus: a => live.watch_nexus(a),
+    run_command: a => runner.run_command(a), command_plan: a => runner.command_plan(a), system_info: a => diag.system_info(a),
+    files_scoped: a => scoped.files_scoped(a), download_verify: a => scoped.download_verify(a), power_action: a => power.power_action(a),
     live_control: a => { const out = live.live_control(a); if (out?.resumed) rtRef.reobserve = {why: out.stopCleared ? 'owner_stop_resumed' : 'owner_pause_resumed', at: new Date().toISOString()}; return out; },
     manage_app_access: a => apps.manage_app_access(a), browser_tabs: a => browser.browser_tabs(a),
     browser_open: a => browser.browser_open(a), browser_snapshot: a => browser.browser_snapshot(a), browser_action: a => browser.browser_action(a),
@@ -227,8 +248,11 @@ export function createRuntime(cfg, deps = {}) {
     const c = out?.createdByNexus; if (c && (c.windows?.length || c.tabs?.length)) tasks.created([...(c.windows || []), ...(c.tabs || [])], 'open_app:' + a?.app);
     return out;
   };
-  return {caps, store, consent, handlers, gui, procs, browser, live, apps, session, tasks, handoffs, ref: rtRef,
-    stop() { session.end('host_stop').catch(() => {}); session.stop(); store.stop(); live.stop(); gui.stop(); browser.stop(); procs.stopAll(); }};
+  // NEXT: plans the owner approved with resumeAfterRestart continue after a Host restart (never through STOP/pause).
+  const planGate = () => (session.stoppedByOwner() ? 'owner_stop' : session.ownerPaused() ? 'owner_paused' : null);
+  if (deps.resumePlans !== false) try { runner.resumePlansAfterRestart({gate: planGate}); } catch { /* plans are optional */ }
+  return {caps, store, consent, handlers, gui, procs, browser, live, apps, session, tasks, handoffs, runner, diag, scoped, power, ref: rtRef,
+    stop() { runner.cancelAll('host_stop').catch(() => {}); session.end('host_stop').catch(() => {}); session.stop(); store.stop(); live.stop(); gui.stop(); browser.stop(); procs.stopAll(); }};
 }
 
 export function printCapabilities(cfg) {
@@ -318,7 +342,7 @@ export async function handleRpc(msg, cfg, deps = {}) {
       if (!TOOLS.some(t => t.name === name)) return rpcError(id, -32602, 'unknown_tool');
       const started = Date.now();
       try {
-        const {principal: _p, accessVerifier: _v, runtime: _r, procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, sessionDeps: _sd, appsDeps: _ad, taskDeps: _td, handoffDeps: _hd, trace: _t, ...execDeps} = deps;
+        const {runnerDeps: _rd, diagDeps: _dd, scopedDeps: _sc, powerDeps: _pw, resumePlans: _rp, principal: _p, accessVerifier: _v, runtime: _r, procsDeps: _pd, guiDeps: _gd, browserDeps: _bd, liveDeps: _ld, sessionDeps: _sd, appsDeps: _ad, taskDeps: _td, handoffDeps: _hd, trace: _t, ...execDeps} = deps;
         const rt = deps.runtime || (cfg.runtime ||= createRuntime(cfg, deps));
         rt.store?.refresh('file');
         let out;

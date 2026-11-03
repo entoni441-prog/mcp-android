@@ -26,7 +26,17 @@ export const DEFAULT_CAPABILITIES = Object.freeze({
   blockedApps: [],           // 0.5.2: apps the owner blocked (revoke) — never a target in policy mode
   launchApps: {},            // 0.5.0: owner-approved launchable apps {name: absolute exe path}; added via manage_app_access
   tasks: {},
-  windowBudget: 4,           // NEXT-1: regulation, not a limit — more NEXUS windows at once need a stated reason (open_app reason)
+  windowBudget: 4,
+  // ── NEXUS NEXT (owner profile; raising from chat is NOT possible for these) ──
+  diagnostics: true,         // system_info: fixed read-only Windows queries (R0)
+  commands: false,           // run_command/command_plan: R0/R1 autonomous, R2/R3 consent, deny list — owner switch
+  power: false,              // power_action (lock/display autonomous; sleep/restart/shutdown consent + preconditions)
+  taskRoots: [],             // absolute folders outside the workspace where NEXUS may work (files_scoped, R1 commands)
+  allowedPackages: [],       // winget ids the owner pre-approved for install/uninstall (R2 → autonomous)
+  lockAfterTask: false,      // owner decision 03.11 §0.1: lock Windows after finish_task (no task → locked); off until the owner enables it
+  logonChannelVerified: false, // owner sets true after HE verified remote logon after a reboot (CRD/RDP) — gate for restart
+  wakeDevice: null,          // name of an independent LAN wake device the owner configured; null → sleep/shutdown BLOCKED
+  limits: {},                // {maxTasks, maxCopyMB, commandTimeoutSec, maxOutputKB, maxCommands} — profile, not code           // NEXT-1: regulation, not a limit — more NEXUS windows at once need a stated reason (open_app reason)
   javaPath: null,
   edgePath: null,
 });
@@ -45,7 +55,10 @@ export const HARD_DENY = Object.freeze([
 const norm = s => String(s).toLowerCase().replace(/\.exe$/i, '');
 export const isHardDenied = name => HARD_DENY.includes(norm(name));
 
-const BOOL_KEYS = ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser', 'live_view', 'grantsFromChat'];
+const BOOL_KEYS = ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser', 'live_view', 'grantsFromChat', 'diagnostics', 'commands', 'power', 'logonChannelVerified', 'lockAfterTask'];
+/** NEXT: limits moved from code to the profile (architecture §4.2) — [default, min, max]. */
+export const LIMITS = Object.freeze({maxTasks: [3, 1, 10], maxCopyMB: [50, 1, 2048], commandTimeoutSec: [600, 5, 3600], maxOutputKB: [256, 16, 4096], maxCommands: [3, 1, 10]});
+export const limit = (caps, k) => caps?.limits?.[k] ?? LIMITS[k][0];
 export const APP_NAME = /^[A-Za-z0-9._-]{1,60}$/;
 export const LAUNCH_NAME = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 const TASK_NAME = /^[a-z0-9][a-z0-9_-]{0,39}$/;
@@ -81,6 +94,36 @@ export function validateCapabilities(raw) {
     c.blockedApps = raw.blockedApps.map(a => a.replace(/\.exe$/i, ''));
   }
   Object.freeze(c.blockedApps);
+  for (const k of ['taskRoots']) {
+    c[k] = [];
+    if (Object.hasOwn(raw, k)) {
+      const P = raw[k];
+      if (!Array.isArray(P) || P.length > 50 || !P.every(x => typeof x === 'string' && x.length <= 400 && !x.includes('\0') && !x.startsWith('\\\\') && (path.win32.isAbsolute(x) || path.posix.isAbsolute(x)))) throw Error('invalid_capabilities: ' + k);
+      if (P.some(x => /^[a-zA-Z]:\\?$/.test(x) || x === '/')) throw Error('invalid_capabilities: taskRoots must not be a whole drive');
+      c[k] = [...P];
+    }
+    Object.freeze(c[k]);
+  }
+  if (Object.hasOwn(raw, 'wakeDevice') && raw.wakeDevice !== null) {
+    if (typeof raw.wakeDevice !== 'string' || !/^[\w .:-]{1,80}$/.test(raw.wakeDevice)) throw Error('invalid_capabilities: wakeDevice');
+    c.wakeDevice = raw.wakeDevice;
+  }
+  c.allowedPackages = [];
+  if (Object.hasOwn(raw, 'allowedPackages')) {
+    if (!Array.isArray(raw.allowedPackages) || raw.allowedPackages.length > 100 || !raw.allowedPackages.every(x => typeof x === 'string' && /^[A-Za-z0-9][A-Za-z0-9._+-]{1,99}$/.test(x))) throw Error('invalid_capabilities: allowedPackages');
+    c.allowedPackages = [...raw.allowedPackages];
+  }
+  Object.freeze(c.allowedPackages);
+  c.limits = {};
+  if (Object.hasOwn(raw, 'limits')) {
+    const L = raw.limits;
+    if (!isObjPlain(L)) throw Error('invalid_capabilities: limits');
+    for (const [k, v] of Object.entries(L)) {
+      if (!LIMITS[k] || !Number.isInteger(v) || v < LIMITS[k][1] || v > LIMITS[k][2]) throw Error('invalid_capabilities: limits.' + k);
+      c.limits[k] = v;
+    }
+  }
+  Object.freeze(c.limits);
   c.protectedPaths = [];
   if (Object.hasOwn(raw, 'protectedPaths')) {
     const P = raw.protectedPaths;
@@ -134,6 +177,8 @@ export function loadCapabilities(home) {
   const text = fs.readFileSync(file, 'utf8').replace(/^﻿/, '');
   return {file, caps: validateCapabilities(JSON.parse(text))};
 }
+
+function isObjPlain(x) { return x !== null && typeof x === 'object' && !Array.isArray(x); }
 
 export function requireCap(caps, key) {
   if (caps?.[key] !== true) throw Error('capability_disabled');

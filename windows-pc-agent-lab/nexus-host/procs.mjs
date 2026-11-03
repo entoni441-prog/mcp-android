@@ -94,7 +94,7 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
       if (!onlyKeys(args, ['task']) || typeof args.task !== 'string') bad();
       const def = caps.tasks[args.task];
       if (!def) throw Error('unknown_task');
-      if ([...tasks.values()].filter(t => t.state === 'running').length >= 3) throw Error('too_many_tasks');
+      if ([...tasks.values()].filter(t => t.state === 'running').length >= (caps.limits?.maxTasks ?? 3)) throw Error('too_many_tasks');
       if (!fs.existsSync(def.exe)) throw Error('task_exe_missing');
       const id = crypto.randomBytes(6).toString('hex');
       const cwd = def.cwd || cfg.workspace;

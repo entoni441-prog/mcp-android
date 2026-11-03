@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<!-- NEXUS NEXT Sentinel: at system start as SYSTEM, before sign-in. Reports only a state word (no input/screen/commands).
+     Placeholders __NODE__, __SENTINEL__ are filled by the installer. -->
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>NEXUS Sentinel — reports booting/logon_screen/locked/user_session/host_up to the NEXUS gateway. No input, no screen, no passwords.</Description></RegistrationInfo>
+  <Triggers><BootTrigger><Enabled>true</Enabled><Delay>PT30S</Delay></BootTrigger></Triggers>
+  <Principals><Principal id="System"><UserId>S-1-5-18</UserId><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <RestartOnFailure><Interval>PT1M</Interval><Count>10</Count></RestartOnFailure>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions Context="System"><Exec><Command>__NODE__</Command><Arguments>"__SENTINEL__"</Arguments></Exec></Actions>
+</Task>

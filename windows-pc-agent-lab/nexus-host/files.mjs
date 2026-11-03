@@ -44,7 +44,8 @@ export function searchFiles(args, {workspace}) {
   return {query: args.query, results, truncated, scanned};
 }
 
-export function fileAction(args, {workspace, now = () => new Date()}) {
+export function fileAction(args, ws) {
+  const {workspace, now = () => new Date()} = ws;
   if (!onlyKeys(args, ['action', 'path', 'to'])) bad();
   if (!['copy', 'move', 'rename', 'delete'].includes(args.action) || !safePath(args.path)) bad();
   if (args.action === 'delete' ? args.to !== undefined : !safePath(args.to)) bad();
@@ -70,7 +71,7 @@ export function fileAction(args, {workspace, now = () => new Date()}) {
 
   if (args.action === 'copy') {
     if (!st.isFile()) throw Error('copy_files_only');
-    if (st.size > MAX_COPY) throw Error('file_too_large');
+    if (st.size > (ws.maxCopyBytes ?? MAX_COPY)) throw Error('file_too_large');
     fs.copyFileSync(src, dest, fs.constants.COPYFILE_EXCL);
   } else {
     fs.renameSync(src, dest);

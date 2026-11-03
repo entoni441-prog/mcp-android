@@ -49,3 +49,23 @@ test('host 5xx / 404 reasons', async () => {
   assert.match(text(await call('mouse_action', env(), async () => new Response('', {status: 500}))), /host_500/);
   assert.match(text(await call('mouse_action', env(), async () => new Response('', {status: 404}))), /host_404/);
 });
+
+// ── NEXUS NEXT: Sentinel (pre-logon state) + verdicts ────────────────────────────────────────────────────────────
+import {handleSentinel, pcVerdict} from '../src/handlers.mjs';
+test('NEXT sentinel: separate token, strict body, stored; verdicts distinguish logon screen / locked / host offline / tunnel 530', async () => {
+  const kv = new Map(); const env = {OAUTH_KV: {get: async k => kv.get(k) ?? null, put: async (k, v) => kv.set(k, v), delete: async k => kv.delete(k)}, SENTINEL_TOKEN: 's'.repeat(40), NEXUS_TOKEN: 'n'.repeat(40)};
+  const req = (body, tok = 's'.repeat(40)) => new Request('https://g.example/sentinel', {method: 'POST', headers: {authorization: 'Bearer ' + tok, 'content-type': 'application/json'}, body: JSON.stringify(body)});
+  const ok = {state: 'logon_screen', bootAt: '2026-11-03T10:00:00Z', at: '2026-11-03T10:02:00Z'};
+  assert.equal((await handleSentinel(req(ok, 'n'.repeat(40)), env)).status, 401, 'the NEXUS token is not the sentinel token');
+  assert.equal((await handleSentinel(req({...ok, state: 'run_cmd'}), env)).status, 400);
+  assert.equal((await handleSentinel(req(ok), env)).status, 200);
+  assert.equal(JSON.parse(kv.get('sentinel')).state, 'logon_screen');
+  assert.equal((await handleSentinel(req(ok), {OAUTH_KV: env.OAUTH_KV})).status, 503, 'no SENTINEL_TOKEN → endpoint disabled');
+  const t = Date.now(), S = state => ({state, reportedAt: t - 30_000});
+  assert.equal(pcVerdict({probeStatus: 530, sentinel: S('logon_screen'), now: t}).verdict, 'awaiting_owner_logon');
+  assert.equal(pcVerdict({probeStatus: 0, sentinel: S('locked'), now: t}).verdict, 'pc_locked');
+  assert.equal(pcVerdict({probeStatus: 530, sentinel: S('user_session'), now: t}).verdict, 'host_offline');
+  assert.equal(pcVerdict({probeStatus: 530, sentinel: {state: 'user_session', reportedAt: t - 10 * 60_000}, now: t}).verdict, 'tunnel_unavailable', 'stale sentinel ignored');
+  assert.equal(pcVerdict({probeStatus: 530, registrationStale: true, sentinel: null, now: t}).verdict, 'pc_offline_stale_registration');
+  assert.equal(pcVerdict({probeStatus: 200, sentinel: S('host_up'), now: t}), null);
+});

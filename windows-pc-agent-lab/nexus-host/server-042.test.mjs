@@ -29,7 +29,7 @@ test('process close of a non-NEXUS app → consent_required; confirm_action exec
     assert.match((await call('confirm_action', {consentId: r.consentId, decision: 'close_discard', target: r.target})).content[0].text, /consent_expired_or_unknown/);
     assert.equal(kills.length, 1);
     const d = (await call('host_diagnostics', {})).structuredContent;
-    assert.equal(d.version, '0.5.2'); assert.equal(d.pendingConsents, 0);
+    assert.equal(d.version, '0.6.0-next'); assert.equal(d.pendingConsents, 0);
     const events = fs.readFileSync(cfg.auditFile, 'utf8').trim().split('\n').map(l => JSON.parse(l)).map(e => e.event || e.tool);
     for (const e of ['consent_required', 'consent_decision', 'confirm_action', 'host_diagnostics']) assert.ok(events.includes(e), e);
   } finally { server.close(); cfg.runtime?.stop(); }
