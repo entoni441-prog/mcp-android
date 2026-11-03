@@ -4,6 +4,7 @@
 **Назначение:** единый реестр фактов, дефектов, непроверенных требований и идей для будущего **одного** пакета доработок. Этот документ не является разрешением на изменение кода, политик, шлюза или действующего Host.
 **Ветка:** `experiment/nexus-0.5.2-owner-access-20261102` (не `main`).
 **Единое ТЗ сформировано 03.11.2026:** [NEXUS NEXT — unified technical specification](./NEXUS-NEXT-UNIFIED-TECHNICAL-SPEC-20261103.md). Включены NX-052-01…31, TEST-NEXT-01…10, условия разработки, безопасности, приёмки и отката. **Факт создания документа ≠ разрешение начинать разработку/менять production.**
+**Реальная приёмка NEXT 0.6.0-next, 03.11.2026:** [единый отчёт P0/P1/P2/R](./NEXUS-NEXT-ACCEPTANCE-REPORT-20261103.md). Содержит результаты, BLOCKED, P0-4 FAIL и новые NX-052-32/33.
 **Рабочее правило:** новые случаи дописывать с датой, источником, фактическим ответом NEXUS, ожидаемым результатом и проверяемым критерием приёмки; не объявлять гипотезы установленными причинами. Устранённые замечания помечать RESOLVED лишь после реального повторного теста.
 
 ## Краткий реестр
@@ -41,6 +42,8 @@
 | NX-052-29 | P2 browser cleanup | CONFIRMED API ERROR / ROOT CAUSE UNKNOWN | browser_tabs last tab closes to tabs=[], then list returns internal_error |
 | NX-052-30 | P1 owner requirement | CONFIRMED CURRENT RESTRICTION | Strict one-window-at-a-time blocks working across two task-owned apps |
 | NX-052-31 | P2 connectivity | CONFIRMED TEMPORARY OFFLINE | Live View restart refused pc_offline / edge_530; gateway reachable but tunnel unavailable |
+| NX-052-32 | P0/P1 clipboard | CONFIRMED INCOMPLETE RESTORE / DATA LOSS UNPROVEN | keyboard_action text → clipboardRestored:false, restored_partial; full restoration not guaranteed |
+| NX-052-33 | P0 live | CONFIRMED CONFIG MISMATCH | 0.6.0-next live leaseIdleSec=45 while NEXUS-NEXT-ACCEPTANCE P0-4 requires 600 seconds |
 
 ## Наблюдения и требования для будущего задания
 
@@ -293,6 +296,28 @@
 
 - **Fact:** following lease-expired work session, `watch_nexus` reactivation returned `pc_offline: ... reason:edge_530_registered_392s_ago`, trace `07907cfc1205115e`. One diagnostic `connection_status`: `gateway:"ok"`, `tunnelProbe.status:530`, `verdict:"tunnel_down_or_reconnecting"`, `registration.ageSec:398`. Do not infer PC power state. No retrying write actions.
 - **PASS:** distinguish idle view timeout, session end, tunnel loss, host offline and machine sleep; automatic verified reconnect; resumable Live View from prior checkpoint with STOP semantics; diagnose and report separately. Preserve existing cloudflared reconnect behavior.
+
+### NX-052-32 — частичное восстановление буфера обмена (P0/P1, 03.11.2026)
+- **Воспроизводимый факт реальной приёмки 0.6.0-next:** в собственном окне Explorer для папки с синтетическим TXT инструмент `keyboard_action({text:"%USERPROFILE%\\NEXUS-workspace\\next-test\\acceptance-20261103"})` вернул `done:true`, `chars:59`, `clipboardRestored:false`, `clipboard:"restored_partial"`. Навигация по пути состоялась, но прежнее состояние clipboard не полностью подтверждено как восстановленное.
+- **Интерпретация:** нельзя утверждать потерю данных владельца, но инвариант «сохрани/восстанови все исходные форматы буфера» **не выполнен**. После обнаружения дальнейшую текстовую вставку через этот метод прекратили; Windows и clipboard намеренно не модифицировали диагностикой, не прочитали его исходное содержимое.
+- **Предложение:** до вставки считывать capability полного round-trip всех реально присутствующих форматов (текст, изображение, rich, files) локально, без вывода в LLM; при невозможности гарантировать восстановление — отказ до изменения clipboard либо безопасный альтернативный ввод. Добавить unit/Windows test на штатные clipboard formats и гонки другого владельца.
+- **PASS:** после ввода контрольный `clipboardRestored:true` с проверенным совпадением оригинальных форматов/данных, либо корректный fail-closed до ввода. Никакого лишнего чтения пользовательского буфера в журнал.
+- **Статус:** CONFIRMED functional regression. Доказательства: [NEXUS NEXT acceptance report 03.11](./NEXUS-NEXT-ACCEPTANCE-REPORT-20261103.md), P1-1 и `6.
+
+### NX-052-33 — 45-секундный lease вместо требуемых 600 секунд (P0, 03.11.2026)
+- **Воспроизводимый факт:** `get_capabilities` в установленном Host `0.6.0-next` отвечает `session.leaseIdleSec=45`, тогда как `NEXUS-NEXT-ACCEPTANCE.md` P0-4 требует `leaseIdleSec=600` и продолжение Live View в течение 3 минут без вызовов ChatGPT. Ранее в этом же приёмочном прогоне `lastEnded` показал `reason:"lease_expired"` и `sec:60` с `framesAfterStop:0`. Отдельное полное 3-минутное ожидание не проводили, поскольку текущая конфигурация уже противоречит заявленному состоянию.
+- **Не путать:** прежнее поведение owner-pause и idle view; `view_idle` после 11 минут (P0-5) **не** был подтверждён. Смешивать lease expiry, owner STOP, паузу мыши и исчезновение транспортного туннеля запрещено.
+- **PASS:** live сессия в активной задаче выдерживает 3 минуты тишины, `leaseIdleSec` соответствует регламенту (600 с), затем `view_idle` после 11 минут формирует checkpoint с `resumable:true`. Физический STOP продолжает действовать немедленно.
+- **Статус:** CONFIRMED configuration/behavior mismatch; исправление только через экспериментальную ветку и установку по утверждённому ACTIVATE, без тихой правки production Host.
+
+### NEXUS NEXT 0.6.0-next — результаты регрессионных проверок 03.11.2026
+- **NX-052-28:** Calculator `7+5=12`, C «Очистить» → `0` без `consent_required` — **PASS narrow case C** (CE отдельно не тестировали).
+- **NX-052-29:** closing final browser tab → `tabs:[],open:false`; subsequent `browser_tabs list` → тот же пустой корректный список — **PASS**, старый internal_error не воспроизведён.
+- **NX-052-30:** Calculator и Explorer открыты одновременно через `open_app` (с reason), не возник `nexus_window_not_closed` — **PASS concurrency**. Но полная cross-app clipboard проверка **BLOCKED из-за NX-052-32**.
+- **NX-052-22:** `open_app crystaldiskinfo` → `app_launch_failed: requires_elevation_or_access_denied` (trace `c694ac30e709dd77`) без обхода UAC. Диагностика причины стала точнее, приложение не открылось.
+- **NX-052-25/27:** `system_info autostart_nexus` обнаружил Running `NEXUS-Host-Run` с триггером `Time`, не `Logon`; `system_info network` — активен USB Wi-Fi D-Link DWA-182, Ethernet Realtek disconnected, `wol=[]`; `power.wakeArmed` содержит Realtek. Автозапуск после входа, реальное пробуждение и power-on **не подтверждены**.
+- **NX-052-31:** наблюдали один `pc_offline edge_530` на серии запросов и самостоятельный reconnect Cloudflare. Различать «tunnel transient» и «sleep/power loss».
+- **Реестр полной приёмки:** [NEXUS-NEXT-ACCEPTANCE-REPORT-20261103.md](./NEXUS-NEXT-ACCEPTANCE-REPORT-20261103.md), по P0/P1/P2/R. Вся работа на Host — только безопасные тесты, изменения кода/production не было.
 
 ## Подтверждённые рабочие функции — не переделывать без причины
 - **ZIP compress/extract and recoverable removal — PASS (02.11.2026):** created isolated folder `NEXUS-test/zip-test-20261102` containing two synthetic files `alpha.txt` and `beta.txt` using `make_dir` and `write_text`. In NEXUS-opened Explorer selected both, «Сжать до → ZIP-файл» created `alpha.zip` (the archive contained both). «Извлечь все» created `alpha/` with both files. Compared source/extracted SHA-256: alpha `2ab5f7d376c73ff1c33fc1f9e49375c3bcdeecf734bc5bcc15a361475dc3ff03`, beta `c60e3ec09dcc108a14ff1f590ad37810b3d690f6f911de25b3ba07c176a76c29` — each matched exactly. `file_action({action:"delete",path:"NEXUS-test/zip-test-20261102/alpha.zip"})` moved only test ZIP to `.nexus-trash/2026-11-02T22-00-20-145Z-alpha.zip`, `recoverable:true`; final listing confirmed it absent from source dir and present in trash. Synthetic original/extracted text files intentionally retained for verification. No user files or settings changed.
