@@ -4,14 +4,15 @@
 **Решение владельца 03.11:** один комплексный релиз NEXT; NEXT-1/2/3 — внутренние блоки. Разработка разрешена, развёртывание — нет. Рабочий Host 0.5.2 (`a22fae6`), production Gateway (`27d66b41…`) и `main` не менялись.
 
 ## Сборка
-- Коммит сборки: тот, в котором лежит `MANIFEST-NEXT-0.6.0.sha256` последней редакции (см. `git log -1 -- windows-pc-agent-lab/MANIFEST-NEXT-0.6.0.sha256`).
+- Коммит сборки: **`0dbd067`** (последняя редакция `MANIFEST-NEXT-0.6.0.sha256`; более поздние коммиты меняют только документы). CI: run **41613902124 — success** (windows + ubuntu + gateway).
 - Состав и SHA-256: `MANIFEST-NEXT-0.6.0.sha256` (37 файлов: runtime Host, Sentinel, шаблоны задач, `src` шлюза, `v3/actions.mjs`). Генератор: `make-manifest-next.sh`.
 - Версия: Host/каталог `0.6.0-next`; инструментов **43** (было 37).
 - Установка/откат: `ACTIVATE-NEXT-0.6.0.md`. Приёмка: `NEXUS-NEXT-ACCEPTANCE.md`.
 
 ## Проверки (факт)
 - Linux, Node 22: Host — все `*.test.mjs` кроме `*-real` → 0 fail (231 тест: 230 pass, 1 skip, 0 fail; вкл. реальный Chrome по CDP); шлюз — 31/31.
-- GitHub Actions `nexus-host-ci`: блоки 1–2 — run 41609720334 success (windows + ubuntu + gateway); блоки 3–4 — run 41611413446 (итог — в «CI» ниже). На Windows runner дополнительно: реальный Windows desktop (Robot, UIA, consent, cleanup, discover, R-01, Explorer) и новый `windows-next-real` (все 13 тем `system_info` на реальной Windows, runner без shell с убийством дерева процессов, Authenticode + Mark of the Web на NTFS).
+- GitHub Actions `nexus-host-ci`: блоки 1–2 — run 41609720334 success (windows + ubuntu + gateway); блоки 3–4 — run 41611413446 success; сборка `0dbd067` — run 41613902124 success. На Windows runner дополнительно: реальный Windows desktop (Robot, UIA, consent, cleanup, discover, R-01, Explorer) и новый `windows-next-real` (все 13 тем `system_info` на реальной Windows, runner без shell с убийством дерева процессов, Authenticode + Mark of the Web на NTFS).
+- Найдено и исправлено реальным Windows CI: (1) кэп загрузки 50 МБ срабатывает корректно; (2) дочерний Windows PowerShell 5.1 ломался от `PSModulePath` родителя PowerShell 7 (`Get-AuthenticodeSignature` молча пуст) — дочерним процессам теперь отдаётся путь модулей по умолчанию. `windows-explorer-real` один раз упал на гонке UIA (элемент исчез при обходе дерева) и прошёл при перезапуске — существующая нестабильность теста, не изменение NEXT.
 - **Не проверено на ПК владельца.** Всё ниже «реализовано» = код + автоматические тесты, не физическая приёмка.
 
 ## Что изменилось
