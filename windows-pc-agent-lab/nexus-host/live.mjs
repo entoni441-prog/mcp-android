@@ -18,7 +18,7 @@ const int = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
 export const MIN_INTERVAL_MS = 200;
 export const IDLE_MS = 6000;
 
-export function createLive({caps, store, capture, session = null, onResume = () => {}, audit = () => {}, now = () => Date.now(), indicator = defaultIndicator, setIntervalFn = setInterval}) {
+export function createLive({caps, store, capture, session = null, onResume = () => {}, onStopResume = () => {}, audit = () => {}, now = () => Date.now(), indicator = defaultIndicator, setIntervalFn = setInterval}) {
   let seq = 0, last = null, inflight = null, viewing = false, lastServed = 0, served = 0, since = 0;
   let lastFrameAt = 0, droppedAfterStop = 0; // 0.5.2 N-07: Stop timing marks
   const setViewing = (on, why) => {
@@ -82,7 +82,9 @@ export function createLive({caps, store, capture, session = null, onResume = () 
         // Lifts the STOP block and the owner pause (revision 2). Allowed ONLY after the owner's explicit go-ahead in chat.
         const stopCleared = session?.resumeAfterStop?.() || false, pauseCleared = session?.resumeOwner?.() || false;
         if (pauseCleared) onResume();
-        return {resumed: stopCleared || pauseCleared, stopCleared, ownerPauseCleared: pauseCleared, state: state()};
+        const taskResumeAllowed = stopCleared ? onStopResume() === true : false;
+        return {resumed: stopCleared || pauseCleared, stopCleared, ownerPauseCleared: pauseCleared, ...(stopCleared ? {taskResumeAllowed} : {}), state: state(),
+          ...(stopCleared || pauseCleared ? {next: 'Before any input: re-identify the target (list_windows/window_info/inspect_ui/capture_screen or browser_snapshot); coordinates, pids and refs from before the pause are stale.'} : {})};
       }
       if (args.action === 'stop') {
         // Owner requirement 02.11: STOP on the phone stops the whole task (session end: NEXUS windows closed, tasks

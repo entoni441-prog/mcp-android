@@ -196,6 +196,8 @@ test('NEXT-1: lease end / Host stop / STOP interrupt the task but keep its id; n
   assert.equal(t.current('s2').id, id, 'same task id in the new session');
   assert.deepEqual([t.state().status, t.state().resumes, t.state().resumable], ['active', 1, false]);
   t.close('owner_stop'); assert.equal(t.state().status, 'stopped_by_owner');
+  assert.throws(() => t.current('s3'), /^Error: stopped_by_owner/, 'NEXT: a stopped task never resumes by itself');
+  assert.equal(t.allowResume(), true);
   assert.equal(t.current('s3').id, id);
   const saved = JSON.parse(fs.readFileSync(path.join(dir, id + '.json'), 'utf8'));
   assert.deepEqual(saved.interruptions.map(i => [i.reason, !!i.resumedAt]), [['lease_expired', true], ['owner_stop', true]]);

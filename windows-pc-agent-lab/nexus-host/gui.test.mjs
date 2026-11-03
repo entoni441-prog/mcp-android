@@ -148,9 +148,15 @@ test('screen geometry change between calls aborts the action', async () => {
   await assert.rejects(g.mouse_action({action: 'click', x: 5, y: 5}), /screen_changed_retry/);
 });
 
-test('multi-monitor refused for mouse', async () => {
+test('multi-monitor: no monitor map / mixed DPI refused; same DPI maps by scale; secondary-monitor point refused', async () => {
   const f = fakes({info: {...INFO, screens: 2}});
-  await assert.rejects(gui(f).mouse_action({action: 'click', x: 1, y: 1}), /multi_monitor_unsupported/);
+  await assert.rejects(gui(f).mouse_action({action: 'click', x: 1, y: 1}), /multi_monitor_mixed_dpi_unsupported/);
+  const mixed = {...INFO, screens: 2, monitors: [{x: 0, y: 0, w: 1280, h: 720, scale: 1.5, primary: true}, {x: 1280, y: 0, w: 1920, h: 1080, scale: 1, primary: false}]};
+  await assert.rejects(gui(fakes({info: mixed})).mouse_action({action: 'click', x: 1, y: 1}), /multi_monitor_mixed_dpi_unsupported/);
+  const same = {...INFO, screens: 2, monitors: [{x: 0, y: 0, w: 1280, h: 720, scale: 1.5, primary: true}, {x: 1280, y: 0, w: 1280, h: 720, scale: 1.5, primary: false}]};
+  const m = mapping(same, ROOT);
+  assert.deepEqual(m.toUia(100, 10), {x: 150, y: 15}); assert.deepEqual(m.rectToScreen({x: 150, y: 15, w: 30, h: 30}), {x: 100, y: 10, w: 20, h: 20});
+  await assert.rejects(gui(fakes({info: same})).mouse_action({action: 'click', x: 1300, y: 10}), /point_on_secondary_monitor/);
 });
 
 test('mouse argument validation', async () => {

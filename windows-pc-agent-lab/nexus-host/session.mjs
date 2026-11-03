@@ -30,18 +30,31 @@ export const WORK_TOOLS = Object.freeze(new Set([
 /** Tools that may run during a session and renew it, but never start one. */
 export const RENEW_TOOLS = Object.freeze(new Set(['inspect_ui', 'window_info', 'capture_screen', 'browser_snapshot', 'list_windows', 'task_status']));
 
-export const DEFAULTS = Object.freeze({idleMs: 45_000, maxMs: 30 * 60_000, tickMs: 1000, ownerStopMs: 10 * 60_000});
+/**
+ * NEXUS NEXT: while a TASK is open (tasks.peek().status === 'active') the lease is the task heartbeat — any tool call,
+ * read-only included, renews it; up to taskIdleMs (10 min) without calls, then the session ends with reason
+ * 'view_idle' (task interrupted, resumable). Without a task (watch-only) the 45 s lease stays. Frames never renew.
+ * STOP (owner, Live View page) is STICKY: no timer lifts it; only live_control resume (after the owner's go-ahead in
+ * chat) does. It is persisted (stopStore) so a Host restart cannot silently lift it.
+ */
+export const DEFAULTS = Object.freeze({idleMs: 45_000, taskIdleMs: 10 * 60_000, maxMs: 4 * 3600_000, tickMs: 1000, ownerStopMs: Infinity});
+/** Why there is no work session right now — what get_capabilities/connection report (FR-01.2). */
+export const SESSION_STATES = Object.freeze(['active', 'owner_paused', 'owner_stop', 'view_idle', 'lease_expired', 'idle']);
 
 /** Owner requirement 02.11 (VISIBILITY): plain, secret-free journal line parts. */
 const SAFE = v => (typeof v === 'string' && /^[A-Za-z0-9._ -]{1,40}$/.test(v) ? v : null);
 
 export function createSession({caps, audit = () => {}, now = () => Date.now(), setIntervalFn = setInterval, clearIntervalFn = clearInterval,
-  idleMs = DEFAULTS.idleMs, maxMs = DEFAULTS.maxMs, tickMs = DEFAULTS.tickMs, ownerStopMs = DEFAULTS.ownerStopMs} = {}) {
+  idleMs = DEFAULTS.idleMs, taskIdleMs = DEFAULTS.taskIdleMs, maxMs = DEFAULTS.maxMs, tickMs = DEFAULTS.tickMs, ownerStopMs = DEFAULTS.ownerStopMs,
+  stopStore = null} = {}) {
+  let taskActive = () => false; // set by the runtime (tasks.peek)
   let s = null;            // current session or null
   let last = null;         // summary of the last ended session
   let ownerLiveOptOut = false;
   const hooks = [];        // {fn: async (reason, session) => partial report, name}
-  let stoppedUntil = 0;     // owner pressed STOP on the Live View page: no new work until then (or until resumed)
+  let stoppedUntil = 0;     // owner pressed STOP on the Live View page: no new work until resumed (sticky, NEXT)
+  let stoppedAt = 0;
+  try { const p = stopStore?.load?.(); if (p && p.stopped) { stoppedUntil = Infinity; stoppedAt = Date.parse(p.at) || now(); } } catch { /* unreadable marker → not stopped */ }
   const activity = [];     // last tool calls: {t, tool, ok, code?, target?} — names and codes only, never arguments
   let ownerPause = null;    // revision 2: the owner took over the PC → {since, why}; ends ONLY by explicit resume
   const holds = new Map(); // 0.5.2 N-03: key → {until, pauseLive} — an owner action is pending; the idle lease must not end the task
@@ -91,7 +104,8 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
     if (!s) return;
     const t = now();
     for (const [k, h] of holds) if (h.until < t) holds.delete(k);
-    if (s.inflight === 0 && holds.size === 0 && t - s.lastWork > idleMs) await end('lease_expired');
+    const tasky = s.kind !== 'watch' && taskActive();
+    if (s.inflight === 0 && holds.size === 0 && t - s.lastWork > (tasky ? taskIdleMs : idleMs)) await end(tasky ? 'view_idle' : 'lease_expired');
     else if (t - s.startedAt > maxMs) await end('max_duration');
   }
 
@@ -100,7 +114,7 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
     async around(tool, fn) {
       const starts = WORK_TOOLS.has(tool), renews = starts || (s && RENEW_TOOLS.has(tool));
       if (starts && stoppedUntil > now()) {
-        throw Error(`stopped_by_owner: the owner pressed STOP on Live View ${Math.round((now() - (stoppedUntil - ownerStopMs)) / 1000)} s ago - do not continue the task; wait for the owner to say in chat that you may continue`);
+        throw Error(`stopped_by_owner: the owner pressed STOP ${Math.round((now() - stoppedAt) / 1000)} s ago - the task is stopped and will NOT resume by itself; continue only after the owner explicitly says so in chat, then call live_control resume`);
       }
       if (starts && ownerPause) {
         throw Error(`owner_paused: the owner took over the PC ${Math.round((now() - ownerPause.since) / 1000)} s ago (${ownerPause.why}) - NEXUS does nothing on the desktop until the owner explicitly says to continue; ask the owner, then call live_control resume`);
@@ -116,11 +130,21 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
     tick,
     /** Owner requirement 02.11: STOP from the phone (Live View page) stops the TASK, not only the picture. */
     async ownerStop() {
-      stoppedUntil = now() + ownerStopMs;
-      audit({event: 'owner_stop', blockSec: Math.round(ownerStopMs / 1000)});
+      stoppedUntil = now() + ownerStopMs; stoppedAt = now();
+      try { stopStore?.save?.({stopped: true, at: new Date(stoppedAt).toISOString()}); } catch { /* in-memory block still holds */ }
+      audit({event: 'owner_stop', sticky: !Number.isFinite(ownerStopMs)});
       return end('owner_stop');
     },
-    resumeAfterStop() { const was = stoppedUntil > now(); stoppedUntil = 0; if (was) audit({event: 'owner_stop_cleared'}); return was; },
+    resumeAfterStop() { const was = stoppedUntil > now(); stoppedUntil = 0; try { stopStore?.save?.(null); } catch {} if (was) audit({event: 'owner_stop_cleared'}); return was; },
+    /** Runtime wiring: is a task open (heartbeat lease applies)? */
+    setTaskActive(fn) { taskActive = typeof fn === 'function' ? fn : () => false; },
+    /** FR-01.2: one word for why the desktop is (not) being worked on. */
+    state() {
+      if (stoppedUntil > now()) return 'owner_stop';
+      if (ownerPause) return 'owner_paused';
+      if (s) return 'active';
+      return last?.reason === 'view_idle' ? 'view_idle' : last?.reason === 'lease_expired' ? 'lease_expired' : 'idle';
+    },
     /** Revision 2: the owner moved the mouse / switched the window. Sticky: no timer, no idle heuristic ends it. */
     pauseForOwner(why = 'owner') {
       if (ownerPause) return false;
@@ -160,10 +184,11 @@ export function createSession({caps, audit = () => {}, now = () => Date.now(), s
       active: !!s, liveActive: !!s && s.live && caps.live_view === true && ![...holds.values()].some(h => h.pauseLive), ownerLiveOptOut,
       ...(holds.size ? {heldFor: [...holds.keys()]} : {}),
       ...(s ? {session: s.id, kind: s.kind, sinceSec: Math.round((now() - s.startedAt) / 1000),
-        idleSec: Math.round((now() - s.lastWork) / 1000), inflight: s.inflight, expiresInSec: Math.max(0, Math.round((idleMs - (now() - s.lastWork)) / 1000))} : {}),
-      leaseIdleSec: idleMs / 1000, lastEnded: last,
+        idleSec: Math.round((now() - s.lastWork) / 1000), inflight: s.inflight, expiresInSec: Math.max(0, Math.round(((s.kind !== 'watch' && taskActive() ? taskIdleMs : idleMs) - (now() - s.lastWork)) / 1000))} : {}),
+      state: (stoppedUntil > now() ? 'owner_stop' : ownerPause ? 'owner_paused' : s ? 'active' : last?.reason === 'view_idle' ? 'view_idle' : last?.reason === 'lease_expired' ? 'lease_expired' : 'idle'),
+      leaseIdleSec: (s && s.kind !== 'watch' && taskActive() ? taskIdleMs : idleMs) / 1000, lastEnded: last,
       ...(ownerPause ? {ownerPaused: {why: ownerPause.why, sinceSec: Math.round((now() - ownerPause.since) / 1000), resume: 'live_control resume, only after the owner said to continue'}} : {}),
-      ...(stoppedUntil > now() ? {stoppedByOwner: true, stopBlocksSec: Math.round((stoppedUntil - now()) / 1000)} : {}),
+      ...(stoppedUntil > now() ? {stoppedByOwner: true, stopSinceSec: Math.round((now() - stoppedAt) / 1000), resume: 'live_control resume, only after the owner said to continue'} : {}),
       activity: activity.slice(-5).map(e => ({...e, t: new Date(e.t).toISOString()})),
     }),
     stop() { clearIntervalFn(timer); },

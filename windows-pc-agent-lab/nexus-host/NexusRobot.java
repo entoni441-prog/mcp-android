@@ -96,8 +96,17 @@ public class NexusRobot {
         GraphicsConfiguration gc = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDefaultConfiguration();
         Rectangle b = gc.getBounds();
         double sx = gc.getDefaultTransform().getScaleX(), sy = gc.getDefaultTransform().getScaleY();
-        return String.format(Locale.ROOT, "{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"scaleX\":%.4f,\"scaleY\":%.4f,\"screens\":%d,\"java\":\"%s\"}",
-          b.x, b.y, b.width, b.height, sx, sy, devs.length, System.getProperty("java.version"));
+        // NEXT: monitor map (Java user-space bounds + scale of every screen) for multi-monitor diagnostics/mapping.
+        StringBuilder mon = new StringBuilder("[");
+        for (int i = 0; i < devs.length; i++) {
+          GraphicsConfiguration c = devs[i].getDefaultConfiguration(); Rectangle r = c.getBounds();
+          if (i > 0) mon.append(',');
+          mon.append(String.format(Locale.ROOT, "{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"scale\":%.4f,\"primary\":%b}", r.x, r.y, r.width, r.height,
+            c.getDefaultTransform().getScaleX(), devs[i] == GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice()));
+        }
+        mon.append(']');
+        return String.format(Locale.ROOT, "{\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"scaleX\":%.4f,\"scaleY\":%.4f,\"screens\":%d,\"monitors\":%s,\"java\":\"%s\"}",
+          b.x, b.y, b.width, b.height, sx, sy, devs.length, mon, System.getProperty("java.version"));
       }
       case "capture": {
         if (p.length != 3 && p.length != 4) throw new IllegalArgumentException("invalid_args");
@@ -246,7 +255,7 @@ public class NexusRobot {
           else { cb.setContents(prev, null); how = "restored_" + prev.kind; }
         } catch (Exception e) { how = "not_restored_error"; }
         return String.format(Locale.ROOT, "{\"pasted\":%d,\"clipboardRestored\":%b,\"clipboard\":\"%s\"}",
-          text.length(), how.startsWith("restored") || how.equals("cleared"), how);
+          text.length(), (how.startsWith("restored") && !how.equals("restored_partial")) || how.equals("cleared"), how);
       }
       default: throw new IllegalArgumentException("unknown_command");
     }
@@ -287,12 +296,33 @@ public class NexusRobot {
       for (DataFlavor f : new DataFlavor[]{DataFlavor.stringFlavor, DataFlavor.imageFlavor, DataFlavor.javaFileListFlavor}) {
         try { if (cb.isDataFlavorAvailable(f)) { Object v = cb.getData(f); if (v != null) s.data.put(f, v); } } catch (Exception ignored) { }
       }
+      // NEXT FR-02.4: also every other flavor Java exposes as a String or a byte stream (HTML, RTF, …), ≤32 MB in total.
+      long total = 0; int skipped = 0;
+      for (DataFlavor f : fl) {
+        if (s.data.containsKey(f)) continue;
+        Class<?> rc = f.getRepresentationClass();
+        try {
+          if (rc == String.class) { Object v = cb.getData(f); if (v != null) { total += ((String) v).length() * 2L; s.data.put(f, v); } }
+          else if (java.io.InputStream.class.isAssignableFrom(rc)) {
+            try (java.io.InputStream in = (java.io.InputStream) cb.getData(f)) {
+              byte[] b = in.readNBytes(32 * 1024 * 1024 + 1);
+              if (b.length > 32 * 1024 * 1024 || total + b.length > 32L * 1024 * 1024) { skipped++; continue; }
+              total += b.length; s.data.put(f, b);
+            }
+          } else skipped++;
+        } catch (Exception e) { skipped++; }
+      }
       if (s.data.isEmpty()) { s.kind = "unreadable"; return s; } // something is there, but in no flavor we can restore
-      s.kind = s.data.size() > 1 ? "mixed" : s.data.containsKey(DataFlavor.stringFlavor) ? "text" : s.data.containsKey(DataFlavor.imageFlavor) ? "image" : "files";
+      boolean extra = s.data.keySet().stream().anyMatch(f -> !f.equals(DataFlavor.stringFlavor) && !f.equals(DataFlavor.imageFlavor) && !f.equals(DataFlavor.javaFileListFlavor));
+      s.kind = skipped > 0 ? "partial" : extra ? "rich" : s.data.size() > 1 ? "mixed" : s.data.containsKey(DataFlavor.stringFlavor) ? "text" : s.data.containsKey(DataFlavor.imageFlavor) ? "image" : "files";
       return s;
     }
     public DataFlavor[] getTransferDataFlavors() { return data.keySet().toArray(new DataFlavor[0]); }
     public boolean isDataFlavorSupported(DataFlavor f) { return data.containsKey(f); }
-    public Object getTransferData(DataFlavor f) throws UnsupportedFlavorException { if (!data.containsKey(f)) throw new UnsupportedFlavorException(f); return data.get(f); }
+    public Object getTransferData(DataFlavor f) throws UnsupportedFlavorException {
+      if (!data.containsKey(f)) throw new UnsupportedFlavorException(f);
+      Object v = data.get(f);
+      return v instanceof byte[] ? new java.io.ByteArrayInputStream((byte[]) v) : v; // a fresh stream for every reader
+    }
   }
 }

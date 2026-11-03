@@ -60,8 +60,8 @@ test('NexusRobot.java: info, capture, input, defence-in-depth validation', {skip
     // 0.5.2 clipboard: paste reports what happened to the previous clipboard; nothing is silently lost
     const ps = await d.cmd('paste ' + Buffer.from('nexus-clip-test').toString('base64'));
     console.log('robot paste', JSON.stringify(ps));
-    assert.match(ps.clipboard, /^(cleared|restored_(text|image|files|mixed)|not_restored_unreadable)$/);
-    assert.equal(ps.clipboardRestored, ps.clipboard !== 'not_restored_unreadable');
+    assert.match(ps.clipboard, /^(cleared|restored_(text|image|files|mixed|rich|partial)|not_restored_unreadable)$/);
+    assert.equal(ps.clipboardRestored, !['not_restored_unreadable', 'restored_partial'].includes(ps.clipboard));
     // helper keeps serving after errors
     assert.equal((await d.cmd('info')).w, info.w);
   } finally { d.stop(); }

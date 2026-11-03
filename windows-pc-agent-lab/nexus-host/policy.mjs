@@ -372,11 +372,20 @@ const NEGATE_RE = /^(no|no\s+to\s+all|cancel|close|back|keep|save|don['’]?t\s+
 const clean = n => String(n ?? '').replace(/[&_]/g, '').replace(/\s+/g, ' ').trim();
 const isConfirmDialog = d => !!d && CONFIRM_TEXT_RE.test([d.title, ...(Array.isArray(d.text) ? d.text : [])].join(' \n '));
 
-function byName(elem, parentType) {
+/**
+ * NEXT NX-052-28: apps whose «clear/reset» only resets transient state on the screen (no documents, no stored user
+ * data) — e.g. Calculator «Очистить»/«CE»/«C». WEAK words there are free; STRONG words and confirmation dialogs keep
+ * their rules. Context = app class + control + dialog, not the word alone.
+ */
+export const TRANSIENT_STATE_APPS = Object.freeze(new Set(['calculatorapp', 'calculator', 'calc']));
+const transientApp = proc => TRANSIENT_STATE_APPS.has(String(proc || '').toLowerCase().replace(/\.exe$/, ''));
+
+function byName(elem, parentType, proc = null) {
   const n = clean(elem?.name);
   if (!n || n.length > 60) return null;
   if (DESTRUCT_STRONG_RE.test(n)) return {via: n};
   if (DESTRUCT_WEAK_RE.test(n)) {
+    if (transientApp(proc)) return null; // NX-052-28: Calculator «Очистить» ≠ deleting user data
     if (['Edit', 'ComboBox'].includes(parentType) || WEAK_FIELD_CTX_RE.test(n)) return null; // clearing a field/search/filter
     return {via: n};
   }
@@ -409,7 +418,7 @@ export function classifyDestructiveClick(at, action = 'click') {
     return null; // a long Pane name in a dialog is text, not a button
   }
   if (!ACT_TYPES.has(t)) return null;
-  const hit = byName(at.elem, at.parentType);
+  const hit = byName(at.elem, at.parentType, at.process);
   return hit ? {level: 2, what: 'destructive_action', via: 'click:' + hit.via} : null;
 }
 
@@ -426,7 +435,7 @@ export function classifyDestructiveKeys(keys, ctx) {
       if (!DLG_BTN_TYPES.has(t)) return k === 'space' ? null : {level: 2, what: 'destructive_action', via: 'keys:enter in a confirmation dialog (default button)'};
       return classifyDestructiveClick({elem: el, dialog: ctx.dialog}, 'click');
     }
-    if (ACT_TYPES.has(t)) { const hit = byName(el, ctx?.parentType); if (hit) return {level: 2, what: 'destructive_action', via: `keys:${k} on «${hit.via}»`}; }
+    if (ACT_TYPES.has(t)) { const hit = byName(el, ctx?.parentType, ctx?.focused?.process ?? ctx?.process); if (hit) return {level: 2, what: 'destructive_action', via: `keys:${k} on «${hit.via}»`}; }
   }
   return null;
 }

@@ -142,7 +142,17 @@ export function psErrorText(raw) {
 
 // ───────────── coordinate mapping ─────────────
 export function mapping(info, root) {
-  if (!info || !root || info.screens !== 1) return null;
+  if (!info || !root) return null;
+  if (info.screens !== 1) {
+    // NEXT multi-monitor: with ONE common DPI scale, Java user space = UIA physical pixels / scale, both with the primary
+    // monitor at (0,0). Mixed scales → no reliable mapping (null). Robot input/capture stay on the primary monitor.
+    const mons = Array.isArray(info.monitors) ? info.monitors : [];
+    const sc = Number(mons[0]?.scale);
+    if (!mons.length || !(sc > 0) || !mons.every(m => Math.abs(Number(m.scale) - sc) < 0.001)) return null;
+    return {rx: sc, ry: sc, multi: true,
+      toUia: (x, y) => ({x: Math.round(x * sc), y: Math.round(y * sc)}),
+      rectToScreen: r => r && ({x: Math.round(r.x / sc), y: Math.round(r.y / sc), w: Math.round(r.w / sc), h: Math.round(r.h / sc)})};
+  }
   if (!(info.w > 0 && info.h > 0 && root.w > 0 && root.h > 0)) return null;
   const rx = root.w / info.w, ry = root.h / info.h;
   return {
@@ -633,7 +643,11 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       else if (args.x2 !== undefined || args.y2 !== undefined) bad();
       if (args.action === 'scroll') { if (!int(args.amount, -20, 20) || args.amount === 0) bad(); } else if (args.amount !== undefined) bad();
       const inf = await info();
-      if (inf.screens !== 1) throw Error('multi_monitor_unsupported');
+      if (inf.screens !== 1 && !mapping(inf, rootCache || (await uia({mode: 'focused'})).root)) throw Error('multi_monitor_mixed_dpi_unsupported: monitors use different scaling; set one scale for all monitors or move the window to the primary monitor');
+      if (inf.screens !== 1 && Array.isArray(inf.monitors)) {
+        const p = inf.monitors.find(m => m.primary) || inf.monitors[0];
+        for (const [x, y] of pts) if (x < p.x || y < p.y || x >= p.x + p.w || y >= p.y + p.h) throw Error('point_on_secondary_monitor: NEXUS input and capture work on the primary monitor; move the window there (focus_window) first');
+      }
       let target = null, lastAt = null;
       if (!rootCache) rootCache = (await uia({mode: 'focused'})).root;
       for (const [x, y] of pts) {

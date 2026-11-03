@@ -160,7 +160,7 @@ test('STOP on the phone (live_control stop) ends the task and refuses new work u
   assert.equal(await s.around('inspect_ui', async () => 'read'), 'read', 'read-only tools still answer');
   assert.equal(s.status().stoppedByOwner, true);
   assert.match(s.caption(), /STOPPED BY OWNER/);
-  t += 11 * 60_000; assert.equal(await s.around('keyboard_action', async () => 'typed'), 'typed', 'block expires (10 min)');
+  t += 24 * 3600_000; await assert.rejects(s.around('keyboard_action', async () => 'typed'), /^Error: stopped_by_owner/, 'NEXT: STOP is sticky, no timer lifts it');
   await s.end('finish_task');
   live.live_control({action: 'stop'}); await new Promise(res => setImmediate(res));
   assert.equal(live.live_control({action: 'resume'}).resumed, true);

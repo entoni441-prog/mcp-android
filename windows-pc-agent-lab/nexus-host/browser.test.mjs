@@ -280,3 +280,34 @@ test('real browser 0.5.2 B-01: modal opener autonomous, Purchase and look-alikes
     assert.doesNotMatch((await b.browser_snapshot({})).text, /ORDER CREATED/);
   } finally { b.stop(); srv.close(); }
 });
+
+test('real browser NEXT: result_verified/observed_url (NX-052-11) and last tab closes cleanly (NX-052-29)', {skip: !exe && 'no browser', timeout: 120_000}, async () => {
+  const srv = http.createServer((req, res) => {
+    if (req.url === '/two') return res.end('<title>Two</title><p>page two</p>');
+    res.setHeader('content-type', 'text/html'); res.end(PAGE + '<button id=dead>Nothing</button>');
+  });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-br-'));
+  const b = createBrowser({caps: validateCapabilities({browser: true}), home, browserPath: exe, headless: true, allowPrivate: true, proxyOptions: {ports: [srv.address().port]}});
+  try {
+    await b.browser_open({url: base + '/'});
+    const s = await b.browser_snapshot({});
+    const ref = n => s.elements.find(e => e.name === n).ref;
+    const t = await b.browser_action({action: 'type', ref: ref('Search'), text: 'abc'});
+    assert.equal(t.result_verified, true); assert.equal(t.observed_url, base + '/');
+    const c = await b.browser_action({action: 'click', ref: ref('Go')});
+    assert.equal(c.result_verified, true); assert.equal(c.observed_state.domChanged || c.observed_state.focusChanged, true);
+    const d = await b.browser_action({action: 'click', ref: ref('Nothing')});
+    assert.equal(typeof d.result_verified, 'boolean');
+    const n = await b.browser_action({action: 'navigate', url: base + '/two'});
+    assert.equal(n.result_verified, true); assert.equal(n.observed_state.urlChanged, true);
+    let list = await b.browser_tabs({action: 'list'});
+    for (const tab of list.tabs) list = await b.browser_tabs({action: 'close', id: tab.id});
+    assert.deepEqual([list.tabs, list.open], [[], false]);
+    const again = await b.browser_tabs({action: 'list'});
+    assert.deepEqual([again.tabs, again.open], [[], false], 'list after the last tab: no internal_error');
+    const re = await b.browser_open({url: base + '/two'});
+    assert.equal(re.title, 'Two', 'browser opens again after the last tab was closed');
+  } finally { b.stop(); srv.close(); }
+});

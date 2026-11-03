@@ -260,9 +260,13 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
   }
   async function pages() {
     if (!port) return [];
-    const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-    return list.filter(t => t.type === 'page');
+    let list;
+    // NEXT NX-052-29: after the last tab closed, Edge exits and the DevTools port is gone → «no browser», not internal_error.
+    try { list = await (await fetch(`http://127.0.0.1:${port}/json/list`, {signal: AbortSignal.timeout(3000)})).json(); }
+    catch { gone(); return []; }
+    return Array.isArray(list) ? list.filter(t => t.type === 'page') : [];
   }
+  function gone() { try { page?.close(); } catch {} try { browserWs?.close(); } catch {} page = null; browserWs = null; port = null; currentTarget = null; }
   async function attach(target) {
     const next = await Cdp.connect(target.webSocketDebuggerUrl);
     next.on('Page.javascriptDialogOpening', d => onDialog(next, d));
@@ -360,6 +364,11 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
             apply: () => this.browser_action(args, {consented: true})});
         }
       }
+      // NEXT NX-052-11 / FR-06.5: done:true is only «attempted»; result_verified compares observed state before/after.
+      const FP = `(() => ({u: location.href, t: document.title, n: document.getElementsByTagName('*').length, l: document.body ? document.body.innerText.length : 0, y: Math.round(scrollY), a: document.activeElement ? (document.activeElement.tagName + '|' + (document.activeElement.value ?? '') + '|' + (document.activeElement.checked ?? '')).slice(0, 300) : ''}))()`;
+      const elState = ref => `(() => { const e = ${refExpr(ref)}; return e ? {v: 'value' in e ? String(e.value).slice(0, 2000) : null, c: e.checked ?? null} : null; })()`;
+      const before = args.action === 'wait' ? null : await evaluate(FP).catch(() => null);
+      const elBefore = args.action === 'click' && typeof args.ref === 'string' ? await evaluate(elState(args.ref)).catch(() => null) : null;
       switch (args.action) {
         case 'wait': {
           const ms = args.timeoutMs ?? 10_000; if (!Number.isInteger(ms) || ms < 100 || ms > 30_000) bad();
@@ -372,7 +381,7 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
             await sleep(300);
           }
           const url = await guardUrl();
-          return {done: true, action: 'wait', found, url, title: await evaluate('document.title')};
+          return {done: true, action: 'wait', found, url, title: await evaluate('document.title'), observed_url: url, result_verified: found};
         }
         case 'select': {
           if (typeof args.value !== 'string' || args.value.length > 200) bad();
@@ -416,7 +425,23 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
         default: bad();
       }
       const url = await guardUrl();
-      return {done: true, action: args.action, url, title: await evaluate('document.title')};
+      const after = await evaluate(FP).catch(() => null);
+      const observed_state = before && after ? {urlChanged: before.u !== after.u, titleChanged: before.t !== after.t,
+        domChanged: before.n !== after.n || before.l !== after.l, scrolled: before.y !== after.y, focusChanged: before.a !== after.a} : null;
+      let verified = null;
+      if (args.action === 'navigate') { try { const w = new URL(args.url), g = new URL(url); verified = w.host === g.host && g.pathname.startsWith(w.pathname.replace(/\/$/, '')); } catch { verified = false; } }
+      else if (args.action === 'type' || args.action === 'select') {
+        const st = await evaluate(elState(args.ref)).catch(() => null);
+        verified = !!st && st.v !== null && (args.action === 'type' ? st.v.includes(args.text) : st.v !== '' );
+      } else if (args.action === 'scroll') verified = !!observed_state?.scrolled;
+      else if (args.action === 'back') verified = !!observed_state?.urlChanged;
+      else if (args.action === 'click' || args.action === 'press') {
+        const elAfter = args.action === 'click' && typeof args.ref === 'string' ? await evaluate(elState(args.ref)).catch(() => null) : null;
+        const elChanged = !!elBefore && !!elAfter && (elBefore.v !== elAfter.v || elBefore.c !== elAfter.c);
+        verified = !!observed_state && (observed_state.urlChanged || observed_state.titleChanged || observed_state.domChanged || observed_state.focusChanged || elChanged);
+      }
+      return {done: true, action: args.action, url, title: await evaluate('document.title'), observed_url: url, observed_state, result_verified: verified,
+        ...(verified === false ? {hint: 'No observable effect: done only means the input was sent. Check with browser_snapshot before assuming success.'} : {})};
     },
     /** 0.5.0: tabs of the NEXUS browser (separate profile — every tab in it belongs to NEXUS). */
     async browser_tabs(args) {
@@ -441,9 +466,13 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
           // 0.5.2: Edge answers closeTarget before the target is gone (Windows CI 41466231727: list still had 2 tabs).
           for (let i = 0; i < 20 && (await pages()).some(x => x.id === t.id); i++) await new Promise(r => setTimeout(r, 100));
           if (t.id === currentTarget) { page?.close(); page = null; const rest = await pages(); if (rest[0]) await attach(rest[0]); }
+          const left = await pages();
+          if (!left.length) { await this.cleanupSession('last_tab_closed').catch(() => gone()); gone(); return {tabs: [], open: false, closed: args.id.toLowerCase()}; }
         }
       } else if (!browserWs) return {tabs: [], open: false};
-      const tabs = (await pages()).map(t => ({id: shortId(t.id), url: String(t.url).slice(0, 200), title: String(t.title).slice(0, 120), current: t.id === currentTarget}));
+      const all = await pages();
+      if (!browserWs) return {tabs: [], open: false};
+      const tabs = all.map(t => ({id: shortId(t.id), url: String(t.url).slice(0, 200), title: String(t.title).slice(0, 120), current: t.id === currentTarget}));
       return {tabs, open: true};
     },
     egressStats: () => proxy?.stats ?? null,

@@ -111,6 +111,12 @@ export function createTaskLog({dir, now = () => Date.now(), audit = () => {}, tt
     current(sessionId = null) {
       if (cur && now() - Date.parse(cur.updatedAt) >= ttlMs && cur.status !== 'active') { api.close('expired'); }
       if (cur && cur.detached && sessionId) { // NEXT-1: a new work session resumes the interrupted task — same task_id
+        // NEXT (owner 03.11): a task stopped by the owner never resumes by itself — only after live_control resume
+        // (owner's go-ahead) marked it resumeAllowed. Survives Host restarts (status is on disk).
+        if (cur.status === 'stopped_by_owner' && !cur.resumeAllowed) {
+          throw Error(`stopped_by_owner: task ${cur.id} was stopped by the owner and does not resume by itself; continue only after the owner says so in chat (live_control resume), or call finish_task to close it`);
+        }
+        delete cur.resumeAllowed;
         const from = cur.endReason;
         cur.detached = false; cur.status = 'active'; cur.session = sessionId; cur.resumes = (cur.resumes || 0) + 1; cur.resumedAt = iso();
         const last = (cur.interruptions || []).at(-1); if (last && !last.resumedAt) last.resumedAt = iso();
@@ -124,6 +130,15 @@ export function createTaskLog({dir, now = () => Date.now(), audit = () => {}, tt
       return cur;
     },
     peek: () => cur,
+    /** Owner's go-ahead after STOP (live_control resume): the stopped task may be resumed by the next work call. */
+    allowResume() { if (cur?.status !== 'stopped_by_owner') return false; cur.resumeAllowed = true; save(cur); audit({event: 'task_resume_allowed', task: cur.id}); return true; },
+    /** Resume point for the agent (FR-07.3): what was done/verified, what is next. Read-only verification comes first. */
+    resumePoint() {
+      if (!cur) return null;
+      return {task: cur.id, status: cur.status, resumes: cur.resumes || 0, lastStage: cur.stage?.tool || null, interruptedBy: cur.endReason || null,
+        externalOpsDone: cur.ops.filter(o => o.ok).map(o => ({what: o.what, target: o.target, at: o.at})), created: cur.created.slice(-10),
+        lastChecks: cur.checks.slice(-5), rule: 'Verify effects read-only first (windows, files, URL); repeat only steps that are not done. Never repeat an external operation from this list.'};
+    },
     stage(tool, sessionId) { const t = api.current(sessionId); t.stage = {tool, at: iso()}; save(t); },
     created(items, source) { if (!items?.length) return; const t = api.current(); t.created.push({source, items: items.map(clean).slice(0, 10), at: iso()}); save(t); },
     error(tool, code) { const t = api.current(); t.errors.push({tool, code: String(code).slice(0, 80), at: iso()}); t.errors = t.errors.slice(-30); save(t); },

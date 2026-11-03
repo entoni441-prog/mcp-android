@@ -118,6 +118,9 @@ export function loadConfig(env = process.env) {
 
 /** One runtime per host process: Java daemon, browser, task table. Tests inject fakes via deps.runtime. */
 /** Journal (owner requirement 02.11): tools that only poll/observe are not listed. */
+/** NEXT stale_args: input tools refused after a resume until one of OBSERVE_TOOLS re-identified the target. */
+export const STALE_TOOLS = new Set(['mouse_action', 'keyboard_action', 'browser_action', 'close_window', 'focus_window']);
+export const OBSERVE_TOOLS = new Set(['capture_screen', 'window_info', 'inspect_ui', 'browser_snapshot', 'list_windows']);
 const QUIET_TOOLS = new Set(['live_frame', 'live_control', 'get_capabilities', 'host_diagnostics', 'connection_status', 'task_status']);
 /** Process / app name the call acted on — names only (journal and Live View caption never carry arguments or text). */
 export function journalTarget(out, args) {
@@ -134,14 +137,19 @@ export function createRuntime(cfg, deps = {}) {
   const tasks = createTaskLog({dir: path.join(cfg.home, 'tasks'), audit: e => audit(cfg, e), ...(deps.taskDeps || {})});
   const consent = createConsent({audit: e => audit(cfg, e),
     journal: {keyFor: (what, target) => (isExternal(what, target) ? idemKey(what, target) : null), alreadyDone: k => tasks.alreadyDone(k)}});
-  const session = createSession({caps, audit: e => audit(cfg, e), ...(deps.sessionDeps || {})});
+  // NEXT: STOP is sticky and persisted — a Host restart must not lift it (owner requirement 03.11).
+  const stopFile = path.join(cfg.home, 'owner-stop.json');
+  const stopStore = {load: () => (fs.existsSync(stopFile) ? JSON.parse(fs.readFileSync(stopFile, 'utf8')) : null),
+    save: v => (v ? fs.writeFileSync(stopFile, JSON.stringify(v), {mode: 0o600}) : fs.rmSync(stopFile, {force: true}))};
+  const session = createSession({caps, audit: e => audit(cfg, e), stopStore, ...(deps.sessionDeps || {})});
+  session.setTaskActive?.(() => tasks.peek()?.status === 'active');
   let gui = null;
   const handoffs = createHandoffs({tasks, session, audit: e => audit(cfg, e), probe: {apps: n => gui.snapshotApp(n)}, ...(deps.handoffDeps || {})});
   const handoff = spec => handoffs.request(spec);
   const procs = createProcs({caps, cfg, consent, ...(deps.procsDeps || {})});
   gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, handoff, onOwnerActive: why => session.pauseForOwner(why), ...(deps.guiDeps || {})});
   const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
-  const live = createLive({caps, store, session, onResume: () => gui.ownerResumed?.(), capture: (w, q) => gui.frameJpeg(w, q, session.caption()), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
+  const live = createLive({caps, store, session, onResume: () => gui.ownerResumed?.(), onStopResume: () => tasks.allowResume(), capture: (w, q) => gui.frameJpeg(w, q, session.caption()), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
   // End of every session: stream off at the source first, then clean up what NEXUS itself opened.
   session.onEnd(async () => { const m = live.sessionEnded() || {}; return {liveActive: false, liveLastFrameAt: m.lastFrameAt ?? null, liveFramesDropped: m.droppedAfterStop ?? 0}; }, 'live');
   session.onEnd(async (reason, s) => (typeof procs.cancelSession === 'function' ? {tasks: await procs.cancelSession(reason, s)} : {}), 'tasks');
@@ -154,6 +162,7 @@ export function createRuntime(cfg, deps = {}) {
   const ws = {workspace: cfg.workspace};
   // Revision 2 (open → act → verify → close): a successful read of the window counts as checking NEXUS's last input there.
   const observe = async (a, p) => { const out = await p; gui.lifecycle?.observed?.({pid: Number.isInteger(a?.pid) ? a.pid : null}); return out; };
+  const rtRef = {reobserve: null}; // NEXT stale_args: set after a pause/STOP/task resume until the target is observed again
   const handlers = {
     image_selftest: a => gui.image_selftest(a), capture_screen: a => observe(a, gui.capture_screen(a)), focus_window: a => gui.focus_window(a),
     window_info: a => observe(a, gui.window_info(a)), close_window: a => gui.close_window(a), inspect_ui: a => observe(a, gui.inspect_ui(a)), mouse_action: a => gui.mouse_action(a), keyboard_action: a => gui.keyboard_action(a),
@@ -189,7 +198,7 @@ export function createRuntime(cfg, deps = {}) {
     connection_status: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); const d = diagnostics(cfg); return {host: 'reachable', version: d.version, uptimeSec: d.uptimeSec, tunnel: d.tunnelHealth, registeredAt: d.tunnel?.registeredAt ?? null}; },
     host_diagnostics: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return diagnostics(cfg); },
     // 0.5.1: persistent owner grants and the current work session are reported separately.
-    get_capabilities: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return {grants: store.status(), session: session.status(), task: tasks.state()}; },
+    get_capabilities: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return {grants: store.status(), session: session.status(), state: session.state?.() ?? null, task: tasks.state(), ...(rtRef.reobserve ? {reobserveRequired: rtRef.reobserve} : {})}; },
     set_capability: async a => {
       if (!a || typeof a !== 'object' || Object.keys(a).some(k => !['capability', 'enabled'].includes(k))) throw Error('invalid_args');
       // Lowering a grant is always allowed. Raising from chat is allowed only while the owner's switch grantsFromChat is on.
@@ -203,9 +212,13 @@ export function createRuntime(cfg, deps = {}) {
     finish_task: async a => {
       if (a && Object.keys(a).length) throw Error('invalid_args');
       const r = await session.end('finish_task');
+      // NEXT: a task interrupted/stopped while no session runs is closed too (closing never acts on the desktop).
+      if (!r.ended && tasks.peek()) { r.task = tasks.close('finish_task'); r.taskStatus = 'finished'; }
+      rtRef.reobserve = null;
       return {...r, verified: {liveActive: session.status().liveActive, live: live.status().state, sessionActive: session.active()}};
     },
-    live_frame: a => live.live_frame(a), live_control: a => live.live_control(a), watch_nexus: a => live.watch_nexus(a),
+    live_frame: a => live.live_frame(a), watch_nexus: a => live.watch_nexus(a),
+    live_control: a => { const out = live.live_control(a); if (out?.resumed) rtRef.reobserve = {why: out.stopCleared ? 'owner_stop_resumed' : 'owner_pause_resumed', at: new Date().toISOString()}; return out; },
     manage_app_access: a => apps.manage_app_access(a), browser_tabs: a => browser.browser_tabs(a),
     browser_open: a => browser.browser_open(a), browser_snapshot: a => browser.browser_snapshot(a), browser_action: a => browser.browser_action(a),
   };
@@ -214,7 +227,7 @@ export function createRuntime(cfg, deps = {}) {
     const c = out?.createdByNexus; if (c && (c.windows?.length || c.tabs?.length)) tasks.created([...(c.windows || []), ...(c.tabs || [])], 'open_app:' + a?.app);
     return out;
   };
-  return {caps, store, consent, handlers, gui, procs, browser, live, apps, session, tasks, handoffs,
+  return {caps, store, consent, handlers, gui, procs, browser, live, apps, session, tasks, handoffs, ref: rtRef,
     stop() { session.end('host_stop').catch(() => {}); session.stop(); store.stop(); live.stop(); gui.stop(); browser.stop(); procs.stopAll(); }};
 }
 
@@ -309,15 +322,24 @@ export async function handleRpc(msg, cfg, deps = {}) {
         const rt = deps.runtime || (cfg.runtime ||= createRuntime(cfg, deps));
         rt.store?.refresh('file');
         let out;
-        if (name === 'list_windows') out = await listWindows(args, {tmpDir: path.join(cfg.home, 'tmp'), ...execDeps});
+        if (name === 'list_windows') { out = await listWindows(args, {tmpDir: path.join(cfg.home, 'tmp'), ...execDeps}); if (rt.ref) rt.ref.reobserve = null; }
         else {
           const call = () => (rt.handlers[name] ? rt.handlers[name](args) : executeJob(name, args, {workspace: cfg.workspace, ...execDeps}));
           rt.handoffs?.guard(name); // N-03: input/capture paused while the owner acts
           const guarded = async () => {
-            if (rt.tasks && WORK_TOOLS.has(name) && rt.session?.active()) rt.tasks.stage(name, rt.session.status().session);
+            if (rt.tasks && WORK_TOOLS.has(name) && rt.session?.active()) {
+              const was = rt.tasks.peek(), wasDetached = !!was?.detached;
+              rt.tasks.stage(name, rt.session.status().session);
+              if (wasDetached && rt.ref) rt.ref.reobserve = {why: 'task_resumed', task: was.id, at: new Date().toISOString()};
+            }
+            if (rt.ref?.reobserve && STALE_TOOLS.has(name) && rt.caps?.[name === 'browser_action' ? 'browser' : 'gui_input'] === true) { // a disabled grant reports itself first
+              const e = Error(`stale_args: ${rt.ref.reobserve.why} — coordinates, pids and browser refs from before it may be stale; first verify effects and re-identify the target read-only (list_windows/window_info/inspect_ui/capture_screen or browser_snapshot), then repeat only steps that are not done`);
+              e.detail = rt.tasks?.resumePoint?.() || null; throw e;
+            }
             return (rt.consent && fileGuard(name, args, {workspace: cfg.workspace, caps: rt.caps, consent: rt.consent, run: call})) || await call();
           };
           out = rt.session ? await rt.session.around(name, guarded) : await guarded();
+          if (rt.ref?.reobserve && OBSERVE_TOOLS.has(name)) rt.ref.reobserve = null;
           if (name === 'search_files') out = hideProtected(out, {workspace: cfg.workspace, caps: rt.caps});
         }
         out = redactDeep(out); // N-09: no secrets in any tool result (images untouched)
@@ -333,6 +355,9 @@ export async function handleRpc(msg, cfg, deps = {}) {
         audit(cfg, {by: deps.principal, trace: deps.trace, tool: name, ok: false, error: code, detail: e?.detail, args: auditArgs(args)});
         try { if (!QUIET_TOOLS.has(name)) cfg.runtime?.session?.note?.({tool: name, ok: false, code, target: journalTarget(null, args)}); } catch {}
         try { if (cfg.runtime?.tasks?.peek()) cfg.runtime.tasks.error(name, code); } catch {}
+        if (code.startsWith('stale_args') && e.detail) {
+          return rpcResult(id, {content: [{type: 'text', text: `error: ${code}`}, {type: 'text', text: JSON.stringify({resumePoint: e.detail})}], isError: true});
+        }
         if (code === 'owner_handoff_active') {
           return rpcResult(id, {content: [{type: 'text', text: `error: owner_handoff_active — the owner is doing an action (${e.detail}); input/capture is paused. Call task_status {"id":"${e.detail}"} or task_cancel to end it.`}], isError: true});
         }
