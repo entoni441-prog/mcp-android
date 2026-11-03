@@ -147,8 +147,8 @@ export function createRuntime(cfg, deps = {}) {
   session.onEnd(async (reason, s) => (typeof procs.cancelSession === 'function' ? {tasks: await procs.cancelSession(reason, s)} : {}), 'tasks');
   session.onEnd(async reason => (typeof gui.cleanupOwned === 'function' ? {windows: await gui.cleanupOwned(reason, {ownerPaused: session.ownerPaused?.() === true})} : {}), 'windows');
   session.onEnd(async reason => (typeof browser.cleanupSession === 'function' ? {browser: await browser.cleanupSession(reason)} : {}), 'browser');
-  session.onEnd(async reason => { handoffs.abandon(); const id = tasks.close(reason); return id ? {task: id, taskStatus: reason === 'finish_task' ? 'finished' : 'interrupted'} : {}; }, 'task');
-  const apps = createApps({caps, store, consent, gui, handoff, workspace: cfg.workspace, execDeps,
+  session.onEnd(async reason => { handoffs.abandon(); const id = tasks.close(reason); const st = tasks.state(); return id ? {task: id, taskStatus: st?.task === id ? st.status : 'finished', ...(st?.task === id ? {resumable: true, next: 'The task is kept (same task id). The next desktop tool call resumes it; check what was already done (task_status checkpoint) before repeating anything. finish_task ends it for good.'} : {})} : {}; }, 'task');
+  const apps = createApps({caps, store, consent, gui, handoff, workspace: cfg.workspace, execDeps, audit: e => audit(cfg, e),
     ...(execDeps.platform ? {platform: execDeps.platform} : {}), ...(execDeps.systemRoot ? {systemRoot: execDeps.systemRoot} : {}),
     ...(execDeps.launcher ? {launcher: execDeps.launcher} : {}), ...(deps.appsDeps || {})});
   const ws = {workspace: cfg.workspace};
@@ -189,7 +189,7 @@ export function createRuntime(cfg, deps = {}) {
     connection_status: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); const d = diagnostics(cfg); return {host: 'reachable', version: d.version, uptimeSec: d.uptimeSec, tunnel: d.tunnelHealth, registeredAt: d.tunnel?.registeredAt ?? null}; },
     host_diagnostics: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return diagnostics(cfg); },
     // 0.5.1: persistent owner grants and the current work session are reported separately.
-    get_capabilities: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return {grants: store.status(), session: session.status()}; },
+    get_capabilities: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return {grants: store.status(), session: session.status(), task: tasks.state()}; },
     set_capability: async a => {
       if (!a || typeof a !== 'object' || Object.keys(a).some(k => !['capability', 'enabled'].includes(k))) throw Error('invalid_args');
       // Lowering a grant is always allowed. Raising from chat is allowed only while the owner's switch grantsFromChat is on.

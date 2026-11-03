@@ -182,3 +182,39 @@ test('runtime e2e: Notepad cold start → handoff; input paused; owner opens Not
   assert.doesNotMatch(JSON.stringify(saved), /"args"/, 'resume args are not written to disk');
   cfg.runtime.stop();
 });
+
+// ── NEXT-1: task lifecycle separate from the work session ────────────────────────────────────────────────────────
+test('NEXT-1: lease end / Host stop / STOP interrupt the task but keep its id; next session resumes the same task; finish ends it', () => {
+  const dir = dirOf(); let t0 = Date.parse('2026-11-03T10:00:00Z'); const now = () => t0;
+  const t = createTaskLog({dir, now});
+  const id = t.current('s1').id;
+  t.stage('keyboard_action', 's1');
+  assert.equal(t.close('lease_expired'), id);
+  assert.deepEqual([t.state().task, t.state().status, t.state().resumable, t.state().interruptedBy], [id, 'interrupted', true, 'lease_expired']);
+  assert.equal(t.lastInterrupted().task, id);
+  t0 += 60_000;
+  assert.equal(t.current('s2').id, id, 'same task id in the new session');
+  assert.deepEqual([t.state().status, t.state().resumes, t.state().resumable], ['active', 1, false]);
+  t.close('owner_stop'); assert.equal(t.state().status, 'stopped_by_owner');
+  assert.equal(t.current('s3').id, id);
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, id + '.json'), 'utf8'));
+  assert.deepEqual(saved.interruptions.map(i => [i.reason, !!i.resumedAt]), [['lease_expired', true], ['owner_stop', true]]);
+  assert.equal(t.close('finish_task'), id); assert.equal(t.state(), null);
+  assert.notEqual(t.current('s4').id, id, 'after finish a new task starts');
+});
+
+test('NEXT-1: Host restart restores the unfinished task (same id); TTL expiry and finished tasks are not restored', () => {
+  const dir = dirOf(); let t0 = Date.parse('2026-11-03T10:00:00Z'); const now = () => t0;
+  const a = createTaskLog({dir, now}); const id = a.current('s1').id; a.stage('open_app', 's1'); // Host dies without close
+  t0 += 5 * 60_000;
+  const b = createTaskLog({dir, now});
+  assert.deepEqual([b.state().task, b.state().status, b.state().interruptedBy], [id, 'interrupted', 'host_restart']);
+  assert.equal(b.current('s2').id, id);
+  b.close('host_stop');
+  t0 += 25 * 3600_000; // beyond the 24 h TTL
+  const c = createTaskLog({dir, now});
+  assert.equal(c.state(), null, 'too old: not restored');
+  const d = createTaskLog({dir, now}); const id2 = d.current('x').id; d.close('finish_task');
+  assert.equal(createTaskLog({dir, now}).state(), null, 'finished task is not restored');
+  assert.notEqual(id2, id);
+});

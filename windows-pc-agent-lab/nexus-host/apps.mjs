@@ -20,7 +20,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {executeJob} from '../v3/actions.mjs';
-import {isHardDenied, launchExeOk, APP_NAME, LAUNCH_NAME} from './capabilities.mjs';
+import {isHardDenied, launchExeOk, APP_NAME, LAUNCH_NAME, MAX_WINDOWS_HARD} from './capabilities.mjs';
 import {appGate, classifyApp, notepadLaunchDecision, launchableExe} from './policy.mjs';
 import {createDiscovery} from './discover.mjs';
 
@@ -39,10 +39,11 @@ const bad = () => { throw Error('invalid_args'); };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /** Owner requirement 02.11: NEXUS keeps at most this many of its own windows/tabs open at once. */
-export const MAX_OWN_WINDOWS = 2;
+/** @deprecated NEXT-1: replaced by caps.windowBudget (regulation) + MAX_WINDOWS_HARD (protective ceiling). */
+export const MAX_OWN_WINDOWS = 4;
 
 export function createApps({caps, store, consent, gui, handoff = null, workspace, platform = process.platform, systemRoot = process.env.SystemRoot,
-  launcher = spawn, exists = fs.existsSync, wait = sleep, execDeps = {}, discovery = null}) {
+  launcher = spawn, exists = fs.existsSync, wait = sleep, execDeps = {}, discovery = null, audit = () => {}}) {
   const disc = discovery || createDiscovery({platform, systemRoot});
   const policyMode = () => caps.appAccess !== 'allowlist';
 
@@ -78,17 +79,20 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
   }
 
   async function openApp(args) {
-      if (!onlyKeys(args, ['app']) || typeof args.app !== 'string' || !LAUNCH_NAME.test(args.app)) bad();
+      if (!onlyKeys(args, ['app', 'reason']) || typeof args.app !== 'string' || !LAUNCH_NAME.test(args.app) || (args.reason !== undefined && (typeof args.reason !== 'string' || args.reason.length > 200))) bad();
       if (platform !== 'win32') throw Error('windows_only');
-      { // Revision 2 — sequential: open → act → verify → close. The window limit below is only a safety net.
+      { // NEXT-1 (owner decision Р2, 03.11): windows are a REGULATION — open → act → verify → close per window — not a count limit.
         const open = await openOwned();
         const lc = gui.lifecycle?.classify?.(open, {prune: !open.partial});
         const say = l => l.map(w => `${w.app}${w.pid ? ' pid ' + w.pid : ''}`).join(', ');
-        if (lc?.unverified.length) throw Error(`nexus_window_unverified: you worked in your ${say(lc.unverified)} window and have not checked the result - check it (inspect_ui / window_info / capture_screen), close it (close_window), then open the next app`);
-        if (lc?.done.length) throw Error(`nexus_window_not_closed: your ${say(lc.done)} window is finished and checked but still open - close it (close_window) before opening the next app; one window at a time`);
-        if (open.length >= MAX_OWN_WINDOWS) {
-          throw Error(`nexus_window_limit: NEXUS already has ${open.length} of its own windows open (${[...new Set(open.map(w => w.app))].join(', ')}) - close the one you have finished with (close_window) before opening another; work one window at a time`);
+        if (lc?.unverified.length) throw Error(`nexus_window_unverified: you worked in your ${say(lc.unverified)} window and have not checked the result - check it (inspect_ui / window_info / capture_screen) before opening the next app`);
+        const n = new Set(open.map(w => String(w.hwnd))).size, budget = caps.windowBudget ?? 4;
+        if (n >= MAX_WINDOWS_HARD) throw Error(`nexus_window_ceiling: NEXUS already has ${n} of its own windows open (protective ceiling ${MAX_WINDOWS_HARD}) - close the ones you have finished with`);
+        if (n >= budget && !(typeof args.reason === 'string' && args.reason.trim().length >= 3)) {
+          return {started: false, status: 'window_budget_reason_required', open: n, budget, windows: [...new Set(open.map(w => w.app))],
+            instruction: `NEXUS already has ${n} of its own windows (regulation: ${budget}). Close the windows you have finished with (close_window), or call open_app again with "reason": why this task needs another window at the same time.`};
         }
+        if (n >= budget) audit({event: 'window_budget_exceeded', open: n, budget, reason: args.reason.slice(0, 120)});
       }
       if (args.app === 'notepad') {
         if (typeof systemRoot !== 'string' || !/^[a-zA-Z]:\\/.test(systemRoot)) throw Error('invalid_windows_system_root');

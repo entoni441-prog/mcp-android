@@ -30,6 +30,10 @@ export const HANDOFF_TTL_MS = 10 * 60_000;
 export const POLL_MS = 20_000;
 export const IDEM_WINDOW_MS = 24 * 3600_000;
 const KEEP_FILES = 50;
+/** NEXT-1: an interrupted task stays resumable (same task_id) this long after its last update. */
+export const TASK_TTL_MS = 24 * 3600_000;
+/** Ends that close the task for good. Everything else (lease, Host stop/restart, tunnel, grant change, Live View stop) only interrupts it. */
+export const FINAL_ENDS = Object.freeze(new Set(['finish_task', 'task_cancelled', 'expired']));
 
 /** Consents whose execution changes something outside NEXUS and must not silently run twice. */
 const EXTERNAL_WHATS = new Set(['browser_financial', 'browser_irreversible', 'executor_file_write', 'system_tool', 'security_page', 'arbitrary_command']);
@@ -57,10 +61,11 @@ export function evaluateVerify(verify, observed) {
 }
 
 /** N-08: checkpoint files + idempotency journal. `dir` = <home>/tasks. */
-export function createTaskLog({dir, now = () => Date.now(), audit = () => {}}) {
+export function createTaskLog({dir, now = () => Date.now(), audit = () => {}, ttlMs = TASK_TTL_MS, resumeOnStart = true}) {
   fs.mkdirSync(dir, {recursive: true});
   const done = new Map(); // idemKey → {at, task, what}
   let cur = null;
+  const OPEN = new Set(['active', 'waiting_owner', 'interrupted', 'stopped_by_owner']);
 
   // Load the journal from recent checkpoints (survives Stop and Host restarts).
   for (const f of safeList()) {
@@ -71,6 +76,12 @@ export function createTaskLog({dir, now = () => Date.now(), audit = () => {}}) {
   function safeList() { try { return fs.readdirSync(dir).filter(f => /^[a-z0-9-]+\.json$/.test(f)).map(f => path.join(dir, f)); } catch { return []; } }
   function readTask(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } }
   const iso = () => new Date(now()).toISOString();
+  function interrupt(t, reason) {
+    t.status = reason === 'owner_stop' ? 'stopped_by_owner' : 'interrupted'; t.endReason = reason; t.detached = true; t.waiting = null;
+    for (const h of t.handoffs || []) if (h.state === 'waiting_owner') h.state = 'abandoned';
+    (t.interruptions ||= []).push({reason, at: iso(), stage: t.stage?.tool || null}); t.interruptions = t.interruptions.slice(-20);
+    save(t);
+  }
 
   function save(t) {
     t.updatedAt = iso();
@@ -83,9 +94,29 @@ export function createTaskLog({dir, now = () => Date.now(), audit = () => {}}) {
     for (const {f} of files.slice(KEEP_FILES)) { try { fs.rmSync(f); } catch {} }
   }
 
+  // NEXT-1: the task is separate from the work session — after a Host restart the newest unfinished task within the TTL
+  // is the current task again (same task_id); the next work session adopts it.
+  if (resumeOnStart) {
+    const open = safeList().map(readTask).filter(t => t && OPEN.has(t.status) && now() - Date.parse(t.updatedAt) < ttlMs)
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+    if (open) {
+      cur = open;
+      if (cur.status === 'active' || cur.status === 'waiting_owner') { interrupt(cur, 'host_restart'); }
+      audit({event: 'task_restored', task: cur.id, status: cur.status});
+    }
+  }
+
   const api = {
     /** The checkpoint of the current task; created on first use. `sessionId` ties it to the work session. */
     current(sessionId = null) {
+      if (cur && now() - Date.parse(cur.updatedAt) >= ttlMs && cur.status !== 'active') { api.close('expired'); }
+      if (cur && cur.detached && sessionId) { // NEXT-1: a new work session resumes the interrupted task — same task_id
+        const from = cur.endReason;
+        cur.detached = false; cur.status = 'active'; cur.session = sessionId; cur.resumes = (cur.resumes || 0) + 1; cur.resumedAt = iso();
+        const last = (cur.interruptions || []).at(-1); if (last && !last.resumedAt) last.resumedAt = iso();
+        save(cur); audit({event: 'task_resumed', task: cur.id, from, session: sessionId});
+        return cur;
+      }
       if (cur && (!sessionId || cur.session === sessionId || cur.session === null)) { if (sessionId && !cur.session) cur.session = sessionId; return cur; }
       cur = {id: 't-' + crypto.randomBytes(6).toString('hex'), version: 1, status: 'active', session: sessionId, startedAt: iso(), updatedAt: iso(),
         stage: null, ops: [], waiting: null, handoffs: [], created: [], checks: [], errors: []};
@@ -115,19 +146,25 @@ export function createTaskLog({dir, now = () => Date.now(), audit = () => {}}) {
     /** End of the work session: finished (finish_task) or interrupted (Stop, lease, Host stop) — resumable info stays. */
     close(reason) {
       if (!cur) return null;
-      cur.status = reason === 'finish_task' ? 'finished' : 'interrupted'; cur.endReason = reason; cur.waiting = null;
+      const id = cur.id;
+      if (!FINAL_ENDS.has(reason)) { if (!cur.detached) interrupt(cur, reason); return id; } // NEXT-1: task stays current, resumable
+      cur.status = reason === 'finish_task' ? 'finished' : reason === 'expired' ? 'expired' : 'cancelled'; cur.endReason = reason; cur.waiting = null; cur.detached = false;
       for (const h of cur.handoffs) if (h.state === 'waiting_owner') h.state = 'abandoned';
-      save(cur); const id = cur.id; cur = null; return id;
+      save(cur); cur = null; return id;
     },
+    /** Status for the agent: the current task and how to continue it. */
+    state() { return cur ? {task: cur.id, status: cur.status, resumable: !!cur.detached, ...(cur.endReason && cur.detached ? {interruptedBy: cur.endReason} : {}),
+      resumes: cur.resumes || 0, lastStage: cur.stage?.tool || null} : null; },
     summary(t = cur) {
       if (!t) return null;
-      return {task: t.id, status: t.status, stage: t.stage, externalOpsDone: t.ops.filter(o => o.ok).map(o => ({what: o.what, target: o.target, at: o.at})),
+      return {task: t.id, status: t.status, stage: t.stage, ...(t.detached ? {resumable: true, interruptedBy: t.endReason} : {}), resumes: t.resumes || 0, externalOpsDone: t.ops.filter(o => o.ok).map(o => ({what: o.what, target: o.target, at: o.at})),
         waitingFor: t.waiting, handoffs: t.handoffs.map(h => ({id: h.id, state: h.state})), errors: t.errors.slice(-5).map(e => `${e.tool}: ${e.code}`),
         file: `tasks/${t.id}.json`};
     },
     /** The last interrupted task (for resuming after Stop / Host restart). */
     lastInterrupted() {
-      const files = safeList().map(f => readTask(f)).filter(t => t && t.status !== 'finished' && (!cur || t.id !== cur.id))
+      if (cur?.detached) return api.summary(cur);
+      const files = safeList().map(f => readTask(f)).filter(t => t && !['finished', 'cancelled', 'expired'].includes(t.status) && (!cur || t.id !== cur.id))
         .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
       return files[0] ? api.summary(files[0]) : null;
     },

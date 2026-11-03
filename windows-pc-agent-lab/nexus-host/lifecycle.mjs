@@ -5,10 +5,10 @@
  * The Host tracks, per NEXUS window (hwnd), whether NEXUS gave it input and whether the result was observed after
  * the last input (inspect_ui / window_info / capture_screen). Rules (enforced by apps.open_app and gui.close_window):
  *  - open_app is refused while a NEXUS window has input that was not checked   → nexus_window_unverified;
- *  - open_app is refused while a NEXUS window was worked in, checked, not closed → nexus_window_not_closed;
  *  - close_window of a NEXUS window with unchecked input is refused             → nexus_verify_before_close.
  * A NEXUS window that never received input (opened only to read from) may stay open next to the working one; the
- * own-window limit (MAX_OWN_WINDOWS = 2) remains a separate safety net, not the mechanism.
+ * NEXT-1 (owner Р2): checked windows may stay open while the task needs them; the count is a regulation (caps.windowBudget,
+ * more needs a stated reason) with a protective ceiling (MAX_WINDOWS_HARD), see apps.open_app.
  * Session-end cleanup is not blocked by these rules; it reports windows whose last input was never checked.
  */
 export function createLifecycle({now = () => Date.now()} = {}) {

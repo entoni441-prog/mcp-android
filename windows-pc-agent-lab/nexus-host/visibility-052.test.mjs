@@ -168,23 +168,27 @@ test('STOP on the phone (live_control stop) ends the task and refuses new work u
   live.stop?.(); s.stop();
 });
 
-test(`open_app refuses a ${MAX_OWN_WINDOWS + 1}rd own window (open → act → close); owner windows never count`, async () => {
+test('NEXT-1 window regulation: budget reached → reason required (no hard refusal); with a reason it opens; ceiling 16; owner windows never count', async () => {
   const consent = createConsent();
-  consent.owned.apps.add('Notepad'); consent.owned.apps.add('CalculatorApp');
-  consent.owned.windows.add('11'); consent.owned.windows.add('22');
-  const snaps = {Notepad: [{hwnd: 11, tabs: []}, {hwnd: 99, tabs: [{rid: 'owner-tab'}]}], CalculatorApp: [{hwnd: 22, tabs: []}], explorer: []};
-  const launched = [];
+  const snaps = {Notepad: [{hwnd: 99, tabs: [{rid: 'owner-tab'}]}], explorer: []};
+  for (const h of [11, 12, 13, 14]) { consent.owned.windows.add(String(h)); }
+  consent.owned.apps.add('CalculatorApp'); snaps.CalculatorApp = [11, 12, 13, 14].map(h => ({hwnd: h, tabs: []}));
+  const launched = [], audits = [];
   const launcher = exe => { launched.push(exe); const h = {}; return {pid: 1, once: (ev, fn) => { if (ev === 'spawn') setImmediate(fn); return h; }, unref() {}}; };
   const gui = {snapshotApp: async app => snaps[app] ?? [], forgetNexusWindow() {}};
   const a = createApps({caps: validateCapabilities({}), store: null, consent, gui, workspace: tmp, platform: 'win32', systemRoot: 'C:\\Windows',
-    launcher, exists: () => true, wait: async () => {}, discovery: {list: async () => [], find: async () => null}});
-  await assert.rejects(a.open_app({app: 'explorer'}), /^Error: nexus_window_limit: NEXUS already has 2 of its own windows open \(Notepad, CalculatorApp\)/);
+    launcher, exists: () => true, wait: async () => {}, discovery: {list: async () => [], find: async () => null}, audit: e => audits.push(e)});
+  const r = await a.open_app({app: 'explorer'});
+  assert.deepEqual([r.started, r.status, r.open, r.budget], [false, 'window_budget_reason_required', 4, 4]);
   assert.equal(launched.length, 0);
-  snaps.CalculatorApp = []; // NEXUS closed the calculator
-  assert.equal((await a.open_app({app: 'explorer'})).started, true);
+  assert.equal((await a.open_app({app: 'explorer', reason: 'copy result from calculator into explorer rename'})).started, true);
+  assert.equal(audits.at(-1).event, 'window_budget_exceeded');
+  for (let h = 15; h <= 26; h++) { consent.owned.windows.add(String(h)); snaps.CalculatorApp.push({hwnd: h, tabs: []}); }
+  await assert.rejects(a.open_app({app: 'explorer', reason: 'x'.repeat(5)}), /^Error: nexus_window_ceiling/);
+  assert.equal(MAX_OWN_WINDOWS, 4);
 });
 
-test('open_app is sequential: unchecked work → nexus_window_unverified; checked but open → nexus_window_not_closed; a read-only window may stay', async () => {
+test('NEXT-1 open_app: unchecked work → nexus_window_unverified; a checked window may stay open while the next app opens (multi-window)', async () => {
   const {createLifecycle} = await import('./lifecycle.mjs');
   const consent = createConsent();
   consent.owned.apps.add('Notepad'); consent.owned.apps.add('explorer');
@@ -198,9 +202,7 @@ test('open_app is sequential: unchecked work → nexus_window_unverified; checke
     launcher, exists: () => true, wait: async () => {}, discovery: {list: async () => [], find: async () => null}});
   lifecycle.input({hwnd: 11, pid: 5, process: 'Notepad'}); // worked in Notepad; Explorer (33) only read from
   await assert.rejects(a.open_app({app: 'explorer'}), /^Error: nexus_window_unverified: you worked in your Notepad pid 5 window/);
-  lifecycle.observed({pid: 5});
-  await assert.rejects(a.open_app({app: 'explorer'}), /^Error: nexus_window_not_closed: your Notepad pid 5 window is finished/);
   assert.equal(launched.length, 0);
-  snaps.Notepad = []; // NEXUS closed it
+  lifecycle.observed({pid: 5}); // checked → the Notepad window may stay open (Р2: regulation, not a count limit)
   assert.ok(!/nexus_window_(unverified|not_closed)/.test(String(await a.open_app({app: 'explorer'}).catch(e => e))), 'untouched read-only window does not block');
 });

@@ -9,6 +9,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+/** NEXT-1: protective ceiling against a runaway loop (not a working limit). */
+export const MAX_WINDOWS_HARD = 16;
 export const DEFAULT_CAPABILITIES = Object.freeze({
   screen_capture: true,      // capture_screen (read-only, but shows everything visible on screen)
   ui_read: true,             // window_info, inspect_ui, focus_window — only for inputApps
@@ -24,6 +26,7 @@ export const DEFAULT_CAPABILITIES = Object.freeze({
   blockedApps: [],           // 0.5.2: apps the owner blocked (revoke) — never a target in policy mode
   launchApps: {},            // 0.5.0: owner-approved launchable apps {name: absolute exe path}; added via manage_app_access
   tasks: {},
+  windowBudget: 4,           // NEXT-1: regulation, not a limit — more NEXUS windows at once need a stated reason (open_app reason)
   javaPath: null,
   edgePath: null,
 });
@@ -63,6 +66,10 @@ export function validateCapabilities(raw) {
   for (const k of BOOL_KEYS) if (Object.hasOwn(raw, k)) {
     if (typeof raw[k] !== 'boolean') throw Error('invalid_capabilities: ' + k);
     c[k] = raw[k];
+  }
+  if (Object.hasOwn(raw, 'windowBudget')) {
+    if (!Number.isInteger(raw.windowBudget) || raw.windowBudget < 1 || raw.windowBudget > MAX_WINDOWS_HARD) throw Error('invalid_capabilities: windowBudget');
+    c.windowBudget = raw.windowBudget;
   }
   if (Object.hasOwn(raw, 'appAccess')) {
     if (!['policy', 'allowlist'].includes(raw.appAccess)) throw Error('invalid_capabilities: appAccess');
