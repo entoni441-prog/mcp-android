@@ -48,7 +48,7 @@ test('real Windows: download_verify keeps Mark of the Web on NTFS and checks Aut
   const exe = fs.readFileSync(process.execPath); // node.exe, signed by the OpenJS Foundation
   const s = createScoped({caps: validateCapabilities({commands: true}), cfg: {home, workspace: ws}, lookup: async () => [{address: '93.184.216.34'}],
     fetchFn: async () => new Response(exe, {status: 200})});
-  const r = await s.download_verify({url: 'https://nodejs.org/dist/node.exe', expectedSigner: 'OpenJS'});
+  const r = await s.download_verify({url: 'https://nodejs.org/dist/node.exe', expectedSigner: 'OpenJS', maxMB: 300}); // node.exe > default 50 MB cap
   console.log(JSON.stringify(r.states), JSON.stringify(r.signature));
   assert.ok(r.states.some(x => x.state === 'mark_of_the_web_set'));
   assert.match(fs.readFileSync(path.join(ws, r.file) + ':Zone.Identifier', 'utf8'), /ZoneId=3/);
