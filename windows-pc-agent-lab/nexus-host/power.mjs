@@ -24,7 +24,7 @@ const SCRIPTS = {
   sleep: "Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.Application]::SetSuspendState('Suspend',$false,$false)",
   hibernate: "Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.Application]::SetSuspendState('Hibernate',$false,$false)",
 };
-const defaultExec = (exe, args) => new Promise(res => execFile(exe, args, {windowsHide: true, timeout: 30_000}, (err, out, errOut) => res({code: err ? (err.code ?? 1) : 0, out: String(out), err: String(errOut)})));
+const defaultExec = (exe, args) => new Promise(res => execFile(exe, args, {windowsHide: true, timeout: 30_000, env: (() => { const e = {...process.env}; delete e.PSModulePath; return e; })()}, (err, out, errOut) => res({code: err ? (err.code ?? 1) : 0, out: String(out), err: String(errOut)})));
 const ps = script => [sys('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script]];
 
 /**

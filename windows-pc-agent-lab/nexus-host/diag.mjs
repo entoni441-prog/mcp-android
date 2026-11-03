@@ -32,11 +32,14 @@ export const TOPICS = Object.freeze({
   autostart_nexus: ['ScheduledTasks NEXUS-* + Run keys mentioning nexus', `${SAFE} [pscustomobject]@{tasks=@(Get-ScheduledTask | Where-Object { $_.TaskName -like 'NEXUS*' } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;triggers=@($_.Triggers | ForEach-Object { $_.CimClass.CimClassName });runAs=$_.Principal.UserId;lastRun=$i.LastRunTime;lastResult=$i.LastTaskResult} });runKeys=@(foreach($k in 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'){ $p=Get-ItemProperty $k; if($p){ $p.PSObject.Properties | Where-Object { $_.Name -like '*nexus*' -or "$($_.Value)" -like '*nexus*' } | ForEach-Object { [pscustomobject]@{key=$k;name=$_.Name} } } });processes=@(Get-Process node,cloudflared,java | Select-Object Name,Id,SessionId,StartTime)} ${J(4)}`],
 });
 
+/** Windows PowerShell 5.1 must not inherit a PowerShell 7 PSModulePath (module load failures). */
+const cleanEnv = () => { const e = {...process.env}; delete e.PSModulePath; return e; };
+
 function runPs(script, {systemRoot = process.env.SystemRoot || 'C:\\Windows', timeoutMs = 45_000} = {}) {
   const ps = path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   return new Promise((resolve, reject) => {
     execFile(ps, ['-NoProfile', '-NonInteractive', '-Command', `[Console]::OutputEncoding=[Text.Encoding]::UTF8; ${script}`],
-      {windowsHide: true, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024}, (err, stdout) => {
+      {windowsHide: true, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, env: cleanEnv()}, (err, stdout) => {
         if (err && !stdout) return reject(Error(err.killed ? 'diagnostics_timeout' : 'diagnostics_failed'));
         resolve(String(stdout).trim());
       });

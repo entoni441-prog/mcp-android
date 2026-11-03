@@ -131,8 +131,10 @@ export function createScoped({caps, cfg, consent = null, audit = () => {}, platf
     // The path reaches PowerShell through an environment variable, never as script text.
     const ps = path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
     const script = "$s=Get-AuthenticodeSignature -LiteralPath $env:NEXUS_SIG_FILE; [pscustomobject]@{status=[string]$s.Status;signer=$s.SignerCertificate.Subject;thumbprint=$s.SignerCertificate.Thumbprint;timeStamped=[bool]$s.TimeStamperCertificate} | ConvertTo-Json -Compress";
-    return new Promise(res => execFile(ps, ['-NoProfile', '-NonInteractive', '-Command', script], {windowsHide: true, timeout: 30_000, env: {...process.env, NEXUS_SIG_FILE: file}},
-      (err, out) => { try { res(JSON.parse(String(out))); } catch { res({status: 'check_failed'}); } }));
+    // PSModulePath of a PowerShell 7 parent breaks Windows PowerShell 5.1 module loading (seen on CI) → let 5.1 use its default.
+    const env = {...process.env, NEXUS_SIG_FILE: file}; delete env.PSModulePath;
+    return new Promise(res => execFile(ps, ['-NoProfile', '-NonInteractive', '-Command', script], {windowsHide: true, timeout: 30_000, env},
+      (err, out, errOut) => { try { const j = JSON.parse(String(out)); res(j && j.status ? j : {status: 'check_failed', error: redactSecrets(String(errOut)).text.slice(0, 200)}); } catch { res({status: 'check_failed', error: redactSecrets(String(errOut)).text.slice(0, 200)}); } }));
   }
 
   return {
