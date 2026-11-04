@@ -99,3 +99,23 @@ test('NEXUS never types or clicks into the owner approval page (its approval mus
   assert.equal(appGate(caps, 'msedge', {title: 'NEXUS Live View', mode: 'read'}).allow, true);
   assert.equal(appGate(caps, 'msedge', {title: 'Новости', mode: 'input'}).allow, true);
 });
+
+test('0.6.1 downloads: browser file ingested (moved, hashed); download_verify {file} checks official sha256, mismatch → quarantine', async () => {
+  const {createScoped} = await import('./scoped.mjs');
+  const crypto = await import('node:crypto');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-061dl-')); const ws = path.join(home, 'ws');
+  const inc = path.join(ws, 'downloads', '.incoming'); fs.mkdirSync(inc, {recursive: true});
+  const log = [];
+  const s = createScoped({caps: validateCapabilities({}), cfg: {home, workspace: ws}, platform: 'linux', audit: e => log.push(e)});
+  fs.writeFileSync(path.join(inc, 'guid-1'), 'payload');
+  const v = await s.ingestBrowserDownload(path.join(inc, 'guid-1'), {name: '../evil name?.zip', url: 'https://example.com/x.zip'});
+  assert.ok(v.file.startsWith('downloads/') && !v.file.includes('/../') && !v.file.slice(10).includes('/'), v.file);
+  assert.equal(v.sha256, crypto.createHash('sha256').update('payload').digest('hex')); assert.equal(fs.existsSync(path.join(inc, 'guid-1')), false);
+  const good = await s.download_verify({file: v.file, sha256: v.sha256});
+  assert.equal(good.verified, true); assert.ok(good.states.some(x => x.state === 'hash_verified'));
+  const bad = await s.download_verify({file: v.file, sha256: 'a'.repeat(64)});
+  assert.equal(bad.verified, false); assert.ok(bad.states.some(x => x.state === 'quarantined')); assert.match(bad.file, /^downloads\/\.quarantine\//);
+  await assert.rejects(s.download_verify({file: '../outside.txt'}), /file_not_in_downloads/);
+  await assert.rejects(s.download_verify({file: v.file, url: 'https://x.com/a'}), /invalid_args/);
+  assert.ok(log.some(e => e.event === 'download' && e.source === 'browser'));
+});

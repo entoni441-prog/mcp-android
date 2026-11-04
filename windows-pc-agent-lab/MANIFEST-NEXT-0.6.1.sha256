@@ -1,4 +1,4 @@
-d869e0b922ce8bd6cec374c664ca0005c5bf7a25b3471a9ad4a732afc732734f  windows-pc-agent-lab/nexus-gateway/src/catalog.mjs
+a2e5ac4735069d00e988be77949a6fcd4102c1e94b366c86e61c8c220a2a5be7  windows-pc-agent-lab/nexus-gateway/src/catalog.mjs
 71fc5962303af4ee46c3a747efa9c5181c90309972415169e3c6da2ddf4a5738  windows-pc-agent-lab/nexus-gateway/src/guard-core.mjs
 bc1864b714edcd4a64ee05fd90ea93da92cb569dc84ef358ef9facf38adc5569  windows-pc-agent-lab/nexus-gateway/src/guard.mjs
 2393ac5df38c7c409427d13d51e8742929add70d8df99cce582bb78a57e1b589  windows-pc-agent-lab/nexus-gateway/src/handlers.mjs
@@ -7,16 +7,16 @@ a0709d2edda05ae43fcf0c08da8d7be2e5746468b100ebc689d95cd3491b1ada  windows-pc-age
 a1f31926206bdc38e723efa6de6115d611dfa57ad98bada3c7133633f62bc85e  windows-pc-agent-lab/nexus-gateway/src/widget.mjs
 49423c0f4497f7f0acd0f649c277d54c4dd0bbc68e2755b715fb8061d74c645d  windows-pc-agent-lab/nexus-host/NexusRobot.java
 f8be326c12a0425d08eda07b2c719d1b117073e230a606076907404f2ebb00b4  windows-pc-agent-lab/nexus-host/apps.mjs
-f510c7f609f16caae986f193bfe67cb05db1f34db074829763fbe67103a063b6  windows-pc-agent-lab/nexus-host/browser.mjs
+91541630b2b82fe31178c57f3d1c3e66e7a703f2f15071161ca9f0ec27721f4b  windows-pc-agent-lab/nexus-host/browser.mjs
 2411e26c0a9c7390bc3f9d4338b5a94febe0bbceaa16579a9b05fb007464da07  windows-pc-agent-lab/nexus-host/capabilities.mjs
 d52570edf2563082863ff8fe82f8614a50a844acc4c938b18b6afb44377d2a0b  windows-pc-agent-lab/nexus-host/capstore.mjs
-d869e0b922ce8bd6cec374c664ca0005c5bf7a25b3471a9ad4a732afc732734f  windows-pc-agent-lab/nexus-host/catalog.mjs
+a2e5ac4735069d00e988be77949a6fcd4102c1e94b366c86e61c8c220a2a5be7  windows-pc-agent-lab/nexus-host/catalog.mjs
 335d5d3dfeeb329aede6d5dd2915b4d8a87c62275349481101e3defa14b63bdf  windows-pc-agent-lab/nexus-host/consent.mjs
 ab97d41a706d03549c8c56c1a90f0250df0380c4a277a9368cce0771e731377f  windows-pc-agent-lab/nexus-host/diag.mjs
 671fc4956115fc1dd441e1b812b2ce99e8863961994f1a420d7711ef872f9bf8  windows-pc-agent-lab/nexus-host/discover.mjs
 98a5a2ac382636c5a953f3942b5f82b33b590715bc6c33af18bcbec03dea9388  windows-pc-agent-lab/nexus-host/egress-proxy.mjs
 c8397e65b7093bed00f46e00fdbafb2fc5c7a17f552be01f03bfddfdf1a8511d  windows-pc-agent-lab/nexus-host/files.mjs
-29dcedddcece1bb91ec34acee4c132baf87de05eb581768cf4b1f9fce0923baf  windows-pc-agent-lab/nexus-host/gui.mjs
+6997d240827b2e75e512fb05adcc46c5f0c420713d8e8c141dd41aee1857fa75  windows-pc-agent-lab/nexus-host/gui.mjs
 6957ab2c9dc8fea48bc7407467092f3bcaf18245439c1416ab32466982b0537b  windows-pc-agent-lab/nexus-host/handoff.mjs
 a304c6ad232bd6a9f5045f5b08b07744b34bf629df78450ef2db5d82f9eae58e  windows-pc-agent-lab/nexus-host/install/NEXUS-Host-Logon.xml
 da33f1f781a60af381190389f4acf3bda59d3f0d40e8f43fb4f34c6b6a778588  windows-pc-agent-lab/nexus-host/install/NEXUS-Sentinel.xml
@@ -28,9 +28,9 @@ cee644bedba206295ef40140ed3d2da49884348e2f1d1b488f3796ff032c9a0a  windows-pc-age
 c5bed052c8de2eeac6c5fd5ed3286dffc730a24f633b86aff4e254a0c0930cec  windows-pc-agent-lab/nexus-host/power.mjs
 2d77bf02243f8cc8e6f01698e3ed9bf4e9d6c0711918e9aa8ffaea87dcebb3bc  windows-pc-agent-lab/nexus-host/procs.mjs
 ccf4d37e6d36a379d3f1a3849888907e5685da505f7050bd78e56676a4df9d9c  windows-pc-agent-lab/nexus-host/runner.mjs
-df7cd2509fdf8bf574c99d754bacac1e125dee3d2e292d61d497f6a81d415975  windows-pc-agent-lab/nexus-host/scoped.mjs
+c5b2a9be4bdbad6db086aeadcc40117d066b5664f59cc0e4827c764de080ff11  windows-pc-agent-lab/nexus-host/scoped.mjs
 a85346bc5768674ad14145b6d30456a2e90f6df8e7ba663a0aa0196a6d57edaa  windows-pc-agent-lab/nexus-host/sentinel/nexus-sentinel.mjs
-e0912f02335969cfa7fbce3f0407d5f8799d6af07b35e2b9fd972184c3f5e424  windows-pc-agent-lab/nexus-host/server.mjs
+d5e7b616b98c4679511bccaa59c8dad04df961fa57e512ab53d69a001cc8349f  windows-pc-agent-lab/nexus-host/server.mjs
 978be78ff944450ad68650ed700f64e08ae9343df051e4c08463f3cb569eaff6  windows-pc-agent-lab/nexus-host/session.mjs
 3cec7a17fdcf1af05d7671c543a64c9005e9979771b15d4567f18d09bd2c509b  windows-pc-agent-lab/nexus-host/uia-script.mjs
 e0ca4b422befe75dc5cd4e17e890e55554842a596d6cac459d3be0b6e5c0cf05  windows-pc-agent-lab/nexus-host/windows.mjs

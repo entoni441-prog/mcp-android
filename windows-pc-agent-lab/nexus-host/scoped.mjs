@@ -140,6 +140,26 @@ export function createScoped({caps, cfg, consent = null, audit = () => {}, platf
       (err, out, errOut) => { try { const j = JSON.parse(String(out)); res(j && j.status ? j : {status: 'check_failed', error: redactSecrets(String(errOut)).text.slice(0, 200)}); } catch { res({status: 'check_failed', error: redactSecrets(String(errOut)).text.slice(0, 200)}); } }));
   }
 
+  /** Mark of the Web + hash/signature verdict + quarantine on hash mismatch — the same for download_verify and browser downloads. */
+  async function finishFile(file, {url, digest, bytes, states, add, sha256, expectedSigner, source, motw = true}) {
+    if (motw && platform === 'win32') { try { fs.writeFileSync(file + ':Zone.Identifier', `[ZoneTransfer]\r\nZoneId=3\r\n${url ? `HostUrl=${new URL(url).origin}/\r\n` : ''}`); add('mark_of_the_web_set'); } catch { add('mark_of_the_web_failed'); } }
+    if (sha256) add(digest === sha256.toLowerCase() ? 'hash_verified' : 'hash_mismatch', {expected: sha256.toLowerCase()});
+    let signature = null;
+    if (/\.(exe|msi|msix|appx|dll|sys|ps1|cat)$/i.test(file)) {
+      signature = await verifySignature(file);
+      const signerOk = !expectedSigner || String(signature?.signer || '').toLowerCase().includes(expectedSigner.toLowerCase());
+      add(signature?.status === 'Valid' && signerOk ? 'signature_verified' : signature?.status === 'NotSigned' ? 'signature_absent' : signature?.status === 'not_checked_non_windows' ? 'signature_not_checked' : 'signature_invalid', {status: signature?.status, signer: signature?.signer || null, ...(expectedSigner ? {expectedSigner, signerMatches: signerOk} : {})});
+    }
+    const hashOk = !sha256 || digest === sha256.toLowerCase();
+    if (!hashOk) { const q = path.join(cfg.workspace, 'downloads', '.quarantine'); fs.mkdirSync(q, {recursive: true}); const dest = path.join(q, path.basename(file)); fs.renameSync(file, dest); try { fs.renameSync(file + ':Zone.Identifier', dest + ':Zone.Identifier'); } catch {} file = dest; add('quarantined'); }
+    audit({event: 'download', source, host: url ? new URL(url).host : null, bytes, sha256: digest.slice(0, 16), states: states.map(x => x.state)});
+    return {downloaded: true, file: path.relative(cfg.workspace, file).split(path.sep).join('/'), bytes, sha256: digest, ...(url ? {finalUrl: url} : {}), states, signature,
+      verified: hashOk && (!signature || states.some(x => x.state === 'signature_verified')),
+      note: 'Downloaded is not installed. Install with run_command (winget / the installer — runs autonomously); the Mark of the Web stays on the file, so Smart App Control / SmartScreen still apply.'};
+  }
+  const sha256File = file => new Promise((res, rej) => { const h = crypto.createHash('sha256'); let n = 0; fs.createReadStream(file).on('data', c => { n += c.length; h.update(c); }).on('error', rej).on('end', () => res({digest: h.digest('hex'), bytes: n})); });
+  const safeName = n => (String(n || 'download.bin').replace(/[^\w.() -]/g, '_').replace(/^\.+/, '').slice(0, 120) || 'download.bin');
+
   return {
     async files_scoped(args = {}, {consented = false} = {}) {
       if (!onlyKeys(args, ['action', 'path', 'to', 'content', 'expectedSha256', 'mode', 'limit'])) bad();
@@ -163,9 +183,33 @@ export function createScoped({caps, cfg, consent = null, audit = () => {}, platf
       return run();
     },
 
+    /** 0.6.1: a file the NEXUS browser finished downloading (in downloads/.incoming/<guid>) → downloads/<name>, verified. */
+    async ingestBrowserDownload(tmp, {name, url} = {}) {
+      const dir = path.join(cfg.workspace, 'downloads'); fs.mkdirSync(dir, {recursive: true});
+      const n = safeName(name);
+      let file = path.join(dir, n); if (fs.existsSync(file)) file = path.join(dir, `${Date.now()}-${n}`);
+      fs.renameSync(tmp, file);
+      const states = [{state: 'download_completed', at: new Date(now()).toISOString(), via: 'browser'}];
+      const add = (state, extra = {}) => states.push({state, at: new Date(now()).toISOString(), ...extra});
+      const {digest, bytes} = await sha256File(file);
+      let u = null; try { u = url && /^https?:/.test(url) ? url : null; } catch {}
+      return finishFile(file, {url: u, digest, bytes, states, add, source: 'browser'});
+    },
     async download_verify(args = {}) {
       requireCap(caps, 'commands');
-      if (!onlyKeys(args, ['url', 'sha256', 'filename', 'expectedSigner', 'maxMB'])) bad();
+      if (!onlyKeys(args, ['url', 'file', 'sha256', 'filename', 'expectedSigner', 'maxMB'])) bad();
+      if (args.file !== undefined) { // 0.6.1: verify a file already in workspace/downloads (e.g. downloaded by the NEXUS browser)
+        if (args.url !== undefined || args.filename !== undefined || args.maxMB !== undefined) bad('file');
+        if (args.sha256 !== undefined && !(typeof args.sha256 === 'string' && /^[a-fA-F0-9]{64}$/.test(args.sha256))) bad('sha256');
+        if (args.expectedSigner !== undefined && (typeof args.expectedSigner !== 'string' || args.expectedSigner.length > 200)) bad('expectedSigner');
+        const dir = path.resolve(cfg.workspace, 'downloads');
+        const f = typeof args.file === 'string' ? path.resolve(cfg.workspace, args.file) : '';
+        if (!f || path.dirname(f) !== dir || !fs.existsSync(f) || !fs.statSync(f).isFile()) throw Error('file_not_in_downloads: give the path returned for the download, e.g. downloads/setup.exe');
+        const states = [{state: 'verify_requested', at: new Date(now()).toISOString()}];
+        const add = (state, extra = {}) => states.push({state, at: new Date(now()).toISOString(), ...extra});
+        const {digest, bytes} = await sha256File(f);
+        return finishFile(f, {digest, bytes, states, add, sha256: args.sha256, expectedSigner: args.expectedSigner, source: 'verify_file', motw: false});
+      }
       if (typeof args.url !== 'string' || !args.url.startsWith('https://') || !urlAllowed(args.url)) throw Error('url_not_allowed: https on a public host only');
       if (args.sha256 !== undefined && !(typeof args.sha256 === 'string' && /^[a-fA-F0-9]{64}$/.test(args.sha256))) bad('sha256');
       if (args.filename !== undefined && !(typeof args.filename === 'string' && /^[\w.() -]{1,120}$/.test(args.filename) && !args.filename.startsWith('.'))) bad('filename');
@@ -194,21 +238,7 @@ export function createScoped({caps, cfg, consent = null, audit = () => {}, platf
       } catch (e) { out.destroy(); try { fs.rmSync(file); } catch {} add('download_failed', {reason: String(e.message).slice(0, 80)}); return {states, downloaded: false}; }
       const digest = h.digest('hex');
       add('download_completed', {bytes});
-      // Mark of the Web: keep the same protection a browser download gets (Smart App Control / SmartScreen).
-      if (platform === 'win32') { try { fs.writeFileSync(file + ':Zone.Identifier', `[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=${new URL(url).origin}/\r\n`); add('mark_of_the_web_set'); } catch { add('mark_of_the_web_failed'); } }
-      if (args.sha256) add(digest === args.sha256.toLowerCase() ? 'hash_verified' : 'hash_mismatch', {expected: args.sha256.toLowerCase()});
-      let signature = null;
-      if (/\.(exe|msi|msix|appx|dll|sys|ps1|cat)$/i.test(file)) {
-        signature = await verifySignature(file);
-        const signerOk = !args.expectedSigner || String(signature?.signer || '').toLowerCase().includes(args.expectedSigner.toLowerCase());
-        add(signature?.status === 'Valid' && signerOk ? 'signature_verified' : signature?.status === 'NotSigned' ? 'signature_absent' : signature?.status === 'not_checked_non_windows' ? 'signature_not_checked' : 'signature_invalid', {status: signature?.status, signer: signature?.signer || null});
-      }
-      const hashOk = !args.sha256 || digest === args.sha256.toLowerCase();
-      if (!hashOk) { const q = path.join(cfg.workspace, 'downloads', '.quarantine'); fs.mkdirSync(q, {recursive: true}); const dest = path.join(q, path.basename(file)); fs.renameSync(file, dest); file = dest; add('quarantined'); }
-      audit({event: 'download', host: new URL(url).host, bytes, sha256: digest.slice(0, 16), states: states.map(s => s.state)});
-      return {downloaded: true, file: path.relative(cfg.workspace, file).split(path.sep).join('/'), bytes, sha256: digest, finalUrl: url, states, signature,
-        verified: hashOk && (!signature || states.some(s => s.state === 'signature_verified')),
-        note: 'Downloaded is not installed. Install with run_command (winget, R2) or the installer (R3 consent); the Mark of the Web stays on the file.'};
+      return finishFile(file, {url, digest, bytes, states, add, sha256: args.sha256, expectedSigner: args.expectedSigner, source: 'download_verify'});
     },
   };
 }

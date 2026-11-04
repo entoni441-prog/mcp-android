@@ -10,7 +10,9 @@
  *     fetch/XHR/WebSocket) is forced through a local proxy that resolves DNS once and refuses any name that
  *     resolves to a non-public address, then connects to that checked IP (DNS rebinding cannot swap it).
  *     QUIC disabled, WebRTC limited to proxied traffic, loopback NOT bypassed.
- * Downloads denied; typing into password fields refused; snapshot never returns field values.
+ * 0.6.1: downloads allowed into workspace/downloads/.incoming, then moved, hashed, signature-checked and marked with
+ * the Mark of the Web (scoped.ingestBrowserDownload); without a `downloads` sink they stay denied. Typing into password
+ * fields refused; snapshot never returns field values.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -201,7 +203,7 @@ function killPids(pids, {platform = process.platform, systemRoot = process.env.S
   return n;
 }
 
-export function createBrowser({caps, home, consent = null, platform = process.platform, browserPath, headless = false, allowPrivate = false, proxyOptions = {}, spawnFn = spawn, onOwnedPid = () => {}, listPids = null, kill = null}) {
+export function createBrowser({caps, home, consent = null, platform = process.platform, browserPath, headless = false, allowPrivate = false, proxyOptions = {}, spawnFn = spawn, onOwnedPid = () => {}, listPids = null, kill = null, downloads = null}) {
   const profile = path.join(home, 'edge-profile');
   const findPids = listPids || (() => profilePids(profile, {platform}));
   const killFn = kill || ((pids, o) => killPids(pids, {platform, ...o}));
@@ -209,6 +211,9 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
   // 0.5.1: JavaScript dialogs block the page (every CDP call on it hangs → cdp_timeout). alert/beforeunload on the NEXUS
   // browser are accepted automatically and reported; confirm/prompt wait for a decision (action 'dialog').
   let pendingDialog = null, dialogWaiters = [], seenDialogs = [];
+  const dl = new Map(); // 0.6.1 browser downloads: guid → record
+  const MAX_DOWNLOAD_BYTES = 2048 * 1024 * 1024;
+  const dlView = r => { const {done, ...v} = r; return v; };
   const clip = (x, n) => String(x ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
   function onDialog(cdp, d) {
     const info = {type: d.type, message: clip(d.message, 300)};
@@ -253,7 +258,22 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
     if (!lines) throw Error('browser_start_timeout');
     port = Number(lines[0]);
     browserWs = await Cdp.connect(`ws://127.0.0.1:${port}${lines[1]}`);
-    await browserWs.send('Browser.setDownloadBehavior', {behavior: 'deny'}).catch(() => {});
+    if (downloads) {
+      const inc = path.join(downloads.dir, '.incoming'); fs.mkdirSync(inc, {recursive: true});
+      await browserWs.send('Browser.setDownloadBehavior', {behavior: 'allowAndName', downloadPath: inc, eventsEnabled: true}).catch(() => {});
+      browserWs.on('Browser.downloadWillBegin', d => { dl.set(d.guid, {id: String(d.guid).replace(/-/g, '').slice(0, 8), url: clip(d.url, 500), name: clip(d.suggestedFilename, 120), state: 'in_progress', receivedBytes: 0, startedAt: new Date().toISOString()}); });
+      browserWs.on('Browser.downloadProgress', p => {
+        const r = dl.get(p.guid); if (!r || r.state !== 'in_progress') return;
+        r.receivedBytes = p.receivedBytes || 0;
+        if (r.receivedBytes > MAX_DOWNLOAD_BYTES) { r.state = 'failed'; r.error = 'download_too_large'; browserWs?.send('Browser.cancelDownload', {guid: p.guid}).catch(() => {}); return; }
+        if (p.state === 'canceled') { r.state = 'canceled'; return; }
+        if (p.state !== 'completed') return;
+        r.state = 'verifying';
+        r.done = Promise.resolve().then(() => downloads.ingest(path.join(inc, p.guid), {name: r.name, url: r.url}))
+          .then(v => { Object.assign(r, {state: 'completed', file: v.file, bytes: v.bytes, sha256: v.sha256, verified: v.verified, signature: v.signature, states: v.states.map(x => x.state)}); })
+          .catch(e => { r.state = 'failed'; r.error = clip(e.message, 120); });
+      });
+    } else await browserWs.send('Browser.setDownloadBehavior', {behavior: 'deny'}).catch(() => {});
     const target = (await pages()).find(Boolean);
     if (!target) throw Error('no_page_target');
     return attach(target);
@@ -296,7 +316,7 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
   }
   const refExpr = ref => { if (!/^e\d{1,4}$/.test(ref)) bad(); return `document.querySelector('[data-nexus-ref="${ref}"]')`; };
 
-  return {
+  const api = {
     async browser_open(args) {
       requireCap(caps, 'browser');
       if (!onlyKeys(args, ['url']) || typeof args.url !== 'string' || args.url.length > 2000) bad();
@@ -446,7 +466,18 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
     /** 0.5.0: tabs of the NEXUS browser (separate profile — every tab in it belongs to NEXUS). */
     async browser_tabs(args) {
       requireCap(caps, 'browser');
-      if (!onlyKeys(args, ['action', 'id', 'url']) || !['list', 'new', 'switch', 'close'].includes(args.action)) bad();
+      if (!onlyKeys(args, ['action', 'id', 'url']) || !['list', 'new', 'switch', 'close', 'downloads'].includes(args.action)) bad();
+      if (args.action === 'downloads') { // 0.6.1: downloads of the NEXUS browser; id → wait up to 60 s for that one
+        if (args.url !== undefined) bad();
+        if (args.id !== undefined) {
+          if (typeof args.id !== 'string' || !/^[0-9a-f]{8}$/i.test(args.id)) bad();
+          const r = [...dl.values()].find(x => x.id === args.id.toLowerCase()); if (!r) throw Error('download_not_found');
+          for (let i = 0; i < 600 && r.state === 'in_progress'; i++) await new Promise(res => setTimeout(res, 100));
+          if (r.done) await r.done;
+          return {download: dlView(r)};
+        }
+        return {downloads: [...dl.values()].map(dlView), enabled: !!downloads, folder: 'downloads'};
+      }
       if (args.action === 'new') {
         if (args.url !== undefined && (typeof args.url !== 'string' || !urlAllowed(args.url, {allowPrivate}))) throw Error('url_not_allowed');
         await ensure();
@@ -509,4 +540,16 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
       proxy?.close(); proc = null; page = null; browserWs = null; proxy = null;
     },
   };
+  // 0.6.1: a click/press that starts a download reports it (wait a moment for the event; the file itself is verified
+  // on completion — check with browser_tabs {action:"downloads", id}).
+  const act = api.browser_action;
+  api.browser_action = async function (args, opts) {
+    const before = new Set(dl.keys());
+    const r = await act.call(api, args, opts);
+    if (!downloads || !r || typeof r !== 'object' || !['click', 'press', 'navigate'].includes(args?.action)) return r;
+    for (let i = 0; i < 15 && [...dl.keys()].every(k => before.has(k)); i++) await new Promise(res => setTimeout(res, 100));
+    const started = [...dl.entries()].filter(([k]) => !before.has(k)).map(([, v]) => dlView(v));
+    return started.length ? {...r, downloads: started, next: 'browser_tabs {action:"downloads", id} waits for the file and returns its sha256/signature; download_verify {file, sha256, expectedSigner} checks it against the official values.'} : r;
+  };
+  return api;
 }

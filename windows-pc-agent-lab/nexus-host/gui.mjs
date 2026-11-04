@@ -119,6 +119,41 @@ export function runUiaReal(args, {systemRoot = process.env.SystemRoot, tmpDir, t
   });
 }
 
+// ───────────── 0.6.1 NX-052-32: typing without the clipboard ─────────────
+/**
+ * Text is typed as keystrokes (System.Windows.Forms.SendKeys from the signed .NET Framework assembly — no compiled
+ * code, nothing for Smart App Control to block): characters not on the current keyboard layout go as Unicode input.
+ * The owner's clipboard is never touched, so there is nothing to restore (Java AWT cannot round-trip every Windows
+ * clipboard format — the acceptance on 03.11 saw restored_partial). The text arrives only through an environment
+ * variable, never as script code. On any failure the caller falls back to clipboard paste (reported as such).
+ */
+export const TYPE_SCRIPT = `$t = $env:NEXUS_TYPE_TEXT; Remove-Item Env:NEXUS_TYPE_TEXT
+Add-Type -AssemblyName System.Windows.Forms
+$sb = New-Object System.Text.StringBuilder
+foreach ($ch in $t.ToCharArray()) {
+  if ($ch -eq [char]13) { }
+  elseif ($ch -eq [char]10) { [void]$sb.Append('{ENTER}') }
+  elseif ($ch -eq [char]9) { [void]$sb.Append('{TAB}') }
+  elseif ('+^%~(){}[]'.IndexOf($ch) -ge 0) { [void]$sb.Append('{' + $ch + '}') }
+  else { [void]$sb.Append($ch) }
+}
+[System.Windows.Forms.SendKeys]::SendWait($sb.ToString())
+[System.Windows.Forms.SendKeys]::Flush()`;
+const TYPE_BOOTSTRAP_B64 = Buffer.from("$s = $env:NEXUS_TYPE_PS; Remove-Item Env:NEXUS_TYPE_PS; . ([ScriptBlock]::Create($s))", 'utf16le').toString('base64');
+export function typeTextReal(text, {systemRoot = process.env.SystemRoot, timeoutMs = 60_000} = {}) {
+  if (typeof systemRoot !== 'string' || !/^[a-zA-Z]:\\/.test(systemRoot)) return Promise.reject(Error('invalid_windows_system_root'));
+  const exe = path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return new Promise((resolve, reject) => {
+    const p = spawn(exe, ['-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', TYPE_BOOTSTRAP_B64],
+      {stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, env: {...process.env, NEXUS_TYPE_PS: TYPE_SCRIPT, NEXUS_TYPE_TEXT: text}});
+    let err = '';
+    const timer = setTimeout(() => { p.kill(); reject(Error('type_timeout')); }, timeoutMs);
+    p.stderr.on('data', c => { if (err.length < 4000) err += c; });
+    p.once('error', () => { clearTimeout(timer); reject(Error('powershell_launch_failed')); });
+    p.once('exit', code => { clearTimeout(timer); code === 0 ? resolve({typed: text.length}) : reject(Object.assign(Error('type_failed'), {detail: psErrorText(err).slice(0, 300)})); });
+  });
+}
+
 /** 0.5.2 acceptance 02.11: Task Manager auto-elevates; Windows UIPI denies a non-elevated NEXUS (UIA FromPoint →
  *  «Access is denied»). NEXUS does not elevate itself — the step is the owner's. Nothing was clicked or typed. */
 export function uiaFailure(rawStderr) {
@@ -206,7 +241,9 @@ export function testPng(size = 64) {
 }
 
 // ───────────── tools ─────────────
-export function createGui({caps, home, workspace, platform = process.platform, runUia, robot, consent = createConsent(), handoff = null, sleep = ms => new Promise(r => setTimeout(r, ms)), now = () => Date.now(), onOwnerActive = () => {}}) {
+export function createGui({caps, home, workspace, platform = process.platform, runUia, robot, typeText, consent = createConsent(), handoff = null, sleep = ms => new Promise(r => setTimeout(r, ms)), now = () => Date.now(), onOwnerActive = () => {}}) {
+  // 0.6.1: keystroke typing only on a real Windows host (tests with a fake platform keep the clipboard path)
+  const typer = typeText !== undefined ? typeText : (platform === 'win32' && process.platform === 'win32' && !robot ? text => typeTextReal(text) : null);
   const lifecycle = createLifecycle({now});
   const tmpDir = path.join(home, 'tmp');
   const uia = runUia || (args => runUiaReal(args, {tmpDir}));
@@ -722,14 +759,18 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       const snap = creating ? await apps(before.window.process).catch(() => null) : null;
       await ownerGuard();
       const R = getRobot();
-      const r = hasText ? await R.cmd('paste ' + Buffer.from(args.text, 'utf8').toString('base64')) : await R.cmd('key ' + args.keys);
+      let r;
+      if (hasText && typer) {
+        try { await typer(args.text); r = {clipboardRestored: true, clipboard: 'untouched', method: 'keys'}; }
+        catch (e) { r = {...(await R.cmd('paste ' + Buffer.from(args.text, 'utf8').toString('base64'))), method: 'clipboard', keysError: String(e.message).slice(0, 60)}; }
+      } else r = hasText ? {...(await R.cmd('paste ' + Buffer.from(args.text, 'utf8').toString('base64'))), method: 'clipboard'} : await R.cmd('key ' + args.keys);
       if (c && consented && decision === 'close_discard') consent.armDiscard(before.window?.hwnd);
       let created;
       if (creating) { await sleep(700); created = consent.recordCreated(snap, await apps(before.window.process).catch(() => null), 'keys:' + args.keys); }
       const after = await uia({mode: 'focused'});
       await afterInput(after.focused);
       return {done: true, target: before.focused.process, foregroundAfter: after.focused?.process || null,
-        ...(hasText ? {chars: args.text.length, clipboardRestored: r.clipboardRestored, ...(r.clipboard ? {clipboard: r.clipboard} : {})} : {keys: args.keys}),
+        ...(hasText ? {chars: args.text.length, clipboardRestored: r.clipboardRestored, ...(r.clipboard ? {clipboard: r.clipboard} : {}), inputMethod: r.method, ...(r.keysError ? {keysError: r.keysError} : {})} : {keys: args.keys}),
         ...(c ? {closeAction: c.kind, consented: !!consented} : {}), ...(created ? {createdByNexus: created} : {}),
         ...(agentApp ? {agentPrompt: {app: before.focused.process, chars: hasText ? args.text.length : 0, preview: hasText ? redactSecrets(args.text.slice(0, 300)).text : 'keys:' + args.keys}} : {})};
     },

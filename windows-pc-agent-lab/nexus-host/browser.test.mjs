@@ -10,7 +10,7 @@ import {createBrowser, findEdge} from './browser.mjs';
 import {validateCapabilities} from './capabilities.mjs';
 import net from 'node:net';
 
-const candidates = process.platform === 'win32' ? [findEdge(null)] : ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'];
+const candidates = [process.env.NEXUS_TEST_BROWSER, ...(process.platform === 'win32' ? [findEdge(null)] : ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'])];
 const exe = candidates.find(p => p && fs.existsSync(p));
 
 const PAGE = `<!doctype html><title>NEXUS test</title><h1 id=h>start</h1>
@@ -309,5 +309,39 @@ test('real browser NEXT: result_verified/observed_url (NX-052-11) and last tab c
     assert.deepEqual([again.tabs, again.open], [[], false], 'list after the last tab: no internal_error');
     const re = await b.browser_open({url: base + '/two'});
     assert.equal(re.title, 'Two', 'browser opens again after the last tab was closed');
+  } finally { b.stop(); srv.close(); }
+});
+
+// 0.6.1: the NEXUS browser may download; the file lands in workspace/downloads only through the verifying sink.
+test('real browser 0.6.1: a clicked download is reported, finished, moved out of .incoming and verified', {skip: !exe && 'no browser'}, async () => {
+  const BODY = Buffer.from('nexus download test ' + 'x'.repeat(5000));
+  const srv = http.createServer((req, res) => {
+    if (req.url === '/file') { res.writeHead(200, {'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="tool-setup.zip"'}); return res.end(BODY); }
+    res.setHeader('content-type', 'text/html'); res.end('<!doctype html><title>Get</title><a id=d href="/file">Download tool</a>');
+  });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-dl-'));
+  const dir = path.join(home, 'ws', 'downloads');
+  const ingested = [];
+  const ingest = async (tmp, meta) => {
+    const dest = path.join(dir, meta.name); fs.renameSync(tmp, dest); ingested.push(meta);
+    const sha = (await import('node:crypto')).createHash('sha256').update(fs.readFileSync(dest)).digest('hex');
+    return {file: 'downloads/' + meta.name, bytes: fs.statSync(dest).size, sha256: sha, verified: true, signature: null, states: [{state: 'download_completed'}]};
+  };
+  const b = createBrowser({caps: validateCapabilities({browser: true}), home, browserPath: exe, headless: true, allowPrivate: true,
+    proxyOptions: {ports: [srv.address().port]}, downloads: {dir, ingest}});
+  try {
+    await b.browser_open({url: base + '/'});
+    const s = await b.browser_snapshot({});
+    const r = await b.browser_action({action: 'click', ref: s.elements.find(e => /Download tool/.test(e.name)).ref});
+    assert.equal(r.downloads?.length, 1, JSON.stringify(r)); assert.equal(r.downloads[0].name, 'tool-setup.zip');
+    const w = (await b.browser_tabs({action: 'downloads', id: r.downloads[0].id})).download;
+    assert.equal(w.state, 'completed', JSON.stringify(w));
+    assert.equal(w.sha256, (await import('node:crypto')).createHash('sha256').update(BODY).digest('hex'));
+    assert.equal(w.file, 'downloads/tool-setup.zip'); assert.equal(w.bytes, BODY.length);
+    assert.deepEqual(fs.readdirSync(path.join(dir, '.incoming')), [], 'nothing left in .incoming');
+    assert.equal((await b.browser_tabs({action: 'downloads'})).downloads.length, 1);
+    await assert.rejects(b.browser_tabs({action: 'downloads', id: 'zzzz'}), /invalid_args/);
   } finally { b.stop(); srv.close(); }
 });

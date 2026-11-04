@@ -167,7 +167,8 @@ export function createRuntime(cfg, deps = {}) {
       return {autostartVerified, logonChannelVerified: caps.logonChannelVerified === true, wakeDevice: caps.wakeDevice || null, sleepStates, unsavedOwnerDocs};
     }, ...(deps.powerDeps || {})});
   gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, handoff, onOwnerActive: why => { session.pauseForOwner(why); runner.cancelAll('owner_paused').catch(() => {}); }, ...(deps.guiDeps || {})});
-  const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: pid => procs.registerOwned(pid, 'browser'), ...(deps.browserDeps || {})});
+  const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: pid => procs.registerOwned(pid, 'browser'),
+    downloads: {dir: path.join(cfg.workspace, 'downloads'), ingest: (tmp, meta) => scoped.ingestBrowserDownload(tmp, meta)}, ...(deps.browserDeps || {})});
   const live = createLive({caps, store, session, onResume: () => gui.ownerResumed?.(), onStopResume: () => tasks.allowResume(), capture: (w, q) => gui.frameJpeg(w, q, session.caption()), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
   // End of every session: stream off at the source first, then clean up what NEXUS itself opened.
   session.onEnd(async () => { const m = live.sessionEnded() || {}; return {liveActive: false, liveLastFrameAt: m.lastFrameAt ?? null, liveFramesDropped: m.droppedAfterStop ?? 0}; }, 'live');
