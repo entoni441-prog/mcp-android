@@ -37,6 +37,9 @@ const MAX_TEXT_READ = 256 * 1024, MAX_TEXT_WRITE = 1024 * 1024;
 export function within(root, p) { const rel = path.relative(path.resolve(root), path.resolve(p)); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); }
 const absOk = p => typeof p === 'string' && p.length <= 400 && !p.includes('\0') && !p.startsWith('\\\\') && !p.startsWith('//') && (path.win32.isAbsolute(p) || path.posix.isAbsolute(p)) && !/[\\/]\.\.(?:[\\/]|$)/.test(p);
 
+/** 0.6.1: a grant may run autonomously (Promise of the result) — attach the diff only to a consent_required answer. */
+const withDiff = (g, diff) => Promise.resolve(g).then(r => (diff && r?.status === 'consent_required' ? {...r, diff} : r));
+
 export function createScoped({caps, cfg, consent = null, audit = () => {}, platform = process.platform, fetchFn = fetch, lookup = dns.lookup, now = () => Date.now(),
   sigCheck = null}) {
   const roots = () => (caps.taskRoots || []).map(r => path.resolve(r));
@@ -47,7 +50,7 @@ export function createScoped({caps, cfg, consent = null, audit = () => {}, platf
   function gate(op, p, run, {diff = null} = {}) {
     const prot = resourceDecision(op === 'write' ? 'modify' : op, p, caps.protectedPaths || []);
     if (prot.level === 2) return consent.requestGrant({what: 'protected_file', target: `${LABEL[op]} защищённого ресурса «${p}» (${prot.reason})${op === 'read' || op === 'list' ? '; прочитанное будет передано в ChatGPT (секреты замаскированы)' : ''}`, apply: run});
-    if (op === 'write' && writeDecision(path.basename(p)).level === 3) return {...consent.requestGrant({what: 'executor_file_write', target: `запись NEXUS в исполняемый файл «${p}»${diff ? `: −${diff.removed} / +${diff.added} строк` : ''}`, apply: run}), ...(diff ? {diff} : {})};
+    if (op === 'write' && writeDecision(path.basename(p)).level === 3) return withDiff(consent.requestGrant({what: 'executor_file_write', target: `запись NEXUS в исполняемый файл «${p}»${diff ? `: −${diff.removed} / +${diff.added} строк` : ''}`, apply: run}), diff);
     if (!rootOf(p)) return consent.requestGrant({what: 'file_outside_scope', target: `${LABEL[op]} «${p}» — вне папок задачи (taskRoots)`, apply: run});
     return null;
   }

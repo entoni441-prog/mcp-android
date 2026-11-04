@@ -18,41 +18,36 @@ function fresh() {
 }
 const rewrite = (file, patch) => { const j = JSON.parse(fs.readFileSync(file, 'utf8')); fs.writeFileSync(file, JSON.stringify({...j, ...patch}, null, 2)); bump(file); };
 
-test('only gui_input and live_view are switchable from chat', () => {
-  assert.deepEqual(SETTABLE, ['gui_input', 'live_view']);
+test('0.6.1: every owner switch is settable from chat; non-switch keys and bad values are refused', () => {
+  assert.deepEqual(SETTABLE, ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser', 'live_view', 'diagnostics', 'commands', 'power', 'lockAfterTask']);
   const {store} = fresh();
-  for (const [k, v] of [['browser', true], ['run_task', true], ['process_control', true], ['inputApps', ['cmd']], ['gui_input', 'yes'], ['gui_input', 1]]) {
+  for (const [k, v] of [['inputApps', ['cmd']], ['grantsFromChat', false], ['logonChannelVerified', true], ['taskRoots', []], ['gui_input', 'yes'], ['gui_input', 1]]) {
     assert.throws(() => store.set(k, v), /invalid_args/, k);
   }
 });
 
-test('set gui_input: applied immediately, written atomically to file, audited, other keys preserved', () => {
+test('0.6.1: available by default; turning a switch off is the owner ban (file + audit), turning it on lifts the ban', () => {
   const {file, log, store} = fresh();
-  const before = fs.readFileSync(file, 'utf8');
-  assert.equal(store.view.gui_input, false);
-  const r = store.set('gui_input', true);
-  assert.deepEqual(r, {capability: 'gui_input', enabled: true, previous: false, changed: true});
-  assert.equal(store.view.gui_input, true);
+  for (const k of ['gui_input', 'process_control', 'run_task', 'browser', 'live_view', 'commands', 'power']) assert.equal(store.view[k], true, k);
+  assert.deepEqual([...store.view.taskRoots], [os.homedir()]);
+  const r = store.set('commands', false);
+  assert.deepEqual(r, {capability: 'commands', enabled: false, previous: true, changed: true, ownerBan: true});
+  assert.equal(store.isBanned('commands'), true);
   const j = JSON.parse(fs.readFileSync(file, 'utf8'));
-  assert.equal(j.gui_input, true);
-  assert.equal(j.browser, false); assert.match(j._comment, /NEXUS/);
-  assert.equal(JSON.parse(before).process_control, j.process_control);
-  assert.deepEqual(log.at(-1), {event: 'capabilities_changed', source: 'tool', changes: {gui_input: [false, true]}});
+  assert.equal(j.commands, false); assert.deepEqual(j.ownerBans, ['commands']); assert.equal(j._profile, 2); assert.match(j._comment, /NEXUS/);
+  assert.deepEqual(log.at(-1), {event: 'capabilities_changed', source: 'tool', changes: {commands: [true, false], ownerBans: [[], ['commands']]}});
   assert.deepEqual(fs.readdirSync(path.dirname(file)).filter(n => n.endsWith('.tmp')), []);
-  store.set('gui_input', false);
-  assert.equal(store.view.gui_input, false);
-  assert.deepEqual(log.at(-1).changes, {gui_input: [true, false]});
-  const again = store.set('gui_input', false);
-  assert.equal(again.changed, false);
-  assert.equal(log.length, 2); // no-op is not logged as a change
+  store.set('commands', true, 'owner_live');
+  assert.equal(store.view.commands, true); assert.equal(store.isBanned('commands'), false);
+  assert.equal(store.set('commands', true).changed, false);
 });
 
 test('owner edits the file on the PC → picked up without restart, audited with source=file', () => {
   const {file, log, store} = fresh();
-  rewrite(file, {browser: true});
+  rewrite(file, {browser: false});
   store.refresh();
-  assert.equal(store.view.browser, true);
-  assert.deepEqual(log.at(-1), {event: 'capabilities_changed', source: 'file', changes: {browser: [false, true]}});
+  assert.equal(store.view.browser, false);
+  assert.deepEqual(log.at(-1), {event: 'capabilities_changed', source: 'file', changes: {browser: [true, false]}});
 });
 
 test('broken or invalid file is never applied: permissions stay, error audited, chat switch refused', () => {
@@ -76,14 +71,14 @@ test('broken or invalid file is never applied: permissions stay, error audited, 
 test('live view: modules see the new value without being recreated', () => {
   const {store} = fresh();
   const view = store.view;
-  assert.equal(view.gui_input, false);
-  store.set('gui_input', true);
   assert.equal(view.gui_input, true);
-  assert.throws(() => { 'use strict'; view.gui_input = false; });
+  store.set('gui_input', false);
+  assert.equal(view.gui_input, false);
+  assert.throws(() => { 'use strict'; view.gui_input = true; });
   assert.deepEqual([...view.inputApps], ['Notepad', 'CalculatorApp']);
 });
 
-test('end to end over HTTP: keyboard refused → set_capability → allowed path reached → off again; audit has every step', async () => {
+test('0.6.1 end to end over HTTP: owner ban by word is immediate; lifting it waits for the owner tap (/live), not the model', async () => {
   const home = path.join(tmp, 'e2e-home');
   const cfg = loadConfig({NEXUS_HOME: home, NEXUS_WORKSPACE: path.join(tmp, 'e2e-ws'), NEXUS_PORT: '0'});
   const server = createServer(cfg, {platform: 'linux'});
@@ -93,21 +88,27 @@ test('end to end over HTTP: keyboard refused → set_capability → allowed path
   const call = async (name, args) => (await (await fetch(url, {method: 'POST', headers: {'content-type': 'application/json', authorization: `Bearer ${cfg.token}`},
     body: JSON.stringify({jsonrpc: '2.0', id: ++id, method: 'tools/call', params: {name, arguments: args}})})).json()).result;
   try {
-    assert.equal((await call('get_capabilities', {})).structuredContent.grants.gui_input, false);
+    assert.equal((await call('get_capabilities', {})).structuredContent.grants.gui_input, true);
+    assert.doesNotMatch((await call('keyboard_action', {keys: 'enter'})).content[0].text, /capability_disabled/);
+    const off = await call('set_capability', {capability: 'gui_input', enabled: false});
+    assert.equal(off.isError, false); assert.equal(off.structuredContent.ownerBan, true);
     assert.match((await call('keyboard_action', {keys: 'enter'})).content[0].text, /capability_disabled/);
-    const on = await call('set_capability', {capability: 'gui_input', enabled: true});
-    assert.equal(on.isError, false); assert.equal(on.structuredContent.enabled, true);
-    // Same running Host, no restart: the capability gate now passes (fails later only because this test runs on Linux).
-    assert.doesNotMatch((await call('mouse_action', {action: 'move', x: 1, y: 1})).content[0].text, /capability_disabled/); // gate passed (what follows depends on the desktop; `move` never clicks or types)
-    assert.equal((await call('set_capability', {capability: 'browser', enabled: true})).isError, true);
-    assert.equal((await call('set_capability', {capability: 'gui_input', enabled: true, extra: 1})).isError, true);
-    await call('set_capability', {capability: 'gui_input', enabled: false});
+    // the model asks to lift the owner's ban → waits for the owner, the model cannot approve it
+    const ask = (await call('set_capability', {capability: 'gui_input', enabled: true})).structuredContent;
+    assert.equal(ask.status, 'consent_required'); assert.equal(ask.what, 'owner_unban'); assert.equal(ask.approval, 'owner_phone');
+    const early = await call('confirm_action', {consentId: ask.consentId, decision: 'allow', target: ask.target});
+    assert.equal(early.isError, true); assert.match(early.content[0].text, /owner_approval_pending/);
     assert.match((await call('keyboard_action', {keys: 'enter'})).content[0].text, /capability_disabled/);
+    // the owner's channel (gateway /live page) — same Host endpoint, names not in the model catalog
+    const list = (await call('owner_consents', {})).structuredContent.pending;
+    assert.deepEqual(list.map(x => [x.consentId, x.what]), [[ask.consentId, 'owner_unban']]);
+    assert.equal((await call('owner_decide', {consentId: ask.consentId, decision: 'allow'})).isError, false);
+    const done = await call('confirm_action', {consentId: ask.consentId, decision: 'allow', target: ask.target});
+    assert.equal(done.isError, false); assert.equal(done.structuredContent.result.enabled, true);
+    assert.doesNotMatch((await call('keyboard_action', {keys: 'enter'})).content[0].text, /capability_disabled/);
     const lines = fs.readFileSync(cfg.auditFile, 'utf8').trim().split('\n').map(l => JSON.parse(l));
-    const changes = lines.filter(l => l.event === 'capabilities_changed');
-    assert.deepEqual(changes.map(c => c.changes.gui_input), [[false, true], [true, false]]);
-    assert.ok(lines.some(l => l.tool === 'set_capability' && l.ok === true && l.args.enabled === true));
-    assert.ok(lines.some(l => l.tool === 'set_capability' && l.ok === false && l.args.capability === 'browser'));
+    assert.deepEqual(lines.filter(l => l.event === 'capabilities_changed').map(c => c.changes.gui_input), [[true, false], [false, true]]);
+    assert.ok(lines.some(l => l.event === 'owner_decision' && l.via === 'live_page'));
     assert.equal((await call('read_text', {path: 'missing.txt'})).content[0].text, 'error: not_found');
   } finally { server.close(); cfg.runtime?.stop(); }
 });

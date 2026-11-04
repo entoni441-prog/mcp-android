@@ -1,12 +1,13 @@
 /**
  * NEXUS Host 0.4.0 — owner-controlled capability switches.
  * File: %USERPROFILE%\.nexus-host\capabilities.json (outside the workspace, so no NEXUS tool can edit it).
- * Created with safe defaults on first run. Dangerous groups are OFF until the owner edits the file and restarts.
+ * 0.6.1: everything available by default; the owner restricts by command (ownerBans). Older profiles are migrated once.
  *
  * Hard limits below are NOT configurable: shells, terminals, script hosts, UAC/system UI never become targets
  * of input, run_task or process_action, whatever the file says.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 /** NEXT-1: protective ceiling against a runaway loop (not a working limit). */
@@ -14,11 +15,13 @@ export const MAX_WINDOWS_HARD = 16;
 export const DEFAULT_CAPABILITIES = Object.freeze({
   screen_capture: true,      // capture_screen (read-only, but shows everything visible on screen)
   ui_read: true,             // window_info, inspect_ui, focus_window — only for inputApps
-  gui_input: false,          // mouse_action, keyboard_action — DANGEROUS
-  process_control: false,    // process_action — DANGEROUS
-  run_task: false,           // run_task/task_status/task_cancel — DANGEROUS
-  browser: false,            // browser_* (separate Edge profile) — DANGEROUS
-  live_view: false,          // 0.5.0: live screen stream (watch_nexus widget, gateway /live) — shows everything on screen
+  // 0.6.1 owner decision 04.11.2026 (NX-052-36): everything is AVAILABLE by default; restrictions come only from the
+  // owner's words (set_capability false → ownerBans). Only the fixed OWNER list (consent.mjs) needs his tap on the phone.
+  gui_input: true,           // mouse_action, keyboard_action
+  process_control: true,     // process_action
+  run_task: true,            // run_task/task_status/task_cancel
+  browser: true,             // browser_* (separate Edge profile)
+  live_view: true,           // live screen stream (watch_nexus widget, gateway /live — passphrase protected)
   grantsFromChat: true,      // 0.5.1: owner switch — may set_capability RAISE a grant from chat? (lowering is always allowed)
   inputApps: ['Notepad', 'CalculatorApp'],
   appAccess: 'policy',       // 0.5.2: 'policy' = any app by class (policy.mjs); 'allowlist' = 0.5.1 inputApps only
@@ -29,9 +32,10 @@ export const DEFAULT_CAPABILITIES = Object.freeze({
   windowBudget: 4,
   // ── NEXUS NEXT (owner profile; raising from chat is NOT possible for these) ──
   diagnostics: true,         // system_info: fixed read-only Windows queries (R0)
-  commands: false,           // run_command/command_plan: R0/R1 autonomous, R2/R3 consent, deny list — owner switch
-  power: false,              // power_action (lock/display autonomous; sleep/restart/shutdown consent + preconditions)
-  taskRoots: [],             // absolute folders outside the workspace where NEXUS may work (files_scoped, R1 commands)
+  commands: true,            // run_command/command_plan: autonomous; destructive/security commands → owner tap; deny list
+  power: true,               // power_action (sleep/restart/shutdown keep their technical preconditions)
+  taskRoots: ['~'],          // folders outside the workspace where NEXUS works; '~' = the owner's profile folder
+  ownerBans: [],             // 0.6.1: switches the OWNER turned off by command — lifting one needs his tap on the phone
   allowedPackages: [],       // winget ids the owner pre-approved for install/uninstall (R2 → autonomous)
   lockAfterTask: false,      // owner decision 03.11 §0.1: lock Windows after finish_task (no task → locked); off until the owner enables it
   logonChannelVerified: false, // owner sets true after HE verified remote logon after a reboot (CRD/RDP) — gate for restart
@@ -49,7 +53,7 @@ export const HARD_DENY = Object.freeze([
   'explorer', 'searchhost', 'startmenuexperiencehost', 'shellexperiencehost', 'applicationframehost', 'dwm', 'csrss',
   'lsass', 'services', 'svchost', 'smss', 'wininit', 'sihost', 'securityhealthsystray', 'msmpeng', 'secinit', 'sc',
   'schtasks', 'netsh', 'bcdedit', 'diskpart', 'format', 'takeown', 'icacls', 'certutil', 'bitsadmin', 'node', 'java', 'javaw',
-  'python', 'pythonw', 'py', 'cloudflared', 'code', 'cursor', 'git-bash', 'mintty', 'ssh', 'putty', 'claude', 'bitwarden', 'keepass', 'keepassxc', '1password', 'lastpass', 'dashlane', 'keeper',
+  'python', 'pythonw', 'py', 'cloudflared', 'code', 'cursor', 'git-bash', 'mintty', 'ssh', 'putty', 'bitwarden', 'keepass', 'keepassxc', '1password', 'lastpass', 'dashlane', 'keeper',
 ]);
 
 const norm = s => String(s).toLowerCase().replace(/\.exe$/i, '');
@@ -95,15 +99,21 @@ export function validateCapabilities(raw) {
   }
   Object.freeze(c.blockedApps);
   for (const k of ['taskRoots']) {
-    c[k] = [];
+    c[k] = [os.homedir()];
     if (Object.hasOwn(raw, k)) {
-      const P = raw[k];
+      const P = Array.isArray(raw[k]) ? raw[k].map(x => (x === '~' ? os.homedir() : x)) : raw[k];
       if (!Array.isArray(P) || P.length > 50 || !P.every(x => typeof x === 'string' && x.length <= 400 && !x.includes('\0') && !x.startsWith('\\\\') && (path.win32.isAbsolute(x) || path.posix.isAbsolute(x)))) throw Error('invalid_capabilities: ' + k);
       if (P.some(x => /^[a-zA-Z]:\\?$/.test(x) || x === '/')) throw Error('invalid_capabilities: taskRoots must not be a whole drive');
       c[k] = [...P];
     }
     Object.freeze(c[k]);
   }
+  c.ownerBans = [];
+  if (Object.hasOwn(raw, 'ownerBans')) {
+    if (!Array.isArray(raw.ownerBans) || !raw.ownerBans.every(k => BOOL_KEYS.includes(k))) throw Error('invalid_capabilities: ownerBans');
+    c.ownerBans = [...new Set(raw.ownerBans)];
+  }
+  Object.freeze(c.ownerBans);
   if (Object.hasOwn(raw, 'wakeDevice') && raw.wakeDevice !== null) {
     if (typeof raw.wakeDevice !== 'string' || !/^[\w .:-]{1,80}$/.test(raw.wakeDevice)) throw Error('invalid_capabilities: wakeDevice');
     c.wakeDevice = raw.wakeDevice;
@@ -167,15 +177,47 @@ export function validateCapabilities(raw) {
   return Object.freeze(c);
 }
 
-/** Reads capabilities.json; writes the default file on first run. A broken file fails closed (host refuses to start). */
+/** 0.6.1: switches that were OFF only because of old defaults (not by the owner's command). */
+export const AVAILABLE_BY_DEFAULT = Object.freeze(['gui_input', 'process_control', 'run_task', 'browser', 'live_view', 'commands', 'power']);
+export const PROFILE_VERSION = 2;
+
+/**
+ * 0.6.1 migration (owner decision 04.11.2026): a profile written by ≤0.6.0 had dangerous groups OFF as a DEFAULT,
+ * not as the owner's ban. Turn them on (except keys in ownerBans), add the profile folder to taskRoots if empty,
+ * keep everything else (blockedApps, protectedPaths, launchApps, tasks, limits…). Backup → capabilities.pre-0.6.1.json.
+ * Pure on the object; returns {raw, changes}.
+ */
+export function migrateProfile(raw) {
+  if (raw?._profile >= PROFILE_VERSION) return {raw, changes: {}};
+  const out = {...raw}, changes = {};
+  const bans = Array.isArray(raw.ownerBans) ? raw.ownerBans : [];
+  for (const k of AVAILABLE_BY_DEFAULT) if (out[k] !== true && !bans.includes(k)) { changes[k] = [out[k] ?? null, true]; out[k] = true; }
+  if (!Array.isArray(out.taskRoots) || !out.taskRoots.length) { changes.taskRoots = [out.taskRoots ?? null, ['~']]; out.taskRoots = ['~']; }
+  if (!Array.isArray(out.ownerBans)) out.ownerBans = [];
+  out._profile = PROFILE_VERSION;
+  return {raw: out, changes};
+}
+
+/** Reads capabilities.json; writes the default file on first run; migrates older profiles once. A broken file fails closed. */
 export function loadCapabilities(home) {
   const file = path.join(home, 'capabilities.json');
   if (!fs.existsSync(file)) {
-    const doc = {_comment: 'NEXUS capabilities. Edit and restart nexus.mjs. Dangerous groups are false by default.', ...DEFAULT_CAPABILITIES};
+    const doc = {_comment: 'NEXUS capabilities. Everything is available by default; the owner restricts by command in chat.', _profile: PROFILE_VERSION, ...DEFAULT_CAPABILITIES, taskRoots: ['~']};
     fs.writeFileSync(file, JSON.stringify(doc, null, 2) + '\n', {flag: 'wx'});
   }
-  const text = fs.readFileSync(file, 'utf8').replace(/^﻿/, '');
-  return {file, caps: validateCapabilities(JSON.parse(text))};
+  const text = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+  let raw = JSON.parse(text), migrated = null;
+  if (!(raw?._profile >= PROFILE_VERSION)) {
+    validateCapabilities(raw); // never migrate a broken file
+    const m = migrateProfile(raw);
+    const backup = path.join(home, 'capabilities.pre-0.6.1.json');
+    if (!fs.existsSync(backup)) fs.writeFileSync(backup, text, {flag: 'wx'});
+    const tmp = file + '.migrate.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(m.raw, null, 2) + '\n');
+    fs.renameSync(tmp, file);
+    raw = m.raw; migrated = {changes: m.changes, backup};
+  }
+  return {file, caps: validateCapabilities(raw), migrated};
 }
 
 function isObjPlain(x) { return x !== null && typeof x === 'object' && !Array.isArray(x); }

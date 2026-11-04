@@ -19,7 +19,7 @@ test('gateway catalog is a byte-identical copy of the host catalog', () => {
   const a = fs.readFileSync(path.join(HERE, 'catalog.mjs'));
   const b = fs.readFileSync(path.join(HERE, '..', 'nexus-gateway', 'src', 'catalog.mjs'));
   assert.ok(a.equals(b), 'run: cp nexus-host/catalog.mjs nexus-gateway/src/catalog.mjs');
-  assert.equal(VERSION, '0.6.0-next');
+  assert.equal(VERSION, '0.6.1-next');
 });
 
 test('every catalog tool has an implementation and a strict input schema', () => {
@@ -31,19 +31,41 @@ test('every catalog tool has an implementation and a strict input schema', () =>
     assert.equal(t.inputSchema.type, 'object'); assert.equal(t.inputSchema.additionalProperties, false, t.name);
     for (const r of t.inputSchema.required || []) assert.ok(Object.hasOwn(t.inputSchema.properties, r), t.name + '.' + r);
   }
-  assert.deepEqual(Object.keys(rt.handlers).filter(n => !TOOLS.some(t => t.name === n)), []);
+  // 0.6.1: owner-only handlers (gateway /live page) are deliberately NOT in the model catalog
+  assert.deepEqual(Object.keys(rt.handlers).filter(n => !TOOLS.some(t => t.name === n)), ['owner_consents', 'owner_decide']);
   rt.stop();
 });
 
 // ── capabilities ──
-test('defaults: dangerous groups off; first run writes the file outside the workspace', () => {
+test('0.6.1 defaults: everything available (owner restricts by command); first run writes the file outside the workspace', () => {
   const home = path.join(tmp, 'home1'); fs.mkdirSync(home);
-  const {file, caps} = loadCapabilities(home);
-  assert.ok(fs.existsSync(file));
-  for (const k of ['gui_input', 'process_control', 'run_task', 'browser']) assert.equal(caps[k], false, k);
-  assert.equal(caps.screen_capture, true);
+  const {file, caps, migrated} = loadCapabilities(home);
+  assert.ok(fs.existsSync(file)); assert.equal(migrated, null);
+  for (const k of ['gui_input', 'process_control', 'run_task', 'browser', 'live_view', 'commands', 'power', 'screen_capture']) assert.equal(caps[k], true, k);
+  assert.deepEqual([...caps.taskRoots], [os.homedir()]); assert.deepEqual([...caps.ownerBans], []);
   assert.deepEqual(caps.inputApps, ['Notepad', 'CalculatorApp']);
-  assert.equal(loadCapabilities(home).caps.gui_input, false); // second run reads, does not overwrite
+  fs.writeFileSync(file, JSON.stringify({...JSON.parse(fs.readFileSync(file, 'utf8')), gui_input: false, ownerBans: ['gui_input']}));
+  assert.equal(loadCapabilities(home).caps.gui_input, false); // second run reads, does not overwrite the owner's ban
+});
+
+test('0.6.1 migration: an old profile (defaults OFF) becomes available once; owner data kept; backup written; idempotent', () => {
+  const home = path.join(tmp, 'home-mig'); fs.mkdirSync(home);
+  const file = path.join(home, 'capabilities.json');
+  const old = {_comment: 'old', screen_capture: true, gui_input: true, process_control: false, run_task: false, browser: true, live_view: true,
+    commands: false, power: false, taskRoots: [], blockedApps: ['mspaint'], protectedPaths: [path.join(home, 'secret')], limits: {maxCommands: 2}};
+  fs.writeFileSync(file, JSON.stringify(old));
+  const {caps, migrated} = loadCapabilities(home);
+  assert.deepEqual(Object.keys(migrated.changes).sort(), ['commands', 'power', 'process_control', 'run_task', 'taskRoots']);
+  for (const k of ['process_control', 'run_task', 'commands', 'power']) assert.equal(caps[k], true, k);
+  assert.deepEqual([...caps.blockedApps], ['mspaint']); assert.equal(caps.limits.maxCommands, 2); assert.deepEqual([...caps.taskRoots], [os.homedir()]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, 'capabilities.pre-0.6.1.json'), 'utf8')), old);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8'))._profile, 2);
+  assert.equal(loadCapabilities(home).migrated, null);
+  // a broken old file is never migrated (fail closed)
+  const h2 = path.join(tmp, 'home-mig2'); fs.mkdirSync(h2);
+  fs.writeFileSync(path.join(h2, 'capabilities.json'), JSON.stringify({gui_input: 'yes'}));
+  assert.throws(() => loadCapabilities(h2), /invalid_capabilities/);
+  assert.equal(fs.existsSync(path.join(h2, 'capabilities.pre-0.6.1.json')), false);
 });
 
 test('capabilities validation fails closed and hard-deny cannot be overridden', () => {
@@ -99,7 +121,7 @@ function procsWith(capsRaw, list) {
 const LIST = '"Notepad.exe","50","Console","1","10 K"\r\n"powershell.exe","66","Console","1","10 K"\r\n"chrome.exe","70","Console","1","10 K"\r\n"helper.exe","80","Console","1","10 K"';
 
 test('process_action: capability, allowlist, kill only NEXUS-owned, never terminals', async () => {
-  await assert.rejects(procsWith({}, LIST).p.process_action({pid: 50, action: 'close'}), /capability_disabled/);
+  await assert.rejects(procsWith({process_control: false}, LIST).p.process_action({pid: 50, action: 'close'}), /capability_disabled/);
   const {p, calls} = procsWith({process_control: true}, LIST);
   assert.equal((await p.process_action({pid: 50, action: 'close'})).requested, true);
   assert.deepEqual(calls.at(-1), ['taskkill.exe', '/pid', '50']);
@@ -139,7 +161,7 @@ test('run_task: only owner-defined tasks, no args from chat, real process, statu
   const slow = await p.run_task({task: 'slow'});
   assert.equal((await p.task_cancel({id: slow.id})).state, 'cancelled');
   assert.deepEqual((await p.task_status({})).available, ['hello', 'slow']);
-  await assert.rejects(createProcs({caps: validateCapabilities({}), cfg}).run_task({task: 'hello'}), /capability_disabled/);
+  await assert.rejects(createProcs({caps: validateCapabilities({run_task: false}), cfg}).run_task({task: 'hello'}), /capability_disabled/);
   p.stopAll();
 });
 
@@ -154,7 +176,7 @@ test('read_audit_log returns the tail; audit never stores typed text', async () 
 
 test('server: disabled capability → tool error (not crash); audit line has no typed text', async () => {
   const home = path.join(tmp, 'home3'); fs.mkdirSync(home);
-  const cfg = {home, workspace: path.join(tmp, 'ws3'), auditFile: path.join(home, 'audit.log'), caps: validateCapabilities({})};
+  const cfg = {home, workspace: path.join(tmp, 'ws3'), auditFile: path.join(home, 'audit.log'), caps: validateCapabilities({gui_input: false})};
   const r = await handleRpc({jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: 'keyboard_action', arguments: {text: 'my password 123'}}}, cfg, {});
   assert.equal(r.result.isError, true);
   assert.match(r.result.content[0].text, /capability_disabled/);

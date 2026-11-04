@@ -10,8 +10,10 @@ import {createCapStore} from './capstore.mjs';
 import {validateCapabilities} from './capabilities.mjs';
 import {createSession} from './session.mjs';
 
+// a 0.5.x-style restricted profile (since 0.6.1 these switches are on unless the owner turns them off)
+const OFF = {gui_input: false, process_control: false, run_task: false, browser: false, live_view: false};
 const fresh = () => { const h = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-prof-'));
-  fs.writeFileSync(path.join(h, 'capabilities.json'), JSON.stringify({_comment: 'x', ...DEFAULT_CAPABILITIES, tasks: {t1: {exe: '/usr/bin/true'}}}, null, 2)); return h; };
+  fs.writeFileSync(path.join(h, 'capabilities.json'), JSON.stringify({_comment: 'x', ...DEFAULT_CAPABILITIES, ...OFF, tasks: {t1: {exe: '/usr/bin/true'}}}, null, 2)); return h; };
 const quiet = {out: () => {}};
 
 test('autonomous preset sets the profile once; unrelated keys and comments survive; minimal reverts', () => {

@@ -200,7 +200,10 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
         launchSpec = {name, exe: args.exe};
       } else if (args.name !== undefined) bad();
       const target = `разрешить NEXUS управление приложением «${proc}»` + (launchSpec ? ` и запуск ${launchSpec.exe} (open_app "${launchSpec.name}")` : '');
-      return consent.requestGrant({what: 'app_access', target, apply: () => ({granted: proc, ...store.grantApp(proc, launchSpec, 'consent')})});
+      // 0.6.1: unblocking an app the OWNER blocked (revoke) is lifting his ban → only his tap on /live; anything else is autonomous.
+      const ownerBlocked = (caps.blockedApps || []).some(b => b.toLowerCase() === proc.toLowerCase());
+      return consent.requestGrant({what: ownerBlocked ? 'owner_unban' : 'app_access', target: ownerBlocked ? `снять запрет владельца на приложение «${proc}»` + (launchSpec ? ` и запуск ${launchSpec.exe} (open_app "${launchSpec.name}")` : '') : target,
+        apply: () => ({granted: proc, ...store.grantApp(proc, launchSpec, 'consent')})});
     },
   };
 }

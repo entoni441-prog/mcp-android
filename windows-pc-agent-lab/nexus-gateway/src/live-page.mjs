@@ -12,6 +12,10 @@
  *    (server side) → image/jpeg, Cache-Control: no-store. The PC still requires capability live_view=true.
  *  - STOP: POST /live/stop with header X-Nexus-Live: 1 (CSRF: SameSite=Strict + custom header) → live_control stop.
  *  - Strict CSP with a per-response script nonce; frame-ancestors 'none'.
+ *  - 0.6.1 owner approvals (FR-10): GET /live/consents lists what waits for the OWNER (payments, secrets, irreversible
+ *    deletion, Windows security, lifting his ban); POST /live/decide {consentId, decision} (X-Nexus-Live: 1) → Host
+ *    owner_decide. These Host names are not in the model catalog, so ChatGPT can never approve; only this
+ *    passphrase session can. The Host refuses GUI input into a window titled «NEXUS Live View» (no clicking here).
  */
 const enc = new TextEncoder();
 export const SESSION_TTL_MS = 30 * 60_000;
@@ -65,10 +69,11 @@ function viewerPage() {
   const n = nonce();
   return html(`<style>body{margin:0;background:#000;color:#e8eaed;font:13px system-ui}.bar{position:sticky;top:0;display:flex;gap:6px;align-items:center;padding:6px 8px;background:#0f1115;border-bottom:1px solid #2a2f3a;flex-wrap:wrap}
 .dot{width:9px;height:9px;border-radius:50%;background:#555}.live .dot{background:#e5484d}.paused .dot{background:#f5a524}button,select{font:inherit;color:inherit;background:transparent;border:1px solid #2a2f3a;border-radius:6px;padding:4px 9px}
-.stop{border-color:#e5484d;color:#e5484d;font-weight:600}#m{color:#9aa0a6;margin-left:auto}img{display:block;max-width:100vw;max-height:calc(100vh - 44px);margin:0 auto}#x{padding:24px;text-align:center;color:#9aa0a6}</style>
+.stop{border-color:#e5484d;color:#e5484d;font-weight:600}#m{color:#9aa0a6;margin-left:auto}img{display:block;max-width:100vw;max-height:calc(100vh - 44px);margin:0 auto}#x{padding:24px;text-align:center;color:#9aa0a6}#cq:empty{display:none}#cq{background:#1d1608;border-bottom:1px solid #f5a524;padding:8px}.ci{margin:6px 0;padding:8px;border:1px solid #5a4a1a;border-radius:8px}.ci p{margin:0 0 6px;word-break:break-word}.ci button{margin:2px 4px 0 0}.ok{border-color:#30a46c;color:#30a46c;font-weight:600}</style>
 <body class="offline"><div class="bar"><span class="dot"></span><b id="s">подключение…</b><button id="pp">⏸</button>
 <select id="f"><option value="0.5">0.5 к/с</option><option value="1">1 к/с</option><option value="2" selected>2 к/с</option><option value="4">4 к/с</option></select>
 <button id="fs">⛶</button><button id="st" class="stop">■ STOP</button><button id="lo">Выйти</button><span id="m"></span></div>
+<div id="cq"></div>
 <img id="i" alt="Экран Windows"><div id="x"></div>
 <script nonce="${n}">
 (() => {
@@ -97,7 +102,29 @@ function viewerPage() {
     const r = await fetch('/live/stop', {method: 'POST', headers: {'x-nexus-live': '1'}, credentials: 'same-origin'}).catch(() => null);
     state('offline', r && r.ok ? 'остановлено на ПК' : 'STOP не дошёл', r && r.ok ? 'live_view выключен на ПК.' : 'Закрой окно NEXUS Host на ПК — это выключает всё.'); };
   $('lo').onclick = async () => { await fetch('/live/logout', {method: 'POST', headers: {'x-nexus-live': '1'}, credentials: 'same-origin'}); location.href = '/live'; };
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sched(0); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { sched(0); cq(); } });
+  // 0.6.1: actions waiting for the owner himself
+  const LBL = {allow: 'Разрешить', cancel: 'Отклонить', close_discard: 'Закрыть без сохранения', close_save: 'Сохранить и закрыть'};
+  async function cq() {
+    try {
+      const r = await fetch('/live/consents', {cache: 'no-store', credentials: 'same-origin'});
+      if (r.status === 401) { location.href = '/live'; return; }
+      const j = r.ok ? await r.json() : {pending: []};
+      const box = $('cq'); box.textContent = '';
+      for (const c of (j.pending || []).filter(c => !c.decided)) {
+        const d = document.createElement('div'); d.className = 'ci';
+        const t = document.createElement('p'); t.textContent = '⚠ Ждёт твоего решения: ' + c.target + ' (' + Math.ceil(c.expiresInSec / 60) + ' мин)'; d.appendChild(t);
+        for (const o of c.options) { const b = document.createElement('button'); b.textContent = LBL[o] || o; if (o !== 'cancel') b.className = 'ok';
+          b.onclick = async () => { b.disabled = true; const q = await fetch('/live/decide', {method: 'POST', credentials: 'same-origin',
+            headers: {'x-nexus-live': '1', 'content-type': 'application/json'}, body: JSON.stringify({consentId: c.consentId, decision: o})}).catch(() => null);
+            t.textContent = q && q.ok ? (o === 'cancel' ? 'Отклонено.' : 'Разрешено. ChatGPT выполнит это действие.') : 'Не дошло — попробуй ещё раз.'; if (q && q.ok) [...d.querySelectorAll('button')].forEach(x => x.remove()); else b.disabled = false; };
+          d.appendChild(b); }
+        box.appendChild(d);
+      }
+    } catch {}
+    setTimeout(cq, document.visibilityState === 'hidden' ? 15000 : 4000);
+  }
+  cq();
   tick();
 })();
 </script></body>`, {n});
@@ -144,6 +171,21 @@ export async function handleLive(request, env, {callHost, sha256hex}) {
     if (!img || typeof img.data !== 'string') return jsonR(502, {error: r.result?.isError ? String(r.result?.content?.[0]?.text || 'host_error').slice(0, 120) : 'no_frame'});
     const bytes = Uint8Array.from(atob(img.data), c => c.charCodeAt(0));
     return new Response(bytes, {status: 200, headers: {...sec, 'content-type': 'image/jpeg', 'x-nexus-frame': `${sc?.imageW}x${sc?.imageH}${sc?.cursor ? ` cursor ${sc.cursor.x},${sc.cursor.y}` : ''}`}});
+  }
+  if (p === '/live/consents' && request.method === 'GET') {
+    const r = await callHost('owner_consents', {});
+    if (!r.ok) return jsonR(503, {error: r.reason});
+    return jsonR(200, {pending: Array.isArray(r.result?.structuredContent?.pending) ? r.result.structuredContent.pending : []});
+  }
+  if (p === '/live/decide' && request.method === 'POST') {
+    if (request.headers.get('x-nexus-live') !== '1') return jsonR(403, {error: 'csrf'});
+    let b; try { b = JSON.parse(await request.text()); } catch { return jsonR(400, {error: 'bad_json'}); }
+    if (!b || typeof b.consentId !== 'string' || !/^[a-f0-9]{12}$/.test(b.consentId) || !['allow', 'cancel', 'close_discard', 'close_save'].includes(b.decision)) return jsonR(400, {error: 'invalid_args'});
+    const r = await callHost('owner_decide', {consentId: b.consentId, decision: b.decision});
+    console.log(JSON.stringify({nexus: 'owner_decide', ok: r.ok && !r.result?.isError, decision: b.decision}));
+    if (!r.ok) return jsonR(503, {error: r.reason});
+    if (r.result?.isError) return jsonR(409, {error: String(r.result?.content?.[0]?.text || 'host_error').slice(0, 120)});
+    return jsonR(200, {ok: true, decision: b.decision});
   }
   if ((p === '/live/stop' || p === '/live/logout') && request.method === 'POST') {
     if (request.headers.get('x-nexus-live') !== '1') return jsonR(403, {error: 'csrf'});

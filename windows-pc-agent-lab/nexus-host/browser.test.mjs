@@ -60,7 +60,7 @@ test('real browser: open, snapshot refs, type, click, press, navigate; password 
 });
 
 test('browser tools refused when capability is off', async () => {
-  const b = createBrowser({caps: validateCapabilities({}), home: os.tmpdir()});
+  const b = createBrowser({caps: validateCapabilities({browser: false}), home: os.tmpdir()});
   await assert.rejects(b.browser_open({url: 'https://example.com'}), /capability_disabled/);
 });
 

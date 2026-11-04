@@ -12,7 +12,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {validateCapabilities} from './capabilities.mjs';
 
-export const SETTABLE = Object.freeze(['gui_input', 'live_view']);
+/** 0.6.1: the owner restricts or restores any of these by command in chat (lowering = his ban; lifting his ban = his tap). */
+export const SETTABLE = Object.freeze(['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser', 'live_view', 'diagnostics', 'commands', 'power', 'lockAfterTask']);
 const FLAGS = ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser', 'live_view', 'grantsFromChat', 'diagnostics', 'commands', 'power'];
 
 function diff(a, b) {
@@ -24,6 +25,7 @@ function diff(a, b) {
   if (JSON.stringify(a.tasks) !== JSON.stringify(b.tasks)) changes.tasks = [Object.keys(a.tasks), Object.keys(b.tasks)];
   if (JSON.stringify(a.launchApps) !== JSON.stringify(b.launchApps)) changes.launchApps = [Object.keys(a.launchApps || {}), Object.keys(b.launchApps || {})];
   for (const k of ['javaPath', 'edgePath']) if (a[k] !== b[k]) changes[k] = [a[k], b[k]];
+  if (JSON.stringify(a.ownerBans) !== JSON.stringify(b.ownerBans)) changes.ownerBans = [a.ownerBans, b.ownerBans];
   return changes;
 }
 
@@ -79,9 +81,15 @@ export function createCapStore({file, initial, audit = () => {}, intervalMs = 20
   function set(key, value, source = 'tool') {
     if (!SETTABLE.includes(key) || typeof value !== 'boolean') throw Error('invalid_args');
     const previous = caps[key];
-    edit(raw => { raw[key] = value; }, source);
-    return {capability: key, enabled: value, previous, changed: previous !== value};
+    edit(raw => {
+      raw[key] = value;
+      const bans = new Set(Array.isArray(raw.ownerBans) ? raw.ownerBans : []);
+      if (value) bans.delete(key); else bans.add(key); // off = the owner's ban; on again = ban lifted
+      raw.ownerBans = [...bans];
+    }, source);
+    return {capability: key, enabled: value, previous, changed: previous !== value, ownerBan: !value};
   }
+  const isBanned = key => (caps.ownerBans || []).includes(key);
 
   /** 0.5.0: owner-consented app access (manage_app_access → confirm_action allow) and revocation. */
   function grantApp(proc, launch, source = 'consent') {
@@ -114,9 +122,9 @@ export function createCapStore({file, initial, audit = () => {}, intervalMs = 20
   });
 
   return {
-    view, refresh, set, grantApp, revokeApp, edit,
+    view, refresh, set, isBanned, grantApp, revokeApp, edit,
     get: () => caps,
-    status: () => ({...Object.fromEntries(FLAGS.map(k => [k, caps[k]])), appAccess: caps.appAccess, blockedApps: caps.blockedApps, inputApps: caps.inputApps, launchApps: Object.keys(caps.launchApps || {}), tasks: Object.keys(caps.tasks), fileError: lastError, settableFromChat: SETTABLE}),
+    status: () => ({...Object.fromEntries(FLAGS.map(k => [k, caps[k]])), appAccess: caps.appAccess, blockedApps: caps.blockedApps, inputApps: caps.inputApps, launchApps: Object.keys(caps.launchApps || {}), tasks: Object.keys(caps.tasks), taskRoots: caps.taskRoots, ownerBans: caps.ownerBans, fileError: lastError, settableFromChat: SETTABLE}),
     watch() { if (file && !timer) { timer = setInterval(() => refresh('file'), intervalMs); timer.unref?.(); } },
     stop() { clearInterval(timer); timer = null; },
   };

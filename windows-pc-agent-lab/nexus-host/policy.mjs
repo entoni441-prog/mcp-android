@@ -27,8 +27,15 @@ export const DENY_APPS = Object.freeze([
   'consent', 'logonui', 'lockapp', 'winlogon', 'credentialuibroker', 'useraccountcontrolsettings', 'dwm', 'csrss', 'lsass',
   'services', 'svchost', 'smss', 'wininit', 'sihost', 'securityhealthsystray', 'securityhealthhost', 'msmpeng', 'secinit',
   'sc', 'schtasks', 'netsh', 'bcdedit', 'diskpart', 'format', 'takeown', 'icacls', 'certutil', 'bitsadmin',
-  'node', 'java', 'javaw', 'python', 'pythonw', 'py', 'cloudflared', 'claude',
+  'node', 'java', 'javaw', 'python', 'pythonw', 'py', 'cloudflared',
 ]);
+/**
+ * 0.6.1 (NX-052-01/34/36): AI agent apps — ordinary GUI targets (read, scroll, navigate, type, edit). Text typed into
+ * them may make THAT agent run commands, so every typed prompt is journaled (event agent_prompt, secrets masked);
+ * commands are available by default, so this is not a way around anything. The owner can block an app by command.
+ * Claude Code in a terminal stays a terminal (shell UI rules); 'claude' here is the Claude desktop app window.
+ */
+export const AGENT_APPS = Object.freeze(['claude', 'chatgpt', 'antigravity', 'grok', 'gemini', 'perplexity', 'copilot', 'm365copilot']);
 /** Credential stores: may be shown to the owner, never read/typed into by NEXUS without level-2 consent. */
 export const PROTECTED_APPS = Object.freeze(['bitwarden', 'keepass', 'keepassxc', '1password', 'lastpass', 'dashlane', 'keeper', 'enpass', 'roboform']);
 /** IDEs: allowed (owner decision 02.11.2026) with the ide input policy below. */
@@ -58,6 +65,7 @@ export function classifyApp(proc, {title = ''} = {}) {
   if (SHELL_UI.includes(p)) return {cls: 'deny', level: 'handoff', reason: 'shell_ui'};
   if (PROTECTED_APPS.includes(p)) return {cls: 'protected', level: 2, reason: 'credential_store'};
   if (IDE_APPS.includes(p)) return {cls: 'ide', level: 1};
+  if (AGENT_APPS.includes(p)) return {cls: 'agent', level: 1};
   if (p === 'mmc') return MMC_ALLOWED_TITLE.test(String(title)) ? {cls: 'admin', level: 1} : {cls: 'admin', level: 'handoff', reason: 'mmc_snapin_not_allowed'};
   if (ADMIN_APPS.includes(p)) return {cls: 'admin', level: 1};
   if (SYSTEM_TOOLS.includes(p)) return {cls: 'system_tool', level: 1};
@@ -265,10 +273,13 @@ export function notepadLaunchDecision({running}) {
  *  mode 'read' (window list/UIA tree), 'focus', 'input' (mouse/keyboard), 'close' (process close).
  * Errors keep the 0.5.1 prefix (caller's legacy code) so existing clients keep working.
  */
+export const OWNER_PAGE_RE = /NEXUS Live View/i;
 export function appGate(caps, proc, {title = '', mode = 'input'} = {}) {
   const p = norm(proc);
   if (!p) return {allow: false, error: 'target_unknown'};
   if ((caps?.blockedApps || []).some(a => norm(a) === p)) return {allow: false, error: 'blocked_by_owner'};
+  // 0.6.1: the owner's approval page must never be clicked by NEXUS itself (an approval there = the owner's own tap).
+  if (mode === 'input' && OWNER_PAGE_RE.test(String(title))) return {allow: false, error: 'owner_handoff_required', reason: 'owner_approval_page'};
   if (caps?.appAccess === 'allowlist') {
     const ok = !isHardDenied(p) && (caps.inputApps || []).some(a => norm(a) === p);
     return ok ? {allow: true, cls: 'allowlisted'} : {allow: false, error: 'not_in_allowlist'};

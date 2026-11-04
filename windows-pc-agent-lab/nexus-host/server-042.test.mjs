@@ -7,7 +7,7 @@ import path from 'node:path';
 import {loadConfig, createServer} from './server.mjs';
 import {sanitize} from './nexus.mjs';
 
-test('process close of a non-NEXUS app → consent_required; confirm_action executes exactly once; audit trail', async () => {
+test('process close of a non-NEXUS app → owner tap on /live (0.6.1) → confirm_action executes exactly once; audit trail', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-042-'));
   const cfg = loadConfig({NEXUS_HOME: path.join(tmp, 'h'), NEXUS_WORKSPACE: path.join(tmp, 'ws'), NEXUS_PORT: '0', NEXUS_CAPABILITIES_JSON: JSON.stringify({process_control: true})});
   const kills = [];
@@ -23,15 +23,20 @@ test('process close of a non-NEXUS app → consent_required; confirm_action exec
     assert.equal(r.status, 'consent_required'); assert.equal(r.target, 'Notepad (pid 4242)');
     assert.equal(kills.length, 0);
     assert.match((await call('confirm_action', {consentId: r.consentId, decision: 'close_discard', target: 'Notepad (pid 1)'})).content[0].text, /consent_target_mismatch/);
+    assert.equal(r.approval, 'owner_phone'); // the owner's unsaved data may be lost → only his tap approves
+    assert.match((await call('confirm_action', {consentId: r.consentId, decision: 'close_discard', target: r.target})).content[0].text, /owner_approval_pending/);
+    assert.equal(kills.length, 0);
+    assert.equal((await call('owner_decide', {consentId: r.consentId, decision: 'close_discard'})).isError, false);
+    assert.match((await call('confirm_action', {consentId: r.consentId, decision: 'close_save', target: r.target})).content[0].text, /owner_decision_mismatch/);
     const c = (await call('confirm_action', {consentId: r.consentId, decision: 'close_discard', target: r.target})).structuredContent;
     assert.equal(c.confirmed, true); assert.equal(c.result.requested, true);
     assert.deepEqual(kills, [['/pid', '4242']]);
     assert.match((await call('confirm_action', {consentId: r.consentId, decision: 'close_discard', target: r.target})).content[0].text, /consent_expired_or_unknown/);
     assert.equal(kills.length, 1);
     const d = (await call('host_diagnostics', {})).structuredContent;
-    assert.equal(d.version, '0.6.0-next'); assert.equal(d.pendingConsents, 0);
+    assert.equal(d.version, '0.6.1-next'); assert.equal(d.pendingConsents, 0);
     const events = fs.readFileSync(cfg.auditFile, 'utf8').trim().split('\n').map(l => JSON.parse(l)).map(e => e.event || e.tool);
-    for (const e of ['consent_required', 'consent_decision', 'confirm_action', 'host_diagnostics']) assert.ok(events.includes(e), e);
+    for (const e of ['consent_required', 'owner_decision', 'consent_decision', 'confirm_action', 'host_diagnostics']) assert.ok(events.includes(e), e);
   } finally { server.close(); cfg.runtime?.stop(); }
 });
 

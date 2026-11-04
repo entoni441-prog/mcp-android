@@ -88,7 +88,7 @@ test('download_verify: states, hash verified, mismatch quarantined, private redi
   const e = await w.download_verify({url: 'https://dl.example.com/tool.exe', expectedSigner: 'Microsoft'});
   assert.ok(e.states.some(x => x.state === 'mark_of_the_web_set')); assert.ok(e.states.some(x => x.state === 'signature_verified'));
   assert.match(fs.readFileSync(path.join(ws, e.file) + ':Zone.Identifier', 'utf8'), /ZoneId=3/);
-  await assert.rejects(createScoped({caps: validateCapabilities({}), cfg: {home, workspace: ws}}).download_verify({url: 'https://dl.example.com/a.zip'}), /capability_disabled/);
+  await assert.rejects(createScoped({caps: validateCapabilities({commands: false}), cfg: {home, workspace: ws}}).download_verify({url: 'https://dl.example.com/a.zip'}), /capability_disabled/);
 });
 
 test('power_action: dry run by default; blockers; lock immediate; wake BLOCKED; consent only when preconditions hold', async () => {
@@ -108,7 +108,7 @@ test('power_action: dry run by default; blockers; lock immediate; wake BLOCKED; 
   assert.equal(c.status, 'consent_required'); assert.equal(calls.length, 1, 'nothing runs before consent');
   const done = await allow(consent, c);
   assert.equal(done.accepted, true); assert.deepEqual(calls[1].slice(0, 4), ['shutdown.exe', '/r', '/t', '60']); assert.ok(!calls[1].includes('/f'), 'never forced');
-  await assert.rejects(createPower({caps: validateCapabilities({}), platform: 'win32', exec}).power_action({action: 'lock'}), /capability_disabled/);
+  await assert.rejects(createPower({caps: validateCapabilities({power: false}), platform: 'win32', exec}).power_action({action: 'lock'}), /capability_disabled/);
 });
 
 test('Sentinel: state classification and quser parsing; no input/screen/command code in the file', () => {

@@ -24,7 +24,7 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {UIA_SCRIPT} from './uia-script.mjs';
 import {requireCap} from './capabilities.mjs';
-import {appGate, classifyIdeInput, classifyIdeClick, redactSecrets, handoffSpec, classifyDestructiveClick, classifyDestructiveKeys} from './policy.mjs';
+import {appGate, classifyApp, classifyIdeInput, classifyIdeClick, redactSecrets, handoffSpec, classifyDestructiveClick, classifyDestructiveKeys} from './policy.mjs';
 import {classifyKeys, classifyClick, createConsent} from './consent.mjs';
 import {createLifecycle} from './lifecycle.mjs';
 
@@ -717,6 +717,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         const g = consent.gate(c, before.window, null, {tool: 'keyboard_action', args});
         if (g) return g;
       }
+      const agentApp = classifyApp(before.focused.process).cls === 'agent';
       const creating = hasKeys && NEW_KEYS.has(args.keys) && before.window?.process;
       const snap = creating ? await apps(before.window.process).catch(() => null) : null;
       await ownerGuard();
@@ -729,7 +730,8 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       await afterInput(after.focused);
       return {done: true, target: before.focused.process, foregroundAfter: after.focused?.process || null,
         ...(hasText ? {chars: args.text.length, clipboardRestored: r.clipboardRestored, ...(r.clipboard ? {clipboard: r.clipboard} : {})} : {keys: args.keys}),
-        ...(c ? {closeAction: c.kind, consented: !!consented} : {}), ...(created ? {createdByNexus: created} : {})};
+        ...(c ? {closeAction: c.kind, consented: !!consented} : {}), ...(created ? {createdByNexus: created} : {}),
+        ...(agentApp ? {agentPrompt: {app: before.focused.process, chars: hasText ? args.text.length : 0, preview: hasText ? redactSecrets(args.text.slice(0, 300)).text : 'keys:' + args.keys}} : {})};
     },
   };
   return api;

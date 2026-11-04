@@ -44,7 +44,16 @@ export const DENY_RULES = Object.freeze([
   [/\b(bcdedit|diskpart|format|cipher\s+\/w|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl|fsutil\s+(file\s+setzerodata|usn\s+deletejournal))\b/i, 'boot_or_disk_destruction'],
   [/\bautoadminlogon\b|\bdefaultpassword\b|\bnetplwiz\b|\buserpasswords2\b|disablecad\b/i, 'autologon_or_logon_change'],
 ]);
-const DENY_EXE = new Set(['bw', 'bitwarden', 'keepass', 'keepassxc', '1password', 'op', 'lastpass', 'lpass', 'dashlane', 'keeper', 'mimikatz', 'psexec', 'psexec64', 'mshta', 'wscript', 'cscript', 'regsvr32', 'rundll32', 'certutil', 'bitsadmin']);
+/**
+ * 0.6.1 (owner decision 04.11.2026): Windows security changes, disk/boot destruction and password-manager CLIs are no
+ * longer refused — they are the owner's call, approved by his tap on /live with the exact command text. Still refused
+ * (no one can meaningfully approve them): encoded/obfuscated commands, download-and-execute one-liners, credential
+ * dumping tools — the same effect is available in a readable form (plain command, download_verify, the owner himself).
+ */
+const OWNER_REASONS = Object.freeze({defender_change: 'security_command', uac_change: 'security_command', smart_app_control_change: 'security_command',
+  bitlocker_change: 'security_command', firewall_change: 'security_command', autologon_or_logon_change: 'security_command', boot_or_disk_destruction: 'destructive_command'});
+const SECRET_EXE = new Set(['bw', 'bitwarden', 'keepass', 'keepassxc', '1password', 'op', 'lastpass', 'lpass', 'dashlane', 'keeper']);
+const DENY_EXE = new Set(['mimikatz', 'psexec', 'psexec64', 'mshta', 'wscript', 'cscript', 'regsvr32', 'rundll32', 'certutil', 'bitsadmin']);
 
 /** R0 table: exe → predicate over lower-cased args (read-only subcommands only). */
 const R0 = {
@@ -78,14 +87,46 @@ const R1 = {
 };
 
 /**
+ * 0.6.1 (owner decision 04.11.2026): commands are autonomous, EXCEPT the owner list — irreversible deletion and
+ * changes to Windows security — which need his tap on the Live View page. Pure, pattern based on the exact argv text:
+ * a best effort for readable commands (encoded/obfuscated ones stay refused by classifyCommand, as before).
+ * → 'destructive_command' | 'security_command' | null.
+ */
+const DESTRUCT_EXE = new Set(['del', 'erase', 'rd', 'rmdir', 'rm', 'format', 'sdelete', 'sdelete64', 'shred', 'wipe']);
+const DESTRUCT_RE = /\b(remove-item|clear-content|clear-recyclebin|format-volume|clear-disk|remove-partition|initialize-disk|remove-appxpackage|uninstall-package)\b|(^|[\s;&|(])(del|erase|rd|rmdir|rm|ri)(\s|$)|\bcipher\s+\/w|\brobocopy\b.*\s\/(mir|purge)\b|\bgit\s+clean\b.*-[a-z]*f|\breset\s+--hard\b/i;
+const SECURITY_RE = /\b(set-mppreference|add-mppreference|remove-mppreference|set-executionpolicy|set-netfirewall\w*|new-netfirewallrule|disable-netfirewall\w*|manage-bde|disable-bitlocker|suspend-bitlocker|bcdedit|enablelua|consentpromptbehavior\w*|smartscreen|verifiedandreputablepolicystate|set-processmitigation|add-localgroupmember|net\s+localgroup|net\s+user\b|takeown|icacls)\b|\bnetsh\s+(advfirewall|firewall)\b|\breg(\.exe)?\s+(add|delete|import)\s+hklm/i;
+const CMD_HOSTS = new Set(['powershell', 'pwsh', 'powershell_ise', 'cmd', 'reg', 'net', 'net1', 'netsh', 'wmic', 'sc', 'schtasks', 'robocopy', 'git-bash', 'bash', 'sh', 'wsl']);
+export function ownerCommandRisk(exe, args = []) {
+  const b = String(exe || '').toLowerCase().split(/[\\/]/).pop().replace(/\.(exe|com)$/, '');
+  const text = [b, ...args.map(String)].join(' ');
+  if (b === 'git') { // history keeps git work recoverable — only what destroys it is on the owner list
+    const a = args.map(x => String(x).toLowerCase());
+    if (a[0] === 'push' && a.some(x => /^(-f|--force|--force-with-lease|--delete|-d|--mirror)$/.test(x) || /^[:+]/.test(x))) return 'destructive_command';
+    if (a[0] === 'clean' && a.some(x => /^-[a-z]*f/.test(x) || x === '--force')) return 'destructive_command';
+    if (a[0] === 'reset' && a.includes('--hard')) return 'destructive_command';
+    if (['reflog', 'gc'].includes(a[0]) && a.some(x => /expire|--prune=now|--prune=all/.test(x))) return 'destructive_command';
+    return null;
+  }
+  if (['bcdedit', 'manage-bde', 'takeown', 'icacls'].includes(b)) return 'security_command';
+  if (DESTRUCT_EXE.has(b)) return 'destructive_command';
+  // Command text is only meaningful for programs that EXECUTE their arguments (shells, reg, net, netsh…); for others
+  // (node script.mjs "a; rm -rf /") the arguments are data — scanning them would only produce false alarms.
+  if (!CMD_HOSTS.has(b)) return null;
+  if (SECURITY_RE.test(text)) return 'security_command';
+  if (DESTRUCT_RE.test(text)) return 'destructive_command';
+  return null;
+}
+
+/**
  * Pure classifier. → {cls:'R0'|'R1'|'R2'|'R3'|'deny', reason}. `allowedPackages` = owner list of winget ids (R2 autonomous).
  */
 export function classifyCommand(exe, args = [], {allowedPackages = []} = {}) {
   if (typeof exe !== 'string' || !exe || exe.length > 400 || exe.includes('\0')) return {cls: 'deny', reason: 'bad_exe'};
   if (!Array.isArray(args) || args.length > 64 || !args.every(a => typeof a === 'string' && a.length <= 4000 && !a.includes('\0'))) return {cls: 'deny', reason: 'bad_args'};
   const b = base(exe), text = [b, ...args].join(' ');
+  if (SECRET_EXE.has(b)) return {cls: 'R3', reason: 'credential_store:' + b, owner: 'secret_access'};
   if (DENY_EXE.has(b)) return {cls: 'deny', reason: 'denied_program:' + b};
-  for (const [re, why] of DENY_RULES) if (re.test(text)) return {cls: 'deny', reason: why};
+  for (const [re, why] of DENY_RULES) if (re.test(text)) return OWNER_REASONS[why] ? {cls: 'R3', reason: why, owner: OWNER_REASONS[why]} : {cls: 'deny', reason: why};
   const a = lc(args);
   if (R0[b]?.(a)) return {cls: 'R0', reason: 'read_only'};
   if (b === 'winget' && ['install', 'uninstall', 'upgrade'].includes(a[0])) {
@@ -210,9 +251,10 @@ export function createRunner({caps, cfg, consent = null, tasks = null, audit = (
         if (i < 0) throw Error('plan_step_mismatch: this command is not a step of the approved plan (a changed plan needs a new approval)');
         return go({planId: p.id, step: i});
       }
-      if (c.cls === 'R0' || c.cls === 'R1') return go();
+      if ((c.cls === 'R0' || c.cls === 'R1') && !c.owner && !ownerCommandRisk(args.exe, argv)) return go();
       if (!consent) throw Error('consent_unavailable');
-      const what = c.cls === 'R2' ? 'software_change' : 'arbitrary_command';
+      const owner = c.owner || ownerCommandRisk(args.exe, argv);
+      const what = owner || (c.cls === 'R2' ? 'software_change' : 'arbitrary_command');
       return consent.requestGrant({what, target: `выполнить команду (${c.cls}: ${c.reason}): ${text}`, apply: () => go()});
     },
 
@@ -228,7 +270,8 @@ export function createRunner({caps, cfg, consent = null, tasks = null, audit = (
         const title = args.title, resumeAfterRestart = args.resumeAfterRestart === true;
         const id = planHash(title + (resumeAfterRestart ? ' [resume]' : ''), steps);
         const list = steps.map((s, i) => `${i + 1}) ${commandText(s.exe, s.args, s.cwd)}`).join('; ');
-        return consent.requestGrant({what: 'command_plan', target: `план «${title}» (${steps.length} шаг., sha256 ${id.slice(0, 12)}${resumeAfterRestart ? ', продолжать после перезапуска Host' : ''}): ${list}`.slice(0, 1800),
+        const planRisk = steps.map(st => classifyCommand(st.exe, st.args).owner || ownerCommandRisk(st.exe, st.args)).find(Boolean) || null; // 0.6.1: a plan with an owner-list step waits for his tap
+        return consent.requestGrant({what: planRisk || 'command_plan', target: `план «${title}» (${steps.length} шаг., sha256 ${id.slice(0, 12)}${resumeAfterRestart ? ', продолжать после перезапуска Host' : ''}): ${list}`.slice(0, 1800),
           apply: () => { const p = {id, title, steps, resumeAfterRestart, approvedAt: new Date(now()).toISOString(), state: 'approved', next: 0, results: []}; savePlan(p); audit({event: 'plan_approved', plan: id.slice(0, 12), steps: steps.length}); return {planId: id, approved: true, steps: steps.length}; }});
       }
       if (typeof args.planId !== 'string' || !/^[a-f0-9]{64}$/.test(args.planId)) bad('planId');

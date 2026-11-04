@@ -209,7 +209,7 @@ test('focus fallback is not used without gui_input', async () => {
   const fg = {ok: true, pid: 7, process: 'WindowsTerminal', topHwnd: 77};
   const u = st.uia;
   st.uia = async a => a.mode === 'activate' ? {root: ROOT, focused: fg} : a.mode === 'windows' ? {...(await u(a)), focused: fg} : u(a);
-  const g = createGui({caps: validateCapabilities({}), home: tmp, workspace: tmp, platform: 'win32', runUia: st.uia, robot: st.robot, sleep: async () => {}});
+  const g = createGui({caps: validateCapabilities({gui_input: false}), home: tmp, workspace: tmp, platform: 'win32', runUia: st.uia, robot: st.robot, sleep: async () => {}});
   const r = await g.focus_window({pid: 50});
   assert.equal(r.focused, false); assert.match(r.hint, /gui_input/);
   assert.deepEqual(sent(st), []);

@@ -43,7 +43,7 @@ test('mapping: Java logical ↔ UIA physical at 150 %', () => {
 
 test('input tools are refused unless gui_input is enabled', async () => {
   const f = fakes();
-  const g = createGui({caps: validateCapabilities({}), home: tmp, workspace: tmp, platform: 'win32', runUia: f.uia, robot: f.robot});
+  const g = createGui({caps: validateCapabilities({gui_input: false}), home: tmp, workspace: tmp, platform: 'win32', runUia: f.uia, robot: f.robot});
   await assert.rejects(g.mouse_action({action: 'click', x: 10, y: 10}), /capability_disabled/);
   await assert.rejects(g.keyboard_action({text: 'x'}), /capability_disabled/);
   assert.equal(f.robotCmds.length, 0);

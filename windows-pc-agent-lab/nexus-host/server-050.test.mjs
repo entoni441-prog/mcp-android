@@ -40,7 +40,7 @@ test('catalog NEXT: 43 tools; live_frame is app-only; widget tools point at the 
 });
 
 test('Live View 0.5.1: no grant → off; grant but no session → ready, no capture; watch session → frames; STOP at source keeps grant', async () => {
-  const h = await host().start();
+  const h = await host({live_view: false, _profile: 2}).start();
   try {
     const off = (await h.call('live_frame')).structuredContent;
     assert.equal(off.state, 'off'); assert.equal(h.captures.length, 0);
@@ -78,19 +78,21 @@ test('Live View rate limit: ≤5 captures/s however often viewers poll', async (
 });
 
 test('gui_input and live_view are separate: enabling live_view does not enable input', async () => {
-  const h = await host({live_view: true}).start();
+  const h = await host({live_view: true, gui_input: false, _profile: 2}).start();
   try {
     const c = (await h.call('get_capabilities')).structuredContent.grants;
     assert.equal(c.live_view, true); assert.equal(c.gui_input, false);
     assert.match((await h.call('keyboard_action', {keys: 'enter'})).content[0].text, /capability_disabled/);
-    assert.match((await h.call('set_capability', {capability: 'browser', enabled: true})).content[0].text, /invalid_args/);
+    assert.match((await h.call('set_capability', {capability: 'taskRoots', enabled: true})).content[0].text, /invalid_args/);
   } finally { h.stop(); }
 });
 
-test('manage_app_access: grant only via consent+exact target; HARD_DENY never; revoke immediate', async () => {
+test('manage_app_access: owner block immediate; unblocking = owner tap on /live (0.6.1); HARD_DENY never; agent apps allowed', async () => {
   const h = await host().start();
   try {
-    for (const p of ['cmd', 'powershell', 'WindowsTerminal', 'regedit', 'explorer', 'Bitwarden', 'KeePassXC', 'node', 'claude']) {
+    const ag = (await h.call('manage_app_access', {action: 'request', process: 'claude'})).structuredContent;
+    assert.deepEqual([ag.alreadyAllowed, ag.cls], [true, 'agent'], '0.6.1: Claude desktop is an ordinary GUI target (prompts journaled)');
+    for (const p of ['cmd', 'powershell', 'WindowsTerminal', 'regedit', 'explorer', 'Bitwarden', 'KeePassXC', 'node']) {
       assert.match((await h.call('manage_app_access', {action: 'request', process: p})).content[0].text, /app_hard_denied/, p);
     }
     assert.match((await h.call('manage_app_access', {action: 'request', process: 'mspaint', exe: 'C:\\x\\run.bat'})).content[0].text, /app_exe_invalid/);
@@ -104,9 +106,12 @@ test('manage_app_access: grant only via consent+exact target; HARD_DENY never; r
     assert.ok(JSON.parse(fs.readFileSync(path.join(h.home, 'capabilities.json'), 'utf8')).blockedApps.includes('mspaint'));
     const r = (await h.call('manage_app_access', {action: 'request', process: 'mspaint'})).structuredContent;
     assert.equal(r.status, 'consent_required'); assert.equal(r.kind, 'grant'); assert.deepEqual(r.options, ['allow', 'cancel']);
+    assert.equal(r.what, 'owner_unban'); assert.equal(r.approval, 'owner_phone');
     assert.ok((await h.call('get_capabilities')).structuredContent.grants.blockedApps.includes('mspaint'), 'still blocked before consent');
     assert.match((await h.call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target + ' '})).content[0].text, /consent_target_mismatch/);
     assert.match((await h.call('confirm_action', {consentId: r.consentId, decision: 'close_discard', target: r.target})).content[0].text, /invalid_args/);
+    assert.match((await h.call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target})).content[0].text, /owner_approval_pending/);
+    assert.equal((await h.call('owner_decide', {consentId: r.consentId, decision: 'allow'})).isError, false);
     const c = (await h.call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target})).structuredContent;
     assert.equal(c.confirmed, true); assert.ok(!c.result.blockedApps.includes('mspaint'));
     assert.match((await h.call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target})).content[0].text, /consent_expired_or_unknown/);
@@ -167,6 +172,6 @@ test('/healthz is unauthenticated and leaks nothing; trace id reaches errors and
     assert.match(auditOf(h), /"trace":"abcdef0123456789"/);
     assert.ok(!auditOf(h).includes('not a trace'));
     const cs = (await h.call('connection_status')).structuredContent;
-    assert.equal(cs.host, 'reachable'); assert.equal(cs.version, '0.6.0-next');
+    assert.equal(cs.host, 'reachable'); assert.equal(cs.version, '0.6.1-next');
   } finally { h.stop(); }
 });
