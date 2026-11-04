@@ -31,8 +31,11 @@ test('D2: decided by result/context, not text — unknown submit on a checkout p
 });
 
 test('D3: outgoing / destructive actions on the owner\'s behalf need consent; generic confirm does not', () => {
-  for (const label of ['Send', 'Post', 'Publish', 'Delete', 'Sign up', 'Register', 'Submit', 'Отправить', 'Опубликовать', 'Удалить', 'Invia', 'Elimina'])
+  for (const label of ['Delete', 'Удалить', 'Elimina', 'Remove account', 'Deactivate'])
     assert.equal(what({label}), 'browser_irreversible', label);
+  // 0.6.1 (owner 04.11): sending/publishing is done on his instruction in chat — its own class, not on the owner list
+  for (const label of ['Send', 'Post', 'Publish', 'Sign up', 'Register', 'Submit', 'Отправить', 'Опубликовать', 'Invia'])
+    assert.equal(what({label}), 'browser_outgoing', label);
   for (const label of ['Confirm', 'Подтвердить', 'Sort by price', 'Postcode lookup'])
     assert.equal(what({label}), 'auto', label);
 });

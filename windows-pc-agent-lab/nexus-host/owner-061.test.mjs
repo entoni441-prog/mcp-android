@@ -119,3 +119,15 @@ test('0.6.1 downloads: browser file ingested (moved, hashed); download_verify {f
   await assert.rejects(s.download_verify({file: v.file, url: 'https://x.com/a'}), /invalid_args/);
   assert.ok(log.some(e => e.event === 'download' && e.source === 'browser'));
 });
+
+test('owner 04.11 ~10:04: sending/publishing runs on his instruction (no tap, journaled); deleting on his behalf stays on the owner list', async () => {
+  const {classifyBrowserRisk} = await import('./browser.mjs');
+  assert.equal(classifyBrowserRisk({label: 'Отправить'}).what, 'browser_outgoing');
+  assert.equal(classifyBrowserRisk({label: 'Delete'}).what, 'browser_irreversible');
+  assert.equal(OWNER_WHATS.has('browser_outgoing'), false);
+  const log = [];
+  const c = createConsent({autonomy: true, audit: e => log.push(e)});
+  assert.deepEqual(await c.requestGrant({what: 'browser_outgoing', target: 'отправить письмо', apply: () => ({sent: true})}), {sent: true});
+  assert.ok(log.some(e => e.event === 'auto_approved' && e.what === 'browser_outgoing' && e.target === 'отправить письмо'));
+  assert.equal((await c.requestGrant({what: 'browser_irreversible', target: 'удалить', apply: () => 1})).approval, 'owner_phone');
+});

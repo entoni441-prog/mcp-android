@@ -28,7 +28,7 @@ const OWNER_TTL_MS = 10 * 60_000;
  * 0.6.1 owner decision 04.11.2026 (FR-10): the ONLY actions that need the owner himself — approved on the Live View
  * page (owner passphrase), never by the model's confirm_action alone, so text injected into a page/file/app cannot
  * approve them. Everything else that used to return consent_required runs autonomously (audited «auto_approved»).
- *   money (buy/pay/subscribe), sending/publishing/deleting on his behalf, secrets/credential stores, irreversible
+ *   money (buy/pay/subscribe), deleting on his behalf (sending/publishing: on his instruction in chat, no tap), secrets/credential stores, irreversible
  *   deletion and closing/killing the owner's own windows/processes (unsaved data), Windows security pages/commands,
  *   lifting a ban the owner set.
  */

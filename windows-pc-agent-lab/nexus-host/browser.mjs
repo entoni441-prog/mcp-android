@@ -101,7 +101,10 @@ const KEYS = {Enter: 13, Tab: 9, Escape: 27, Backspace: 8, ArrowDown: 40, ArrowU
 export const COMMIT_RE = /(\bbuy\b|\bpurchase|\bpay\b|\bpay\s*(now|later|in\b)|\bpaypal\b|\bpayment|place\s+(the\s+|your\s+|my\s+)?order|\border\s+now\b|submit\s+order|complete\s+(order|purchase|checkout|payment|booking)|confirm\s+(and\s+pay|order|purchase|payment|booking|subscription)|^\s*order\s*$|subscribe|start\s+(my\s+|free\s+|your\s+)?(trial|subscription|membership)|\bbook\s+now\b|\breserve\b|\bdonate\b|\btransfer\b|send\s+money|купить|оплат|заказать|разместить\s+заказ|оформить\s+заказ|подтвердить\s+(заказ|оплату|покупку|бронирование|перевод)|забронировать|подписаться|оформить\s+подписку|перевести|перевод|пожертвовать|\bacquista|\bcompra\b|\bpaga\b|\bpagamento|\bordina\b|invia\s+(l'|l’)?ordine|conferma\s+(e\s+paga|(l'|l’)?ordine|(l'|l’)?acquisto|(il\s+)?pagamento)|abbonati|abbonamento|\bprenota)/i;
 export const SAFE_STEP_RE = /^\s*((proceed|continue|go)\s+to\s+(checkout|cart|basket|bag|shipping|delivery|address)|checkout|view\s+(cart|basket|bag)|(add|move)\s+to\s+(cart|basket|bag)|apply(\s+(coupon|promo|code|discount))?|back|edit|change|cancel|search|в\s+корзину|добавить\s+в\s+корзину|перейти\s+в\s+корзину|корзина|(перейти\s+)?к\s+оформлению(\s+заказа)?|применить(\s+промокод|\s+купон)?|назад|изменить|отмена|найти|поиск|procedi\s+(all'|all’)ordine|procedi\s+al\s+checkout|vai\s+(alla\s+cassa|al\s+carrello)|aggiungi\s+al\s+carrello|indietro|modifica|annulla|cerca)(?![\p{L}\p{N}])/iu;
 export const CART_EDIT_RE = /(remove|delete|удалить|убрать|rimuovi|elimina).{0,25}(from\s+(cart|basket|bag)|из\s+корзины|dal\s+carrello)/i;
-export const OUTGOING_RE = /(\bsend\b|\bpost\b|\bpublish|\bdelete\b|remove\s+account|\bsign\s*up\b|\bregister\b|\bsubmit\b|отправ|опубликов|удали|зарегистр|разместить|\binvia\b|\bpubblica|\belimina\b|registrati|iscriviti)/i;
+// 0.6.1 owner decision 04.11 ~10:04: deleting on the owner's behalf stays on the owner list (/live); sending /
+// publishing / registering is done on the owner's instruction in chat — no phone tap — and is journaled (browser_outgoing).
+export const DELETE_RE = /(\bdelete\b|remove\s+account|close\s+account|deactivate|удали|удалить\s+аккаунт|\belimina\b|cancella\s+account)/i;
+export const OUTGOING_RE = /(\bsend\b|\bpost\b|\bpublish|\bsign\s*up\b|\bregister\b|\bsubmit\b|отправ|опубликов|зарегистр|разместить|\binvia\b|\bpubblica|registrati|iscriviti)/i;
 const CHECKOUT_URL_RE = /(checkout|payment|\/pay\b|billing|\/order|cassa|pagamento|oplata|oformlenie|\/buy\b)/i;
 const PAY_FRAME_RE = /(stripe\.com|braintreegateway|adyen|paypal\.com|checkout\.com|klarna|yookassa|cloudpayments|nexi|satispay|worldpay|squareup)/i;
 const SECRET_FIELD_RE = /(card.?(number|num|no)|ccnum|cc-?number|cvv|cvc|csc|security.?code|iban|\botp\b|2fa|one.?time|verification.?code|passcode|\bpin\b)/i;
@@ -120,7 +123,8 @@ export function classifyBrowserRisk({label = '', submit = false, checkout = null
   if (opensDialog && !submit) return null;
   if (COMMIT_RE.test(l)) return {what: 'browser_financial', reason: 'commitment_label'};
   if (checkout && submit && !SAFE_STEP_RE.test(l)) return {what: 'browser_financial', reason: 'checkout_submit_' + checkout};
-  if (OUTGOING_RE.test(l)) return {what: 'browser_irreversible', reason: 'outgoing_or_destructive'};
+  if (DELETE_RE.test(l)) return {what: 'browser_irreversible', reason: 'delete_on_owner_behalf'};
+  if (OUTGOING_RE.test(l)) return {what: 'browser_outgoing', reason: 'send_or_publish'};
   return null;
 }
 
@@ -359,7 +363,7 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
         if (accept && !consented && consent) {
           const risk = classifyBrowserRisk({label: pendingDialog.message});
           if (risk) return consent.requestGrant({what: risk.what, replay: {tool: 'browser_action', args},
-            target: `браузер NEXUS: подтвердить диалог «${pendingDialog.message.slice(0, 120)}» (${risk.what === 'browser_financial' ? 'может создать платное обязательство' : 'отправка/публикация/удаление от вашего имени'})`,
+            target: `браузер NEXUS: подтвердить диалог «${pendingDialog.message.slice(0, 120)}» (${risk.what === 'browser_financial' ? 'может создать платное обязательство' : risk.what === 'browser_outgoing' ? 'отправка/публикация от имени владельца (только по его поручению)' : 'удаление от вашего имени'})`,
             apply: () => this.browser_action(args, {consented: true})});
         }
         const d = pendingDialog; pendingDialog = null;
@@ -378,7 +382,7 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
         if (risk) {
           const host = await evaluate('location.host');
           const label = facts.label || (args.action === 'press' ? 'отправка формы' : 'элемент без подписи');
-          const why = risk.what === 'browser_financial' ? 'может создать платное обязательство' : 'отправка/публикация/удаление от вашего имени';
+          const why = risk.what === 'browser_financial' ? 'может создать платное обязательство' : risk.what === 'browser_outgoing' ? 'отправка/публикация от имени владельца (только по его поручению)' : 'удаление от вашего имени';
           return consent.requestGrant({what: risk.what, replay: {tool: 'browser_action', args},
             target: `браузер NEXUS: ${args.action === 'click' ? 'нажать' : 'Enter для'} «${label}» на ${host} (${why})`,
             apply: () => this.browser_action(args, {consented: true})});
