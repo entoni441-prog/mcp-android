@@ -27,6 +27,8 @@
    - `run_command git --version` → выполнено **без** consent; `run_command powershell ["-NoProfile","-Command","Get-Date"]` → выполнено без consent (R3, автономно).
    - Список владельца (ничего не удаляет): создать `NEXUS-workspace\owner-test.txt` (`write_text`), затем `run_command cmd ["/c","del","owner-test.txt"]` → `consent_required`, `what: destructive_command`, `approval: owner_phone`; `confirm_action allow` → `owner_approval_pending`; файл на месте. Отменить: вызвать на Host напрямую `owner_decide {consentId, decision:"cancel"}` (POST `/mcp` с токеном Host) → `confirm_action` → `cancelled, by: owner`; файл на месте; удалить его через `file_action delete` (в корзину NEXUS).
    - Запрет словом: `set_capability {capability:"power", enabled:false}` → `ownerBan:true`; `power_action lock dryRun` → `capability_disabled`. Снятие: `set_capability power true` → `consent_required what: owner_unban`; `owner_decide allow` (напрямую) → `confirm_action allow` → `enabled:true`, `ownerBans: []`.
+   - Ввод без буфера: `open_app notepad` → `keyboard_action {text:"NEXUS 0.6.1 тест {+}"}` → `inputMethod: keys`, `clipboard: untouched`; буфер владельца до/после одинаков (Get-Clipboard); `finish_task` (окно своё).
+   - Загрузка браузером: `browser_open https://www.7-zip.org/download.html` → клик по ссылке на `7z*-x64.exe` → в ответе `downloads`; `browser_tabs {action:"downloads", id}` → `completed`, `sha256`, `signature`; файл в `NEXUS-workspace\downloads`, `.incoming` пуст; Mark of the Web есть (`Get-Content <файл> -Stream Zone.Identifier`). Не запускать установщик.
    - `open_app explorer` → `finish_task` → окно закрыто; `live_control stop` → `stopped_by_owner` → `resume`.
 
 ## F. Шлюз (после PASS C; разрешение владельца)
