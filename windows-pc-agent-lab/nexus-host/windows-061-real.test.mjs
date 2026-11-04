@@ -24,13 +24,6 @@ $ms = New-Object System.IO.MemoryStream (,[byte[]](1,2,3,4,5)); $d.SetData('NEXU
 const READ_CLIP = `Add-Type -AssemblyName System.Windows.Forms; $o = [System.Windows.Forms.Clipboard]::GetDataObject()
 $p = $o.GetData('NEXUS.Private.Format'); $b = if ($p) { ($p.ToArray() -join ',') } else { 'none' }
 @{text = [System.Windows.Forms.Clipboard]::GetText(); private = $b; html = $o.GetDataPresent([System.Windows.Forms.DataFormats]::Html)} | ConvertTo-Json -Compress`;
-const READ_NOTEPAD = `Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
-$w = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, [int]$env:NX_PID)))
-$c = New-Object System.Windows.Automation.OrCondition((New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)), (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Document)))
-$e = $w.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c)
-$t = $null; try { $t = $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value } catch { $t = $e.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).DocumentRange.GetText(-1) }
-[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($t))`;
-
 test('real Windows 0.6.1: keyboard_action types without the clipboard; owner clipboard intact (text, HTML, private); exact text', {skip: !RUN && 'win32 + NEXUS_REAL_GUI=1 only', timeout: 240_000}, async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-061-real-'));
   const gui = createGui({caps: validateCapabilities({}), home, workspace: path.join(home, 'ws'), platform: 'win32'});
@@ -54,7 +47,9 @@ test('real Windows 0.6.1: keyboard_action types without the clipboard; owner cli
     const clipAfter = JSON.parse(ps(READ_CLIP));
     console.log('clipboard after', JSON.stringify(clipAfter));
     assert.deepEqual(clipAfter, clipBefore, 'owner clipboard must stay exactly as it was');
-    const typed = Buffer.from(ps(READ_NOTEPAD, {NX_PID: String(pid)}), 'base64').toString('utf8');
+    // read the typed text back AFTER the clipboard check: select all + copy in Notepad, then read the clipboard
+    await gui.keyboard_action({keys: 'ctrl+a'}); await gui.keyboard_action({keys: 'ctrl+c'}); await sleep(500);
+    const typed = Buffer.from(ps("Add-Type -AssemblyName System.Windows.Forms; [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([System.Windows.Forms.Clipboard]::GetText()))"), 'base64').toString('utf8');
     console.log('notepad text', JSON.stringify(typed));
     assert.equal(typed.replace(/\r/g, ''), TEXT);
   } finally {
