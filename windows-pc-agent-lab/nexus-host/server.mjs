@@ -219,8 +219,16 @@ export function createRuntime(cfg, deps = {}) {
     // 0.6.1 owner channel: called ONLY by the gateway's /live page after the owner's passphrase session. Not in the
     // model's catalog — the gateway refuses these names from ChatGPT (unknown_tool), so the model cannot approve.
     owner_consents: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return {pending: consent.ownerList()}; },
-    owner_decide: a => {
-      if (!a || typeof a.consentId !== 'string' || typeof a.decision !== 'string' || Object.keys(a).some(k => !['consentId', 'decision'].includes(k))) throw Error('invalid_args');
+    // 0.6.1 fix (04.11): a decision counts only when SIGNED by the gateway's owner key (Ed25519, kept in Cloudflare;
+    // the PC has only the public key, fetched from the gateway). A command on the PC holding token.txt can no longer
+    // approve the owner list by calling this tool directly.
+    owner_decide: async a => {
+      if (!a || typeof a.consentId !== 'string' || typeof a.decision !== 'string' || typeof a.ts !== 'number' || typeof a.sig !== 'string' ||
+          Object.keys(a).some(k => !['consentId', 'decision', 'ts', 'sig'].includes(k))) throw Error('invalid_args');
+      if (Math.abs(Date.now() - a.ts) > 120_000) throw Error('owner_signature_expired');
+      const pub = await ownerPubKey(cfg);
+      if (!pub) throw Error('owner_channel_not_configured: the gateway owner key is not available');
+      if (!verifyOwnerDecision(pub, a)) { audit(cfg, {event: 'owner_signature_invalid', consentId: a.consentId}); throw Error('owner_signature_invalid'); }
       return consent.ownerDecide(a.consentId, a.decision);
     },
     connection_status: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); const d = diagnostics(cfg); return {host: 'reachable', version: d.version, uptimeSec: d.uptimeSec, tunnel: d.tunnelHealth, registeredAt: d.tunnel?.registeredAt ?? null}; },
@@ -256,7 +264,16 @@ export function createRuntime(cfg, deps = {}) {
     live_frame: a => live.live_frame(a), watch_nexus: a => live.watch_nexus(a),
     run_command: a => runner.run_command(a), command_plan: a => runner.command_plan(a), system_info: a => diag.system_info(a),
     files_scoped: a => scoped.files_scoped(a), download_verify: a => scoped.download_verify(a), power_action: a => power.power_action(a),
-    live_control: a => { const out = live.live_control(a); if (out?.resumed) rtRef.reobserve = {why: out.stopCleared ? 'owner_stop_resumed' : 'owner_pause_resumed', at: new Date().toISOString()}; return out; },
+    live_control: a => {
+      // 0.6.1: host_off = NEXUS fully off (the supervisor will not restart it) — the replacement for «close the window»,
+      // now that a crashed/killed Host is restarted automatically. Turning it on again: start NEXUS-Host-Run on the PC.
+      if (a && a.action === 'host_off' && Object.keys(a).length === 1) {
+        fs.writeFileSync(path.join(cfg.home, 'host-off'), JSON.stringify({at: new Date().toISOString()}));
+        audit(cfg, {event: 'host_off'});
+        setTimeout(() => (cfg.onHostOff ? cfg.onHostOff() : null), 300).unref?.();
+        return {hostOff: true, note: 'NEXUS stops now and stays off (no automatic restart). To start it again run the NEXUS-Host-Run task on the PC.'};
+      }
+      const out = live.live_control(a); if (out?.resumed) rtRef.reobserve = {why: out.stopCleared ? 'owner_stop_resumed' : 'owner_pause_resumed', at: new Date().toISOString()}; return out; },
     manage_app_access: a => apps.manage_app_access(a), browser_tabs: a => browser.browser_tabs(a),
     browser_open: a => browser.browser_open(a), browser_snapshot: a => browser.browser_snapshot(a), browser_action: a => browser.browser_action(a),
   };
@@ -321,7 +338,24 @@ export function auditArgs(args) {
   return out;
 }
 
-function audit(cfg, entry) {
+/** 0.6.1 owner channel: the gateway's Ed25519 public key (JWK x, base64url), cached 10 min; cfg.ownerPub() fetches it. */
+const pubCache = new WeakMap();
+async function ownerPubKey(cfg) {
+  if (!cfg.ownerPub) return null;
+  const c = pubCache.get(cfg);
+  if (c && Date.now() - c.at < 600_000) return c.key;
+  let x = null; try { x = await cfg.ownerPub(); } catch { x = null; }
+  if (typeof x !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(x)) return c?.key || null;
+  const key = crypto.createPublicKey({key: {kty: 'OKP', crv: 'Ed25519', x}, format: 'jwk'});
+  pubCache.set(cfg, {key, at: Date.now()});
+  return key;
+}
+export const ownerDecisionMessage = ({consentId, decision, ts}) => `nexus-owner-decide-v1|${consentId}|${decision}|${ts}`;
+export function verifyOwnerDecision(pub, a) {
+  try { return crypto.verify(null, Buffer.from(ownerDecisionMessage(a)), pub, Buffer.from(a.sig, 'base64url')); } catch { return false; }
+}
+
+export function audit(cfg, entry) {
   try { fs.appendFileSync(cfg.auditFile, JSON.stringify({t: new Date().toISOString(), ...entry}) + '\n'); } catch { /* audit must not crash host */ }
 }
 

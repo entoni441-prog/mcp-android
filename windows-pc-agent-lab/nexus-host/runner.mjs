@@ -20,7 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import {spawn as nodeSpawn, execFile} from 'node:child_process';
+import {spawn as nodeSpawn, spawnSync, execFile} from 'node:child_process';
 import {requireCap} from './capabilities.mjs';
 import {redactSecrets} from './policy.mjs';
 
@@ -86,6 +86,22 @@ const R1 = {
   ipconfig: a => a.length === 1 && a[0] === '/flushdns', certutil: () => false,
 };
 
+/** Console output → text: UTF-8 when valid, otherwise the Windows OEM code page (detected once via chcp). Pure apart from the cached probe. */
+let oemLabel = null;
+export function oemCodepageLabel(platform = process.platform, probe = () => spawnSync('cmd.exe', ['/d', '/c', 'chcp'], {encoding: 'latin1', windowsHide: true, timeout: 5000}).stdout) {
+  if (oemLabel) return oemLabel;
+  let cp = null;
+  if (platform === 'win32') { try { cp = Number(/(\d{3,5})/.exec(String(probe()))?.[1]) || null; } catch {} }
+  const map = {866: 'ibm866', 1251: 'windows-1251', 1252: 'windows-1252', 1250: 'windows-1250', 65001: 'utf-8', 437: 'windows-1252', 850: 'windows-1252', 852: 'windows-1250'};
+  return (oemLabel = map[cp] || 'windows-1252');
+}
+export function decodeOutput(buf, label = null) {
+  let b = Buffer.from(buf);
+  while (b.length && (b[0] & 0xc0) === 0x80) b = b.subarray(1); // a cut tail may start inside a UTF-8 character
+  try { return new TextDecoder('utf-8', {fatal: true}).decode(b); } catch {}
+  try { return new TextDecoder(label || oemCodepageLabel()).decode(b); } catch { return b.toString('latin1'); }
+}
+
 /**
  * 0.6.1 (owner decision 04.11.2026): commands are autonomous, EXCEPT the owner list — irreversible deletion and
  * changes to Windows security — which need his tap on the Live View page. Pure, pattern based on the exact argv text:
@@ -108,6 +124,10 @@ export function ownerCommandRisk(exe, args = []) {
     return null;
   }
   if (['bcdedit', 'manage-bde', 'takeown', 'icacls'].includes(b)) return 'security_command';
+  // 0.6.1: the NEXUS gateway / Cloudflare account is the owner's security boundary (his approvals are signed there):
+  // deploying, rolling back, changing secrets or data with wrangler is on the owner list.
+  { const w = args.map(x => String(x).toLowerCase()); const i = b === 'wrangler' ? -1 : w.findIndex(x => /(^|[\\/])wrangler(\.cmd|\.js)?$/.test(x));
+    if (b === 'wrangler' || i >= 0) { const rest = w.slice(i + 1).join(' '); if (/\b(deploy|publish|rollback|secret|delete|login|logout)\b|\bversions\s+deploy\b|\b(kv|r2|d1|queues)\b.*\b(put|delete|execute|create)\b/.test(rest)) return 'security_command'; } }
   if (DESTRUCT_EXE.has(b)) return 'destructive_command';
   // Command text is only meaningful for programs that EXECUTE their arguments (shells, reg, net, netsh…); for others
   // (node script.mjs "a; rm -rf /") the arguments are data — scanning them would only produce false alarms.
@@ -190,7 +210,9 @@ export function createRunner({caps, cfg, consent = null, tasks = null, audit = (
     const max = limits().outKB * 1024;
     const child = spawnFn(res.file, [...res.pre, ...args], {cwd, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: process.env});
     rec.child = child;
-    const add = k => c => { rec[k] += String(c); if (rec[k].length > max) { rec[k] = rec[k].slice(-max); rec.truncated = true; } };
+    // 0.6.1 install fix: Windows PowerShell / cmd write in the OEM code page (cp866 on a Russian system), not UTF-8.
+    rec.outB = Buffer.alloc(0); rec.errB = Buffer.alloc(0);
+    const add = k => c => { let b = Buffer.concat([rec[k + 'B'], Buffer.from(c)]); if (b.length > max) { b = b.subarray(b.length - max); rec.truncated = true; } rec[k + 'B'] = b; rec[k] = decodeOutput(b); };
     child.stdout?.on('data', add('out')); child.stderr?.on('data', add('err'));
     const done = new Promise(resolveDone => {
       child.once('error', e => { rec.state = 'failed_to_start'; rec.err += String(e?.code || e?.message); rec.endedAt = new Date(now()).toISOString(); resolveDone(); });

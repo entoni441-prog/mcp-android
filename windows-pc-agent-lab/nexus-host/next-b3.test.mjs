@@ -1,5 +1,6 @@
 // NEXUS NEXT block 3: command classes, real command runner (spawn, no shell), consent for R3, deny list, STOP kills,
 // lease end does not, owner-approved plans (hash-bound, Host-side run, no repeat after restart), diagnostics, profile limits.
+import {withOwnerKey, signed} from './owner-key-helper.test.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -32,10 +33,12 @@ test('classifyCommand: R0/R1/R2/R3/deny table', () => {
   assert.equal(C('git', ['status', 'x\0']), 'deny');
 });
 
+// 0.6.1 install report: `rm` is not on PATH on a Windows without Git usr\\bin → use cmd del there
+const RM = process.platform === 'win32' ? {exe: 'cmd', args: ['/d', '/c', 'del', '/f', 'victim.txt']} : {exe: 'rm', args: ['-f', 'victim.txt']};
 function runtime(capsExtra = {}, deps = {}) {
   const home = fs.mkdtempSync(path.join(tmp, 'home-'));
   const cfg = loadConfig({NEXUS_HOME: home, NEXUS_TOKEN: 'x'.repeat(40), NEXUS_WORKSPACE: path.join(home, 'ws'),
-    NEXUS_CAPABILITIES_JSON: JSON.stringify({gui_input: true, live_view: true, commands: true, ...capsExtra})});
+    NEXUS_CAPABILITIES_JSON: JSON.stringify({gui_input: true, live_view: true, commands: true, ...capsExtra})}); withOwnerKey(cfg);
   fs.mkdirSync(cfg.workspace, {recursive: true});
   cfg.runtime = createRuntime(cfg, {guiDeps: {platform: 'win32', runUia: async () => ({})}, sessionDeps: {setIntervalFn: () => null}, ...deps});
   const call = async (name, args = {}) => {
@@ -58,16 +61,16 @@ test('run_command: real spawn without shell; R0-R3 autonomous (0.6.1); owner-lis
   assert.equal(r3.cls, 'R3'); assert.equal(r3.stdout.trim(), '42', '0.6.1: an ordinary R3 command runs without asking');
   // owner list (irreversible deletion / Windows security): waits for the owner's tap on /live; the model cannot approve
   fs.writeFileSync(path.join(cfg.workspace, 'victim.txt'), 'x');
-  const del = await call('run_command', {exe: 'rm', args: ['-f', 'victim.txt']});
+  const del = await call('run_command', RM);
   assert.equal(del.status, 'consent_required'); assert.equal(del.what, 'destructive_command'); assert.equal(del.approval, 'owner_phone');
   assert.match((await call('confirm_action', {consentId: del.consentId, decision: 'allow', target: del.target})).error, /owner_approval_pending/);
-  assert.equal((await call('owner_decide', {consentId: del.consentId, decision: 'allow'})).decision, 'allow');
+  assert.equal((await call('owner_decide', signed(del.consentId, 'allow'))).decision, 'allow');
   assert.equal(fs.existsSync(path.join(cfg.workspace, 'victim.txt')), true, 'nothing ran before the owner approved');
   assert.equal((await call('confirm_action', {consentId: del.consentId, decision: 'allow', target: del.target})).result.exitCode, 0);
   assert.equal(fs.existsSync(path.join(cfg.workspace, 'victim.txt')), false);
   fs.writeFileSync(path.join(cfg.workspace, 'victim.txt'), 'x');
-  const no = await call('run_command', {exe: 'rm', args: ['-f', 'victim.txt']});
-  await call('owner_decide', {consentId: no.consentId, decision: 'cancel'});
+  const no = await call('run_command', RM);
+  await call('owner_decide', signed(no.consentId, 'cancel'));
   assert.equal((await call('confirm_action', {consentId: no.consentId, decision: 'allow', target: no.target})).by, 'owner');
   assert.equal(fs.existsSync(path.join(cfg.workspace, 'victim.txt')), true, 'owner said no → nothing ran');
   assert.match((await call('run_command', {exe: 'powershell', args: ['-enc', 'QQ==']})).error, /command_denied: encoded_command/);

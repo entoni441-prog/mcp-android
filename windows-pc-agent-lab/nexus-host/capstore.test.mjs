@@ -1,4 +1,5 @@
 // NEXUS 0.4.1 — live permission switches: no restart, fail-safe on broken file, everything audited.
+import {withOwnerKey, signed} from './owner-key-helper.test.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -80,7 +81,7 @@ test('live view: modules see the new value without being recreated', () => {
 
 test('0.6.1 end to end over HTTP: owner ban by word is immediate; lifting it waits for the owner tap (/live), not the model', async () => {
   const home = path.join(tmp, 'e2e-home');
-  const cfg = loadConfig({NEXUS_HOME: home, NEXUS_WORKSPACE: path.join(tmp, 'e2e-ws'), NEXUS_PORT: '0'});
+  const cfg = loadConfig({NEXUS_HOME: home, NEXUS_WORKSPACE: path.join(tmp, 'e2e-ws'), NEXUS_PORT: '0'}); withOwnerKey(cfg);
   const server = createServer(cfg, {platform: 'linux'});
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${server.address().port}/mcp`;
@@ -102,7 +103,7 @@ test('0.6.1 end to end over HTTP: owner ban by word is immediate; lifting it wai
     // the owner's channel (gateway /live page) — same Host endpoint, names not in the model catalog
     const list = (await call('owner_consents', {})).structuredContent.pending;
     assert.deepEqual(list.map(x => [x.consentId, x.what]), [[ask.consentId, 'owner_unban']]);
-    assert.equal((await call('owner_decide', {consentId: ask.consentId, decision: 'allow'})).isError, false);
+    assert.equal((await call('owner_decide', signed(ask.consentId, 'allow'))).isError, false);
     const done = await call('confirm_action', {consentId: ask.consentId, decision: 'allow', target: ask.target});
     assert.equal(done.isError, false); assert.equal(done.structuredContent.result.enabled, true);
     assert.doesNotMatch((await call('keyboard_action', {keys: 'enter'})).content[0].text, /capability_disabled/);

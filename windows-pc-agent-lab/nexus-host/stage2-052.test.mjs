@@ -1,5 +1,6 @@
 // 0.5.2 stage 2 — policy wired into the runtime: N-01 discovery/open_app, A-02 Notepad rule, N-02 file guard,
 // N-09 redaction of tool results, new capability keys. Fake GUI / fake launcher, real files and real HTTP server.
+import {withOwnerKey, signed} from './owner-key-helper.test.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -130,7 +131,7 @@ test('server: protected file needs consent, then is returned redacted; search hi
   fs.writeFileSync(path.join(ws, '.env'), 'GITHUB_TOKEN=ghp_' + 'Z'.repeat(36) + '\nMODE=dev\n');
   fs.writeFileSync(path.join(ws, 'notes.txt'), 'deploy with api_key=abcd1234efgh please\n');
   fs.mkdirSync(path.join(ws, 'proj')); fs.writeFileSync(path.join(ws, 'proj', 'env-notes.md'), 'x');
-  const cfg = loadConfig({NEXUS_HOME: home, NEXUS_WORKSPACE: ws, NEXUS_PORT: '0'});
+  const cfg = loadConfig({NEXUS_HOME: home, NEXUS_WORKSPACE: ws, NEXUS_PORT: '0'}); withOwnerKey(cfg);
   const server = createServer(cfg, {platform: 'linux'});
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   const call = async (name, args) => (await (await fetch(`http://127.0.0.1:${server.address().port}/mcp`, {method: 'POST',
@@ -146,7 +147,7 @@ test('server: protected file needs consent, then is returned redacted; search hi
     const r = (await call('read_text', {path: '.env'})).structuredContent;
     assert.equal(r.status, 'consent_required'); assert.equal(r.approval, 'owner_phone', '0.6.1: secrets are on the owner list');
     assert.match((await call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target})).content[0].text, /owner_approval_pending/);
-    await call('owner_decide', {consentId: r.consentId, decision: 'allow'});
+    await call('owner_decide', signed(r.consentId, 'allow'));
     const c = (await call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target})).structuredContent;
     assert.match(c.result.text, /MODE=dev/);
     assert.ok(!JSON.stringify(c).includes('Z'.repeat(36)), 'token never leaves the host even with consent to read');

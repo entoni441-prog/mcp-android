@@ -55,7 +55,21 @@ test('/live/consents and /live/decide: session required; decide needs X-Nexus-Li
     assert.ok([400].includes((await handleDefault(withCookie('/live/decide', c, {method: 'POST', headers: {'x-nexus-live': '1'}, body: bad}), e, {fetcher: h.fetcher})).status), bad);
   const ok = await handleDefault(withCookie('/live/decide', c, {method: 'POST', headers: {'x-nexus-live': '1'}, body}), e, {fetcher: h.fetcher});
   assert.equal(ok.status, 200);
-  assert.deepEqual(h.calls.at(-1), {name: 'owner_decide', arguments: {consentId: 'a1b2c3d4e5f6', decision: 'allow'}});
+  const fwd = h.calls.at(-1);
+  assert.equal(fwd.name, 'owner_decide'); assert.deepEqual([fwd.arguments.consentId, fwd.arguments.decision], ['a1b2c3d4e5f6', 'allow']);
+  // the decision is signed with the gateway owner key; the Host verifies it with the public key from /owner-pub
+  const pub = await (await handleDefault(new Request(BASE + '/owner-pub'), e, {fetcher: h.fetcher})).json();
+  assert.equal(pub.alg, 'Ed25519'); assert.match(pub.x, /^[A-Za-z0-9_-]{43}$/);
+  const {createPublicKey, verify} = await import('node:crypto');
+  const key = createPublicKey({key: {kty: 'OKP', crv: 'Ed25519', x: pub.x}, format: 'jwk'});
+  const msg = `nexus-owner-decide-v1|${fwd.arguments.consentId}|${fwd.arguments.decision}|${fwd.arguments.ts}`;
+  assert.equal(verify(null, Buffer.from(msg), key, Buffer.from(fwd.arguments.sig, 'base64url')), true);
+  assert.equal(verify(null, Buffer.from(msg.replace('allow', 'cancel')), key, Buffer.from(fwd.arguments.sig, 'base64url')), false);
+  assert.equal((await (await handleDefault(new Request(BASE + '/owner-pub'), e, {fetcher: h.fetcher})).json()).x, pub.x, 'the key is stable');
+  // ⏻ OFF: session + CSRF header → live_control host_off
+  assert.equal((await handleDefault(withCookie('/live/off', c, {method: 'POST'}), e, {fetcher: h.fetcher})).status, 403);
+  assert.equal((await handleDefault(withCookie('/live/off', c, {method: 'POST', headers: {'x-nexus-live': '1'}}), e, {fetcher: h.fetcher})).status, 200);
+  assert.deepEqual(h.calls.at(-1), {name: 'live_control', arguments: {action: 'host_off'}});
   const page = await (await handleDefault(withCookie('/live', c), e, {fetcher: h.fetcher})).text();
   assert.match(page, /id="cq"/); assert.match(page, /\/live\/decide/); assert.match(page, /<title>NEXUS Live View<\/title>/);
 });

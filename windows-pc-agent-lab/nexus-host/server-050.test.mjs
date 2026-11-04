@@ -1,5 +1,6 @@
 // 0.5.0 safety + function tests: Live View gating/STOP/rate limit, app-access grants via consent, HARD_DENY,
 // inspect_ui redaction, scratch-token ownership, tunnel health verdicts, /healthz, trace ids. All without a desktop.
+import {withOwnerKey, signed} from './owner-key-helper.test.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -16,7 +17,7 @@ function host(capsJson = {}, extra = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-050-'));
   const home = path.join(tmp, 'h'); fs.mkdirSync(home, {recursive: true});
   fs.writeFileSync(path.join(home, 'capabilities.json'), JSON.stringify(capsJson));
-  const cfg = loadConfig({NEXUS_HOME: home, NEXUS_WORKSPACE: path.join(tmp, 'ws'), NEXUS_PORT: '0'});
+  const cfg = loadConfig({NEXUS_HOME: home, NEXUS_WORKSPACE: path.join(tmp, 'ws'), NEXUS_PORT: '0'}); withOwnerKey(cfg);
   const captures = [];
   const capture = async (w, q) => { captures.push([w, q]); await new Promise(r => setTimeout(r, 20)); return {jpeg: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), meta: {screenW: 1920, screenH: 1080, imageW: w, imageH: 540, cursorX: 10, cursorY: 20, ms: 5}}; };
   const server = createServer(cfg, {liveDeps: {capture, indicator: () => {}}, ...extra});
@@ -111,7 +112,7 @@ test('manage_app_access: owner block immediate; unblocking = owner tap on /live 
     assert.match((await h.call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target + ' '})).content[0].text, /consent_target_mismatch/);
     assert.match((await h.call('confirm_action', {consentId: r.consentId, decision: 'close_discard', target: r.target})).content[0].text, /invalid_args/);
     assert.match((await h.call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target})).content[0].text, /owner_approval_pending/);
-    assert.equal((await h.call('owner_decide', {consentId: r.consentId, decision: 'allow'})).isError, false);
+    assert.equal((await h.call('owner_decide', signed(r.consentId, 'allow'))).isError, false);
     const c = (await h.call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target})).structuredContent;
     assert.equal(c.confirmed, true); assert.ok(!c.result.blockedApps.includes('mspaint'));
     assert.match((await h.call('confirm_action', {consentId: r.consentId, decision: 'allow', target: r.target})).content[0].text, /consent_expired_or_unknown/);

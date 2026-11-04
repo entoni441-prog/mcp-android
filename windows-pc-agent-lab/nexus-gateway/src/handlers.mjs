@@ -8,7 +8,7 @@
  */
 import {TOOLS, PROTOCOL_VERSIONS, SERVER_INFO, LIVE_UI} from './catalog.mjs';
 import {WIDGET_RESOURCE, widgetContents} from './widget.mjs';
-import {handleLive} from './live-page.mjs';
+import {handleLive, ownerKey} from './live-page.mjs';
 
 const enc = new TextEncoder();
 // `wrangler secret put` fed from a PowerShell pipe may append CR/LF — normalise once.
@@ -51,6 +51,12 @@ export async function handleDefault(request, env, {fetcher = fetch} = {}) {
   if (url.pathname === '/health') return json(200, {ok: true, service: 'nexus-gateway'});
   if (url.pathname === '/tunnel') return handleTunnel(request, env);
   if (url.pathname === '/sentinel') return handleSentinel(request, env);
+  // 0.6.1: the Host verifies owner decisions with this PUBLIC key (the private one never leaves Cloudflare).
+  if (url.pathname === '/owner-pub' && request.method === 'GET') {
+    if (!env.OAUTH_KV) return new Response('Gateway not configured', {status: 503});
+    const {x} = await ownerKey(env);
+    return new Response(JSON.stringify({alg: 'Ed25519', x}), {status: 200, headers: {'content-type': 'application/json', 'cache-control': 'no-store'}});
+  }
   if (url.pathname === '/live' || url.pathname.startsWith('/live/')) return handleLive(request, env, {sha256hex, callHost: (name, args) => callHost(env, name, args, {fetcher})});
   if (url.pathname !== '/authorize') return new Response('Not found', {status: 404});
   const expected = secret(env.OWNER_PASSPHRASE_SHA256 || '').toLowerCase();

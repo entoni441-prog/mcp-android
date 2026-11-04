@@ -131,3 +131,58 @@ test('owner 04.11 ~10:04: sending/publishing runs on his instruction (no tap, jo
   assert.ok(log.some(e => e.event === 'auto_approved' && e.what === 'browser_outgoing' && e.target === 'отправить письмо'));
   assert.equal((await c.requestGrant({what: 'browser_irreversible', target: 'удалить', apply: () => 1})).approval, 'owner_phone');
 });
+
+test('0.6.1 fix: owner_decide counts only with the gateway signature — token-holding commands on the PC cannot approve', async () => {
+  const {loadConfig, handleRpc} = await import('./server.mjs');
+  const {withOwnerKey, signed, foreignKey} = await import('./owner-key-helper.test.mjs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-sig-'));
+  const cfg = loadConfig({NEXUS_HOME: home, NEXUS_WORKSPACE: path.join(home, 'ws'), NEXUS_PORT: '0', NEXUS_TOKEN: 'x'.repeat(40)});
+  const call = async (name, args) => { const r = await handleRpc({jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name, arguments: args}}, cfg);
+    return r.result.isError ? {error: r.result.content.map(c => c.text).join(' ')} : r.result.structuredContent; };
+  const ask = await call('set_capability', {capability: 'power', enabled: false}).then(() => call('set_capability', {capability: 'power', enabled: true}));
+  assert.equal(ask.what, 'owner_unban');
+  assert.match((await call('owner_decide', {consentId: ask.consentId, decision: 'allow'})).error, /invalid_args/, 'unsigned');
+  assert.match((await call('owner_decide', signed(ask.consentId, 'allow'))).error, /owner_channel_not_configured/, 'no gateway key → fail closed');
+  withOwnerKey(cfg);
+  assert.match((await call('owner_decide', signed(ask.consentId, 'allow', Date.now(), foreignKey))).error, /owner_signature_invalid/, 'forged');
+  assert.match((await call('owner_decide', signed(ask.consentId, 'allow', Date.now() - 300_000))).error, /owner_signature_expired/, 'replayed later');
+  const s = signed(ask.consentId, 'allow');
+  assert.match((await call('owner_decide', {...s, decision: 'cancel'})).error, /owner_signature_invalid/, 'decision changed after signing');
+  assert.equal((await call('owner_decide', s)).decision, 'allow');
+  assert.equal((await call('confirm_action', {consentId: ask.consentId, decision: 'allow', target: ask.target})).result.enabled, true);
+  assert.match(fs.readFileSync(cfg.auditFile, 'utf8'), /owner_signature_invalid/);
+  cfg.runtime?.stop();
+});
+
+test('0.6.1 fix: tunnel → HTTP/2 after repeated QUIC trouble; backoff; supervisor restarts a dead Host, respects host-off', async () => {
+  const {shouldUseHttp2, tunnelBackoffMs} = await import('./nexus.mjs');
+  const {superviseStep, restartBackoffMs} = await import('./nexus-supervisor.mjs');
+  const t = s => new Date(Date.now() - s * 1000).toISOString();
+  const ev = (s, msg) => ({t: t(s), kind: 'cloudflared', msg});
+  const q = 'ERR Serve tunnel error error="accept stream listener error: failed to accept QUIC stream: timeout: no recent network activity"';
+  assert.equal(shouldUseHttp2([ev(10, q), ev(20, q), ev(30, q)]), false);
+  assert.equal(shouldUseHttp2([ev(10, q), ev(20, q), ev(30, q), ev(40, 'ERR Failed to dial a quic connection error="failed to dial to edge with quic: timeout"')]), true);
+  assert.equal(shouldUseHttp2([ev(10, q), ev(20, q), ev(30, q), ev(3600, q)]), false, 'old events do not count');
+  assert.deepEqual([0, 1, 5, 9].map(tunnelBackoffMs), [2000, 4000, 60000, 60000]);
+  assert.deepEqual([0, 1, 2, 9].map(restartBackoffMs), [30000, 60000, 120000, 300000]);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-sup-'));
+  let up = false, starts = 0, kills = [], now = 1_000_000;
+  const deps = () => ({home, healthy: async () => up, startHost: () => { starts++; }, killPid: p => kills.push(p), now});
+  const st = {};
+  assert.equal(await superviseStep(st, deps()), 'miss', 'one miss is tolerated');
+  assert.equal(await superviseStep(st, deps()), 'restarted'); assert.equal(starts, 1);
+  fs.writeFileSync(path.join(home, 'host.pid'), JSON.stringify({pid: process.pid}));
+  now += 5000; await superviseStep(st, deps()); assert.equal(await superviseStep(st, deps()), 'backoff', 'no restart storm');
+  now += 61_000; assert.equal(await superviseStep(st, deps()), 'restarted'); assert.deepEqual(kills, [process.pid], 'a hung Host (pid alive, no /healthz) is killed first');
+  fs.writeFileSync(path.join(home, 'host-off'), '{}');
+  assert.equal(await superviseStep(st, deps()), 'off'); assert.equal(starts, 2, 'the owner turned NEXUS off → never restarted');
+  up = true; fs.rmSync(path.join(home, 'host-off'));
+  assert.equal(await superviseStep(st, deps()), 'ok');
+});
+
+test('0.6.1 fix: Windows console output decoded (cp866 Russian date is readable)', async () => {
+  const {decodeOutput} = await import('./runner.mjs');
+  assert.equal(decodeOutput(Buffer.from([0x34, 0x20, 0xad, 0xae, 0xef, 0xa1, 0xe0, 0xef]), 'ibm866'), '4 ноября');
+  assert.equal(decodeOutput(Buffer.from('UTF-8 тест')), 'UTF-8 тест');
+  assert.equal(decodeOutput(Buffer.concat([Buffer.from([0xd0]).subarray(0, 0), Buffer.from('тест').subarray(1)])), 'ест', 'a cut first character is dropped, not garbled');
+});

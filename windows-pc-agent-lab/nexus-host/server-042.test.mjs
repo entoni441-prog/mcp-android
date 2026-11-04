@@ -1,4 +1,5 @@
 // 0.4.2 over HTTP: consent_required → confirm_action replay; target echo; host_diagnostics; audit.
+import {withOwnerKey, signed} from './owner-key-helper.test.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +10,7 @@ import {sanitize} from './nexus.mjs';
 
 test('process close of a non-NEXUS app → owner tap on /live (0.6.1) → confirm_action executes exactly once; audit trail', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-042-'));
-  const cfg = loadConfig({NEXUS_HOME: path.join(tmp, 'h'), NEXUS_WORKSPACE: path.join(tmp, 'ws'), NEXUS_PORT: '0', NEXUS_CAPABILITIES_JSON: JSON.stringify({process_control: true})});
+  const cfg = loadConfig({NEXUS_HOME: path.join(tmp, 'h'), NEXUS_WORKSPACE: path.join(tmp, 'ws'), NEXUS_PORT: '0', NEXUS_CAPABILITIES_JSON: JSON.stringify({process_control: true})}); withOwnerKey(cfg);
   const kills = [];
   const exec = async (exe, args) => { if (args[0] === '/pid') kills.push(args); return {code: 0, out: '"Notepad.exe","4242","Console","1","10 K"'}; };
   const server = createServer(cfg, {procsDeps: {platform: 'win32', systemRoot: 'C:\\Windows', exec}});
@@ -26,7 +27,7 @@ test('process close of a non-NEXUS app → owner tap on /live (0.6.1) → confir
     assert.equal(r.approval, 'owner_phone'); // the owner's unsaved data may be lost → only his tap approves
     assert.match((await call('confirm_action', {consentId: r.consentId, decision: 'close_discard', target: r.target})).content[0].text, /owner_approval_pending/);
     assert.equal(kills.length, 0);
-    assert.equal((await call('owner_decide', {consentId: r.consentId, decision: 'close_discard'})).isError, false);
+    assert.equal((await call('owner_decide', signed(r.consentId, 'close_discard'))).isError, false);
     assert.match((await call('confirm_action', {consentId: r.consentId, decision: 'close_save', target: r.target})).content[0].text, /owner_decision_mismatch/);
     const c = (await call('confirm_action', {consentId: r.consentId, decision: 'close_discard', target: r.target})).structuredContent;
     assert.equal(c.confirmed, true); assert.equal(c.result.requested, true);
