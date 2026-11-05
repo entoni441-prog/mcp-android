@@ -67,14 +67,21 @@ export function classifyClick(action, at) {
   if (CLOSE_RE.test(name) || TAB_CLOSE_RE.test(name) || CLOSE_IDS.test(id || '')) {
     const tabClose = TAB_CLOSE_RE.test(name) || (!!at.tab && controlType === 'Button');
     if (tabClose) return {kind: 'tab', via: 'click:' + (name || id)};
-    // NX-052-13: a native Edge translation bubble is a local dismissal.
-    // A generic Pane parent alone is ambiguous and must stay gated.
-    const bubble = at.parent;
-    if (controlType === 'Button' && /^(?:close|закрыть)$/i.test(name || '') &&
-        /^msedge$/i.test(at.process || '') && at.window?.className === 'Chrome_WidgetWin_1' &&
-        at.parentType === 'Pane' && bubble?.className === 'Chrome_WidgetWin_1' &&
-        bubble.hwnd && at.window.hwnd && String(bubble.hwnd) !== String(at.window.hwnd) &&
-        /^(?:Перевести страницу с .+\?|Translate (?:this )?page(?: from .+)?\?)$/i.test(bubble.name || '') && !at.dialog) {
+    // NX-13: only a Win32-verified, same-process Edge Translate popup is a local dismissal.
+    // UIA text or ancestry alone must never authorize closing an owner window.
+    const bubble = at.nativeBubble;
+    const main = Number(at.window?.hwnd), popup = Number(bubble?.hwnd);
+    if (action === 'click' && controlType === 'Button' && at.elem.className === 'ImageButton' &&
+        /^(?:close|закрыть)$/i.test(name || '') && /^msedge$/i.test(at.process || '') &&
+        at.window?.className === 'Chrome_WidgetWin_1' && !at.dialog &&
+        bubble?.verified === true && bubble.reason === 'edge_translate_win32_owner_verified' &&
+        Number.isSafeInteger(main) && main > 0 && Number.isSafeInteger(popup) && popup > 0 && popup !== main &&
+        Number.isInteger(bubble.depth) && bubble.depth >= 1 && bubble.depth <= 6 &&
+        bubble.className === 'Chrome_WidgetWin_1' &&
+        Number(bubble.mainHwnd) === main && Number(bubble.ownerHwnd) === main &&
+        Number(bubble.rootOwnerHwnd) === main && Number(bubble.pid) === Number(at.pid) &&
+        Number(bubble.mainPid) === Number(at.pid) &&
+        /^(?:Перевести страницу с .+\?|Translate (?:this )?page(?: from .+)?\?)$/i.test(bubble.name || '')) {
       return null;
     }
     return {kind: 'window', via: 'click:' + (name || id)};
@@ -127,6 +134,10 @@ export function createConsent({audit = () => {}, now = () => Date.now(), journal
 
   return {
     owned,
+    noteNativeDismiss: bubble => {
+      audit({event: 'native_popup_dismissed', reason: 'edge_translate_win32_owner_verified',
+        popupHwnd: bubble.hwnd, mainHwnd: bubble.mainHwnd, ownerHwnd: bubble.ownerHwnd, pid: bubble.pid});
+    },
     /**
      * Record windows/tabs that appeared between two snapshots (open_app, ctrl+n, ctrl+t…). FAIL-CLOSED (0.4.3):
      *  - before === null (snapshot failed) → nothing is owned;

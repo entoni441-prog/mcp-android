@@ -260,18 +260,48 @@ test('0.4.3: warm ctrl+shift+n new window with one new tab is owned', () => {
 });
 
 
-test('NX-052-13: native Edge translation bubble dismisses locally; ambiguous Close stays gated', () => {
-  const at = {process: 'msedge', elem: {controlType: 'Button', name: 'Закрыть'},
-    window: {hwnd: 10, className: 'Chrome_WidgetWin_1'}, parentType: 'Pane',
-    parent: {hwnd: 20, className: 'Chrome_WidgetWin_1', name: 'Перевести страницу с немецкий?'}};
-  assert.equal(classifyClick('click', at), null);
-  for (const change of [{parent: null}, {parent: {...at.parent, hwnd: 10}},
-    {parent: {...at.parent, hwnd: 0}}, {parent: {...at.parent, name: 'Document'}},
-    {process: 'notepad'}, {dialog: {modal: true}}, {elem: {...at.elem, name: 'Close window'}}]) {
-    assert.equal(classifyClick('click', {...at, ...change}).kind, 'window');
-  }
-  const c = createConsent(); c.ownPid(7);
-  assert.equal(c.isOwned({kind: 'window'}, {pid: 7, hwnd: 99, tabs: []}), false);
-  c.owned.windows.add('99');
-  assert.equal(c.isOwned({kind: 'window'}, {pid: 7, hwnd: 99, tabs: [{rid: 'owner'}]}), false);
+// Real UIA chain captured on Windows in NEXUS-NX13-EDGE-UIA-CHAIN-20261105.md (7b1e9d6).
+const nx13PopupChain = [['Button','ImageButton','Закрыть',0],['Pane','BubbleFrameView','',0],
+  ['Pane','NonClientView','',0],['Text','RootView','Перевести страницу с французский?',0],
+  ['Pane','Chrome_WidgetWin_1','Перевести страницу с французский?',199162],
+  ['Pane','BrowserRootView','',0],['Window','Chrome_WidgetWin_1','Wikipedia',461222]];
+const nx13MainCloseChain = [['Button','EdgeWindowsCaptionButton','Закрыть',0],
+  ['Pane','BrowserCaptionButtonContainer','',0],['Pane','EdgeBrowserFrameViewWin','',0],
+  ['Pane','NonClientView','',0],['Pane','BrowserRootView','',0],
+  ['Window','Chrome_WidgetWin_1','Wikipedia',461222]];
+const nx13At=()=>({pid:18972,process:'msedge',
+  elem:{controlType:'Button',className:'ImageButton',name:'Закрыть',id:''},
+  window:{pid:18972,hwnd:461222,className:'Chrome_WidgetWin_1'},
+  nativeBubble:{verified:true,reason:'edge_translate_win32_owner_verified',
+    depth:4,hwnd:199162,mainHwnd:461222,ownerHwnd:461222,rootOwnerHwnd:461222,
+    pid:18972,mainPid:18972,className:'Chrome_WidgetWin_1',name:'Перевести страницу с французский?'}});
+test('NX-052-13: real nested Edge Translate bubble dismisses locally; flat case retained',()=>{
+  assert.equal(nx13PopupChain.find(x=>x[3]>0)[3],199162);
+  assert.equal(nx13PopupChain.at(-1)[3],461222);
+  assert.equal(classifyClick('click',nx13At()),null);
+  const flat=nx13At();flat.nativeBubble.depth=1;assert.equal(classifyClick('click',flat),null);
+  assert.equal(classifyClick('double_click',nx13At())?.kind,'window');
+});
+test('NX-052-13: owner window close and every failed ownership proof require consent',()=>{
+  const main=nx13At();main.elem.className=nx13MainCloseChain[0][1];main.elem.id='view_7';
+  assert.equal(classifyClick('click',main)?.kind,'window');
+  const cases={
+    missingProof:x=>{delete x.nativeBubble;},otherOwner:x=>{x.nativeBubble.ownerHwnd=999;},
+    otherRootOwner:x=>{x.nativeBubble.rootOwnerHwnd=999;},otherPid:x=>{x.nativeBubble.pid=1;},
+    otherMainPid:x=>{x.nativeBubble.mainPid=1;},otherUIAPid:x=>{x.pid=1;},
+    otherName:x=>{x.nativeBubble.name='Document';},popupIsMain:x=>{x.nativeBubble.hwnd=461222;},
+    missingOwner:x=>{x.nativeBubble.ownerHwnd=0;},tooDeep:x=>{x.nativeBubble.depth=7;},
+    failedWin32:x=>{x.nativeBubble.verified=false;},otherClass:x=>{x.nativeBubble.className='Pane';},
+    otherButton:x=>{x.elem.className='Button';},otherProcess:x=>{x.process='notepad';},
+    modal:x=>{x.dialog={modal:true};}
+  };
+  for(const [name,mutate] of Object.entries(cases)){const x=nx13At();mutate(x);assert.equal(classifyClick('click',x)?.kind,'window',name);}
+});
+test('NX-052-13: local dismiss audits popup and owner HWND, never claims main window',()=>{
+  const events=[],c=createConsent({audit:e=>events.push(e)});
+  c.noteNativeDismiss(nx13At().nativeBubble);
+  const e=events.find(x=>x.event==='native_popup_dismissed');
+  assert.deepEqual([e.popupHwnd,e.mainHwnd,e.ownerHwnd,e.reason],
+    [199162,461222,461222,'edge_translate_win32_owner_verified']);
+  assert.equal(c.owned.windows.has('461222'),false);
 });

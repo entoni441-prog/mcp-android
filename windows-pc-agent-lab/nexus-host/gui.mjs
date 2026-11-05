@@ -715,6 +715,10 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       const cmd = {move: `move ${args.x} ${args.y}`, click: `click ${args.x} ${args.y} left 1`, double_click: `click ${args.x} ${args.y} left 2`,
         right_click: `click ${args.x} ${args.y} right 1`, scroll: `scroll ${args.x} ${args.y} ${args.amount}`, drag: `drag ${args.x} ${args.y} ${args.x2} ${args.y2}`}[args.action];
       await R.cmd(cmd);
+      if (args.action === 'click' && c === null && lastAt?.nativeBubble?.verified === true &&
+          lastAt.elem?.className === 'ImageButton' && /^(?:Закрыть|Close)$/i.test(lastAt.elem?.name || '')) {
+        consent.noteNativeDismiss?.(lastAt.nativeBubble);
+      }
       if (c && consented && decision === 'close_discard') consent.armDiscard(lastAt.window?.hwnd);
       const after = await uia({mode: 'focused'});
       await afterInput(after.focused);
