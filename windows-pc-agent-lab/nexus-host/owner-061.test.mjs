@@ -186,3 +186,25 @@ test('0.6.1 fix: Windows console output decoded (cp866 Russian date is readable)
   assert.equal(decodeOutput(Buffer.from('UTF-8 тест')), 'UTF-8 тест');
   assert.equal(decodeOutput(Buffer.concat([Buffer.from([0xd0]).subarray(0, 0), Buffer.from('тест').subarray(1)])), 'ест', 'a cut first character is dropped, not garbled');
 });
+
+test('0.6.1c: supervisor/Host are started through a launcher (no PID-tree link); the launcher only starts NEXUS scripts', async () => {
+  const {launchDetached, runSpawnSpec, ensureSupervisor} = await import('./nexus-supervisor.mjs');
+  const calls = [];
+  const fake = (cmd, args, opts) => { calls.push({cmd, args, opts}); return {pid: 4242, unref() {}}; };
+  assert.equal(launchDetached({script: 'nexus.mjs', env: {NEXUS_SUPERVISED: '1'}, spawnFn: fake}), 4242);
+  assert.deepEqual([path.basename(calls[0].args[0]), calls[0].args[1]], ['nexus-supervisor.mjs', '--spawn']);
+  assert.equal(calls[0].opts.detached, true); assert.equal(calls[0].opts.windowsHide, true);
+  assert.throws(() => launchDetached({script: 'evil.mjs', spawnFn: fake}), /not_launchable/);
+  // the launcher body starts exactly the NEXUS script, detached + hidden; foreign env keys and scripts are refused
+  const pid = runSpawnSpec(calls[0].args[2], {spawnFn: fake});
+  assert.equal(pid, 4242);
+  const g = calls[1];
+  assert.equal(path.basename(g.args[0]), 'nexus.mjs'); assert.equal(g.opts.detached, true); assert.equal(g.opts.env.NEXUS_SUPERVISED, '1');
+  const bad = s => Buffer.from(JSON.stringify(s)).toString('base64url');
+  assert.throws(() => runSpawnSpec(bad({script: 'C:/x/run.mjs', args: []}), {spawnFn: fake}), /bad_spec/);
+  runSpawnSpec(bad({script: 'nexus.mjs', args: [], env: {PATH: 'C:/evil', NEXUS_PORT: '9'}}), {spawnFn: fake});
+  assert.notEqual(calls.at(-1).opts.env.PATH, 'C:/evil'); assert.equal(calls.at(-1).opts.env.NEXUS_PORT, '9');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-061c-'));
+  const r = ensureSupervisor({home, spawnFn: fake});
+  assert.equal(r.started, true); assert.equal(path.basename(calls.at(-1).args[0]), 'nexus-supervisor.mjs'); assert.equal(calls.at(-1).args[1], '--spawn');
+});

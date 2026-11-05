@@ -23,8 +23,8 @@ da33f1f781a60af381190389f4acf3bda59d3f0d40e8f43fb4f34c6b6a778588  windows-pc-age
 e9e8cb9567553d747ddf692004e2513d0be860cd194a78a70d1c9f68059e5399  windows-pc-agent-lab/nexus-host/lifecycle.mjs
 06395581b00bb6ec25cad347aeaed448c35402113ec2d826ebc6cd5e0b31ecc3  windows-pc-agent-lab/nexus-host/live.mjs
 c556f01cd9a6831236d7119c2747d1c71f5c9f85d1f7e674b1b9eea829e8b8b1  windows-pc-agent-lab/nexus-host/nexus-profile.mjs
-bbc030edb6f369da669a72b1f21ac69825f408dcdb8fa902e5a705d80b619b53  windows-pc-agent-lab/nexus-host/nexus-supervisor.mjs
-99823950942061f3c4abb661c77e1d70eadafd3ff7b51fab4ffb42a7dfe40911  windows-pc-agent-lab/nexus-host/nexus.mjs
+74077cc0d41f406d923ac44305f45e90ba5e5c3241adad71f07486a86e482087  windows-pc-agent-lab/nexus-host/nexus-supervisor.mjs
+4a6b7132aa46d2f8b267857aea2194a13a47138cc653a1a8facca25b857ac6e8  windows-pc-agent-lab/nexus-host/nexus.mjs
 cee644bedba206295ef40140ed3d2da49884348e2f1d1b488f3796ff032c9a0a  windows-pc-agent-lab/nexus-host/policy.mjs
 c5bed052c8de2eeac6c5fd5ed3286dffc730a24f633b86aff4e254a0c0930cec  windows-pc-agent-lab/nexus-host/power.mjs
 2d77bf02243f8cc8e6f01698e3ed9bf4e9d6c0711918e9aa8ffaea87dcebb3bc  windows-pc-agent-lab/nexus-host/procs.mjs

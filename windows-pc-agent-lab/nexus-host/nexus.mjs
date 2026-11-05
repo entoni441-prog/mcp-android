@@ -128,7 +128,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   // Idempotent re-registration every 10 min: heals a lost/overwritten gateway entry without restart.
   setInterval(() => { if (tunnelUrl && !stopping) register('refresh'); }, 10 * 60_000).unref();
   // The Host keeps its supervisor alive (and the supervisor keeps the Host alive).
-  const sup = () => { if (stopping || fs.existsSync(offFile)) return; try { const r = ensureSupervisor({home: cfg.home, port: cfg.port}); if (r.started) note('supervisor_started', String(r.pid)); } catch (e) { note('supervisor_failed', e.message); } };
+  const sup = () => { if (stopping || fs.existsSync(offFile)) return; try { const r = ensureSupervisor({home: cfg.home, port: cfg.port}); if (r.started) note('supervisor_started', 'launcher ' + r.launcherPid); } catch (e) { note('supervisor_failed', e.message); } };
   setTimeout(sup, 5000).unref(); setInterval(sup, 60_000).unref();
 
   async function stop(code = 0) {

@@ -82,6 +82,11 @@ jobs:
         timeout-minutes: 8
         env: {NEXUS_REAL_GUI: '1'}
         run: node --test-reporter=spec windows-pc-agent-lab/nexus-host/windows-061-real.test.mjs
+      - name: Real Windows — 0.6.1c supervisor survives a tree kill of its starter
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        env: {NEXUS_REAL_GUI: '1'}
+        run: node --test-reporter=spec windows-pc-agent-lab/nexus-host/windows-061c-real.test.mjs
       - name: Real Windows desktop — windows
         if: runner.os == 'Windows'
         timeout-minutes: 8

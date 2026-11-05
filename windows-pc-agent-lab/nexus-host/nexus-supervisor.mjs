@@ -10,6 +10,11 @@
  * 30 s → 1 → 2 → 5 min and reset after 10 min of health; one daemon at a time (supervisor.pid); every action is a
  * line in tunnel.log (kind "supervisor"). The owner's sticky STOP lives in owner-stop.json and survives restarts.
  * Detached + windowsHide: no console window appears. Nothing here needs administrator rights.
+ *
+ * 0.6.1c (install 05.11, C.5): on Windows a `detached` child still records its creator as ParentProcessId, so
+ * `taskkill /pid <host> /t /f` killed the supervisor too (and vice versa) → nothing left to restart. Every start now goes
+ * through a short-lived launcher (`--spawn`): it starts the real process and exits at once, so the two are never in
+ * one PID tree and a tree kill of one leaves the other alive.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -27,10 +32,34 @@ export function ensureSupervisor({home, port = 8765, spawnFn = spawn, node = pro
   const cur = readJson(path.join(home, 'supervisor.pid'));
   if (cur && pidAlive(cur.pid)) return {started: false, pid: cur.pid};
   if (fs.existsSync(path.join(home, 'host-off'))) return {started: false, off: true};
-  const c = spawnFn(node, [path.join(HERE, 'nexus-supervisor.mjs'), '--daemon'], {detached: true, windowsHide: true, stdio: 'ignore',
-    env: {...process.env, NEXUS_HOME: home, NEXUS_PORT: String(port)}});
+  const launcher = launchDetached({script: 'nexus-supervisor.mjs', args: ['--daemon'], env: {NEXUS_HOME: home, NEXUS_PORT: String(port)}, spawnFn, node});
+  return {started: true, launcherPid: launcher};
+}
+
+/** The only scripts the launcher may start (it is not a general-purpose runner). */
+export const LAUNCHABLE = Object.freeze(['nexus.mjs', 'nexus-supervisor.mjs']);
+/**
+ * Start `node <script> ...args` with NO parent link to the caller: a launcher process starts it and exits immediately
+ * (the grandchild's ParentProcessId then points to a dead process, outside the caller's tree). Returns the launcher pid.
+ */
+export function launchDetached({script, args = [], env = {}, out = null, node = process.execPath, spawnFn = spawn}) {
+  if (!LAUNCHABLE.includes(script)) throw Error('not_launchable');
+  const spec = Buffer.from(JSON.stringify({script, args, env, out})).toString('base64url');
+  const c = spawnFn(node, [path.join(HERE, 'nexus-supervisor.mjs'), '--spawn', spec], {detached: true, windowsHide: true, stdio: 'ignore', env: {...process.env}});
   c.unref?.();
-  return {started: true, pid: c.pid};
+  return c.pid;
+}
+/** Launcher body: validate the spec, start the grandchild detached + hidden, exit. Returns the grandchild pid. */
+export function runSpawnSpec(specB64, {spawnFn = spawn, node = process.execPath} = {}) {
+  const spec = JSON.parse(Buffer.from(String(specB64), 'base64url').toString('utf8'));
+  if (!LAUNCHABLE.includes(spec.script) || !Array.isArray(spec.args) || !spec.args.every(a => typeof a === 'string')) throw Error('bad_spec');
+  const env = {...process.env};
+  for (const [k, v] of Object.entries(spec.env || {})) if (/^NEXUS_[A-Z_]+$/.test(k) && typeof v === 'string') env[k] = v;
+  let stdio = 'ignore';
+  if (typeof spec.out === 'string' && path.basename(spec.out) === 'host-console.log') { const fd = fs.openSync(spec.out, 'a'); stdio = ['ignore', fd, fd]; }
+  const c = spawnFn(node, [path.join(HERE, spec.script), ...spec.args], {cwd: HERE, detached: true, windowsHide: true, stdio, env});
+  c.unref?.();
+  return c.pid;
 }
 
 /** One supervision step (pure apart from the injected effects) — exported for tests. */
@@ -58,6 +87,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   fs.mkdirSync(home, {recursive: true});
   const log = path.join(home, 'tunnel.log');
   const note = (kind, msg) => { try { fs.appendFileSync(log, JSON.stringify({t: new Date().toISOString(), kind, msg: String(msg).slice(0, 300)}) + '\n'); } catch {} };
+  if (process.argv[2] === '--spawn') { try { runSpawnSpec(process.argv[3]); } catch (e) { note('supervisor', 'launcher: ' + e.message); process.exit(1); } process.exit(0); }
   if (!process.argv.includes('--daemon')) {
     const r = ensureSupervisor({home, port});
     console.log(r.started ? `NEXUS supervisor started (pid ${r.pid}).` : r.off ? 'NEXUS is turned off (host-off) - supervisor not started.' : `NEXUS supervisor already running (pid ${r.pid}).`);
@@ -69,12 +99,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   fs.writeFileSync(pidFile, JSON.stringify({pid: process.pid, startedAt: new Date().toISOString()}));
   note('supervisor', `daemon up (pid ${process.pid})`);
   const healthy = async () => { try { const r = await fetch(`http://127.0.0.1:${port}/healthz`, {signal: AbortSignal.timeout(5000)}); return r.ok; } catch { return false; } };
-  const startHost = () => {
-    const out = fs.openSync(path.join(home, 'host-console.log'), 'a');
-    const c = spawn(process.execPath, [path.join(HERE, 'nexus.mjs')], {cwd: HERE, detached: true, windowsHide: true, stdio: ['ignore', out, out],
-      env: {...process.env, NEXUS_SUPERVISED: '1'}});
-    c.unref();
-  };
+  const startHost = () => launchDetached({script: 'nexus.mjs', env: {NEXUS_SUPERVISED: '1'}, out: path.join(home, 'host-console.log')});
   const killPid = pid => {
     if (process.platform === 'win32') spawnSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'), ['/pid', String(pid), '/t', '/f'], {windowsHide: true});
     else { try { process.kill(pid, 'SIGKILL'); } catch {} }
