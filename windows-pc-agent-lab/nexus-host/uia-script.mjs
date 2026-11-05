@@ -42,14 +42,38 @@ function NxFocused() {
   $th = 0; if ($null -ne $top) { $th = [int64]$top.Current.NativeWindowHandle }
   return @{ ok = $true; pid = $fpid; process = (NxPName $fpid); topHwnd = $th }
 }
+# NX-052-21: Steam UI belongs to steamwebhelper. Accept only a live, same-session,
+# creation-time-ordered parent chain to a live Steam root. Unknown ancestry adds nothing.
+function NxSteamFamily($rootId) {
+  $ids = @($rootId)
+  try {
+    $rows = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.Name -in @('steam.exe', 'steamwebhelper.exe') })
+    $root = $rows | Where-Object { $_.ProcessId -eq $rootId -and $_.Name -eq 'steam.exe' } | Select-Object -First 1
+    if ($null -eq $root -or $null -eq $root.CreationDate) { return $ids }
+    for ($depth = 0; $depth -lt 12; $depth++) {
+      $added = $false
+      foreach ($row in $rows) {
+        if ($row.Name -ne 'steamwebhelper.exe' -or $row.ProcessId -in $ids -or $row.ParentProcessId -notin $ids -or $row.SessionId -ne $root.SessionId) { continue }
+        $parent = $rows | Where-Object { $_.ProcessId -eq $row.ParentProcessId } | Select-Object -First 1
+        if ($null -ne $row.CreationDate -and $null -ne $parent.CreationDate -and $row.CreationDate -ge $parent.CreationDate) {
+          $ids += $row.ProcessId; $added = $true
+        }
+      }
+      if (-not $added) { break }
+    }
+  } catch { }
+  return $ids
+}
 function NxTopWindows($procId) {
+  $family = @($procId)
+  if ((NxPName $procId) -ieq 'steam') { $family = @(NxSteamFamily $procId) }
   $out = New-Object System.Collections.ArrayList
   $c = $TW.GetFirstChild($AE::RootElement)
   $n = 0
   while ($null -ne $c -and $n -lt 400) {
     $n++
     $cpid = $c.Current.ProcessId
-    if ($cpid -eq $procId) { [void]$out.Add($c) }
+    if ($cpid -in $family) { [void]$out.Add($c) }
     elseif ((NxPName $cpid) -eq 'ApplicationFrameHost') {
       $k = $TW.GetFirstChild($c); $m = 0
       while ($null -ne $k -and $m -lt 50) { $m++; if ($k.Current.ProcessId -eq $procId) { [void]$out.Add($c); break }; $k = $TW.GetNextSibling($k) }
@@ -238,12 +262,22 @@ switch ($a.mode) {
   }
   'apps' {
     $want = ([string]$a.name).ToLowerInvariant()
+    $family = @(); $familyRoots = @{}
+    if ($want -eq 'steam') {
+      foreach ($sp in @(Get-Process -Name steam -ErrorAction SilentlyContinue)) {
+        foreach ($member in @(NxSteamFamily $sp.Id)) { $family += $member; $familyRoots[[string]$member] = $sp.Id }
+      }
+    }
     $out = New-Object System.Collections.ArrayList
     $c = $TW.GetFirstChild($AE::RootElement); $n = 0
     while ($null -ne $c -and $n -lt 400) {
       $n++
       $pn = (NxPName $c.Current.ProcessId).ToLowerInvariant()
-      if ($pn -eq $want) { [void]$out.Add((NxWin $c)) }
+      if ($pn -eq $want -or $c.Current.ProcessId -in $family) {
+        $w = NxWin $c
+        if ($want -eq 'steam' -and $familyRoots.ContainsKey([string]$c.Current.ProcessId)) { $w.launchRootPid = $familyRoots[[string]$c.Current.ProcessId] }
+        [void]$out.Add($w)
+      }
       elseif ($pn -eq 'applicationframehost') {
         $k = $TW.GetFirstChild($c); $m = 0
         while ($null -ne $k -and $m -lt 50) {
