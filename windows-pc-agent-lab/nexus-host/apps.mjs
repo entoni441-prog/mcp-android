@@ -56,7 +56,14 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
         if (!opts.token || JSON.stringify(after).includes(opts.token)) break;
       }
     }
-    return consent.recordCreated(before, after, source, opts);
+    const created = consent.recordCreated(before, after, source, opts);
+    // NX-052-21: register the exact launcher only after a verified owned descendant window.
+    // No process-name inference; failed snapshots / restored tabs keep 0.4.3 fail-closed ownership.
+    if (proc.toLowerCase() === 'steam' && Array.isArray(before) && before.length === 0 && Number.isInteger(opts.launchPid) &&
+        Array.isArray(after) && after.some(w => w.launchRootPid === opts.launchPid && consent.owned.windows.has(String(w.hwnd)))) {
+      consent.ownPid(opts.launchPid);
+    }
+    return created;
   }
 
   function launch(exe, args) {
@@ -165,7 +172,8 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
       const proc = path.win32.basename(exe).replace(/\.exe$/i, '');
       const before = await gui.snapshotApp(proc);
       const pid = await launch(exe, []);
-      return {started: true, app: args.app, via, pid, createdByNexus: await settle(proc, before, {}, 'open_app:' + args.app),
+      const created = await settle(proc, before, {launchPid: pid}, 'open_app:' + args.app);
+      return {started: true, app: args.app, via, pid, createdByNexus: created,
         note: 'Only windows/tabs listed in createdByNexus may be closed without asking the owner.'};
   }
 

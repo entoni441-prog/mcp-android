@@ -159,3 +159,50 @@ test('server: protected file needs consent, then is returned redacted; search hi
     assert.equal(s.protectedHidden, 1);
   } finally { server.close(); }
 });
+
+
+test('NX-052-21: Steam helper GUI owns its exact window; launcher owned only after cold snapshot proof', async () => {
+  for (const {ambiguous, root} of [{ambiguous: false, root: 111}, {ambiguous: true, root: 111}, {ambiguous: false, root: 999}]) {
+    const consent = createConsent(); let snaps = 0;
+    const helper = {hwnd: 123, pid: 222, launchRootPid: root, process: 'steamwebhelper', name: 'Steam', tabs: ambiguous ? [{rid: 'restored'}] : []};
+    const a = createApps({caps: validateCapabilities({}), consent, store: null, workspace: tmp,
+      platform: 'win32', systemRoot: 'C:\\Windows', wait: noWait, exists: () => true,
+      gui: {snapshotApp: async () => snaps++ === 0 ? [] : [helper]},
+      discovery: {find: async () => ({exe: 'C:\\Steam\\steam.exe'})},
+      launcher: () => ({pid: 111, once(ev, fn) {if (ev === 'spawn') setImmediate(fn); return this;}, unref() {}})});
+    const out = await a.open_app({app: 'steam'});
+    assert.equal(consent.owned.pids.has(111), !ambiguous && root === 111);
+    assert.equal(consent.owned.pids.has(222), !ambiguous);
+    assert.equal(consent.isOwned({kind: 'window'}, helper), !ambiguous);
+    assert.equal(consent.isOwned({kind: 'window'}, {...helper, hwnd: 999}), false);
+    assert.equal(out.createdByNexus.windows.length, ambiguous ? 0 : 1);
+    const {createProcs} = await import('./procs.mjs');
+    const procs = createProcs({caps: validateCapabilities({}), cfg: {}, consent, platform: 'win32', systemRoot: 'C:\\Windows',
+      exec: async () => ({code: 0, out: '"steamwebhelper.exe","222","Console","1","100 K"'})});
+    assert.equal((await procs.list_processes({})).processes[0].ownedByNexus, !ambiguous);
+  }
+});
+
+test('NX-052-21: real PowerShell ancestry accepts descendants, rejects PID reuse, other sessions and unrelated helpers',
+  {skip: process.platform !== 'win32'}, async () => {
+    const {UIA_SCRIPT} = await import('./uia-script.mjs');
+    const {spawnSync} = await import('node:child_process');
+    const start = UIA_SCRIPT.indexOf('function NxSteamFamily(');
+    const end = UIA_SCRIPT.indexOf('function NxTopWindows(', start);
+    const fixture = `function Get-CimInstance {
+      @(
+        [pscustomobject]@{ProcessId=1;ParentProcessId=0;Name='steam.exe';SessionId=1;CreationDate=[datetime]'2026-11-05T10:00:00'},
+        [pscustomobject]@{ProcessId=2;ParentProcessId=1;Name='steamwebhelper.exe';SessionId=1;CreationDate=[datetime]'2026-11-05T10:00:01'},
+        [pscustomobject]@{ProcessId=3;ParentProcessId=2;Name='steamwebhelper.exe';SessionId=1;CreationDate=[datetime]'2026-11-05T10:00:02'},
+        [pscustomobject]@{ProcessId=4;ParentProcessId=1;Name='steamwebhelper.exe';SessionId=2;CreationDate=[datetime]'2026-11-05T10:00:01'},
+        [pscustomobject]@{ProcessId=5;ParentProcessId=1;Name='steamwebhelper.exe';SessionId=1;CreationDate=[datetime]'2026-11-05T09:00:00'},
+        [pscustomobject]@{ProcessId=6;ParentProcessId=99;Name='steamwebhelper.exe';SessionId=1;CreationDate=[datetime]'2026-11-05T10:00:01'}
+      )
+    }`;
+    const script = fixture + UIA_SCRIPT.slice(start, end) + '; ConvertTo-Json -InputObject @(NxSteamFamily 1) -Compress';
+    const result = spawnSync(path.win32.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+      {encoding: 'utf8', windowsHide: true, timeout: 15000});
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), [1, 2, 3]);
+  });
