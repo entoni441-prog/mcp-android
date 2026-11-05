@@ -162,7 +162,7 @@ switch ($a.mode) {
     if ($null -ne $tab) { $res.at.tab = @{ rid = (NxRid $tab); name = (NxStr $tab.Current.Name 120) } }
     $top = NxTopOf $e
     $res.at.window = NxWin $top
-    try { $p = $TW.GetParent($e); if ($null -ne $p) { $res.at.parentType = (NxType $p) } } catch { }
+    try { $p = $TW.GetParent($e); if ($null -ne $p) { $res.at.parentType = (NxType $p); $res.at.parent = @{ name = (NxStr $p.Current.Name 200); className = $p.Current.ClassName; hwnd = [int64]$p.Current.NativeWindowHandle } } } catch { }
     try { $res.at.dialog = NxDlg $top } catch { }
     $res.focused = NxFocused
   }

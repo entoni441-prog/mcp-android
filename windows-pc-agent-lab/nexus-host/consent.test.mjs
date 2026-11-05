@@ -258,3 +258,20 @@ test('0.4.3: warm ctrl+shift+n new window with one new tab is owned', () => {
   const r = c.recordCreated([W(1, ['a'])], [W(1, ['a']), W(2, ['nx'])], 't');
   assert.deepEqual([r.windows, r.tabs], [['n'], ['nx']]);
 });
+
+
+test('NX-052-13: native Edge translation bubble dismisses locally; ambiguous Close stays gated', () => {
+  const at = {process: 'msedge', elem: {controlType: 'Button', name: 'Закрыть'},
+    window: {hwnd: 10, className: 'Chrome_WidgetWin_1'}, parentType: 'Pane',
+    parent: {hwnd: 20, className: 'Chrome_WidgetWin_1', name: 'Перевести страницу с немецкий?'}};
+  assert.equal(classifyClick('click', at), null);
+  for (const change of [{parent: null}, {parent: {...at.parent, hwnd: 10}},
+    {parent: {...at.parent, hwnd: 0}}, {parent: {...at.parent, name: 'Document'}},
+    {process: 'notepad'}, {dialog: {modal: true}}, {elem: {...at.elem, name: 'Close window'}}]) {
+    assert.equal(classifyClick('click', {...at, ...change}).kind, 'window');
+  }
+  const c = createConsent(); c.ownPid(7);
+  assert.equal(c.isOwned({kind: 'window'}, {pid: 7, hwnd: 99, tabs: []}), false);
+  c.owned.windows.add('99');
+  assert.equal(c.isOwned({kind: 'window'}, {pid: 7, hwnd: 99, tabs: [{rid: 'owner'}]}), false);
+});

@@ -66,7 +66,18 @@ export function classifyClick(action, at) {
   if (!isClickable(controlType)) return null;
   if (CLOSE_RE.test(name) || TAB_CLOSE_RE.test(name) || CLOSE_IDS.test(id || '')) {
     const tabClose = TAB_CLOSE_RE.test(name) || (!!at.tab && controlType === 'Button');
-    return {kind: tabClose ? 'tab' : 'window', via: 'click:' + (name || id)};
+    if (tabClose) return {kind: 'tab', via: 'click:' + (name || id)};
+    // NX-052-13: a native Edge translation bubble is a local dismissal.
+    // A generic Pane parent alone is ambiguous and must stay gated.
+    const bubble = at.parent;
+    if (controlType === 'Button' && /^(?:close|закрыть)$/i.test(name || '') &&
+        /^msedge$/i.test(at.process || '') && at.window?.className === 'Chrome_WidgetWin_1' &&
+        at.parentType === 'Pane' && bubble?.className === 'Chrome_WidgetWin_1' &&
+        bubble.hwnd && at.window.hwnd && String(bubble.hwnd) !== String(at.window.hwnd) &&
+        /^(?:Перевести страницу с .+\?|Translate (?:this )?page(?: from .+)?\?)$/i.test(bubble.name || '') && !at.dialog) {
+      return null;
+    }
+    return {kind: 'window', via: 'click:' + (name || id)};
   }
   return null;
 }
