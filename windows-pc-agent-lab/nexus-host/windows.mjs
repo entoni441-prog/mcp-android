@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
+import {runUiaReal} from './gui.mjs';
 
 const MAX_WINDOWS = 100;
 const MAX_TITLE = 200;
@@ -70,7 +71,7 @@ function runPowerShellReal(script, {systemRoot}) {
   });
 }
 
-export async function listWindows(args, {platform = process.platform, tmpDir, systemRoot = process.env.SystemRoot, runPowerShell = runPowerShellReal} = {}) {
+export async function listWindows(args, {platform = process.platform, tmpDir, systemRoot = process.env.SystemRoot, runPowerShell = runPowerShellReal, runUia = null} = {}) {
   const includeTitles = validateListWindows(args);
   if (platform !== 'win32') throw Error('windows_only');
   if (typeof tmpDir !== 'string' || !path.isAbsolute(tmpDir)) throw Error('invalid_tmp_dir');
@@ -79,7 +80,24 @@ export async function listWindows(args, {platform = process.platform, tmpDir, sy
   try {
     await runPowerShell(buildScript(outFile, includeTitles), {systemRoot, outFile});
     if (!fs.existsSync(outFile)) throw Error('powershell_no_output');
-    const all = parseOutput(fs.readFileSync(outFile, 'utf8'), includeTitles);
+    let all = parseOutput(fs.readFileSync(outFile, 'utf8'), includeTitles);
+    // NX-052-19: Explorer is a shared shell process; MainWindowTitle can be empty
+    // while CabinetWClass windows exist. UIA already enumerates those for window_info.
+    const enumerate = runUia || (runPowerShell === runPowerShellReal ? runUiaReal : null);
+    if (enumerate) {
+      try {
+        const snap = await enumerate({mode: 'apps', name: 'explorer'}, {tmpDir, systemRoot});
+        if (!Array.isArray(snap.apps)) throw Error('explorer_snapshot_failed');
+        const explorers = snap.apps.filter(w => w.className === 'CabinetWClass' &&
+          Number.isInteger(w.pid) && /^explorer$/i.test(w.process || '') && w.hwnd);
+        const coveredPids = new Set(explorers.map(w => w.pid));
+        all = all.filter(w => !/^explorer$/i.test(w.process) || !coveredPids.has(w.pid)).concat(explorers.map(w => ({pid: w.pid,
+          process: w.process.slice(0, 100), ...(includeTitles ? {title: String(w.name || '').slice(0, MAX_TITLE)} : {})})));
+      } catch {
+        return {windows: all.slice(0, MAX_WINDOWS), count: all.length, truncated: all.length > MAX_WINDOWS,
+          titles: includeTitles, partial: true, explorerInventory: 'unavailable'};
+      }
+    }
     return {windows: all.slice(0, MAX_WINDOWS), count: all.length, truncated: all.length > MAX_WINDOWS, titles: includeTitles};
   } finally {
     fs.rmSync(outFile, {force: true});

@@ -73,3 +73,19 @@ test('REAL: Windows PowerShell executes the fixed script and returns a valid lis
     console.log('REAL_LIST_WINDOWS', JSON.stringify({count: plain.count, processes: plain.windows.map(w => w.process)}));
   } finally { try { np.kill(); } catch {} }
 });
+
+
+test('NX-052-19: shared Explorer shell with no MainWindowTitle lists both Cabinet windows, without leaking titles', async () => {
+  const deps = {platform: 'win32', tmpDir, runPowerShell: fakePs('[]'), runUia: async () => ({apps: [
+    {pid: 6692, hwnd: 100, process: 'explorer', className: 'CabinetWClass', name: 'Главная'},
+    {pid: 6692, hwnd: 101, process: 'explorer', className: 'CabinetWClass', name: 'private-folder'},
+    {pid: 6692, hwnd: 102, process: 'explorer', className: 'Shell_TrayWnd', name: 'taskbar'}]})};
+  const plain = await listWindows({}, deps);
+  assert.equal(plain.count, 2); assert.ok(plain.windows.every(w => w.pid === 6692 && !('title' in w)));
+  const titled = await listWindows({includeTitles: true}, deps);
+  assert.deepEqual(titled.windows.map(w => w.title), ['Главная', 'private-folder']);
+  const failed = await listWindows({}, {...deps, runUia: async () => {throw Error('uia unavailable');}});
+  assert.equal(failed.partial, true); assert.equal(failed.explorerInventory, 'unavailable');
+  const retained = await listWindows({}, {...deps, runPowerShell: fakePs('[{"Id":6692,"ProcessName":"explorer"}]'), runUia: async () => ({apps: []})});
+  assert.deepEqual(retained.windows, [{pid: 6692, process: 'explorer'}]);
+});
