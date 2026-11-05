@@ -27,3 +27,12 @@ Cherry-pick прошёл без конфликтов; `stage2-052.test.mjs` об
 Исходный HEAD: 6430d3d184a9a64e3c7fafa2d8b40eaed218a255. NX-13 и NX-19 приняты и не изменены. При переданном launchPid новое окно Steam/steamwebhelper получает ownership только при launchRootPid === launchPid; чужой или отсутствующий root возвращает foreign_launch_root до регистрации окон, вкладок и PID. Делегирование старому Steam в трее при пустом snapshot требует согласия на закрытие. Нормальный холодный запуск сохраняет ownership, restored tabs остаются fail-closed (0.4.3).
 
 Адресная проверка: node --test --test-name-pattern=NX-052-21 windows-pc-agent-lab/nexus-host/stage2-052.test.mjs — 2 PASS, 0 FAIL. Ранее прошедшие локальные проверки не повторялись. Исторические результаты выше относятся к прежним SHA. Новый CI Windows/Linux/Gateway ожидается после push коммита с этой доработкой; точный SHA и CI URL фиксируются в итоговом ответе. Установка запрещена; backup/rollback описаны в ACTIVATE. NX-03/discover.mjs, runner b4b43b8, Host 0.6.1c, Gateway, main, power и security не изменены.
+
+## Заключительный статус подготовки (05.11.2026, после CI и повторного ревью)
+
+Этот раздел обновляет промежуточные CI PENDING выше. Код NX-21 и четыре подготовительных документа опубликованы в исходном коммите [`ba9689d4eee5c2a9d83e67475dd405eabdf39119`](https://github.com/entoni441-prog/mcp-android/commit/ba9689d4eee5c2a9d83e67475dd405eabdf39119). Ветка `experiment/nexus-0.6.1d-20261105`; предыдущий SHA `6430d3d` сохранён в истории. Никаких force-push.
+
+- GitHub Actions [42072599361](https://github.com/entoni441-prog/mcp-android/actions/runs/42072599361): **Windows PASS, Linux PASS, Gateway PASS**, все три jobs завершены успешно на коде `ba9689d4`.
+- Локально: `node --test consent.test.mjs windows.test.mjs stage2-052.test.mjs`: **36 PASS, 0 FAIL, 1 SKIP**; `git diff --check` без замечаний, манифест **5/5 SHA256 PASS**.
+- Claude провёл повторное независимое ревью: **NX-21 ACCEPTED (нет блокирующих дефектов кода), READY FOR INSTALL REVIEW**. Согласованные NX-13 и NX-19 не изменялись. Claude отметил три уточнения `ACTIVATE`: точный immutable source SHA, проверка supervisor после запуска и обязательный реальный Steam E2E. Все три отражены в последующем docs-only обновлении инструкции.
+- **УСТАНОВКА НЕ ВЫПОЛНЕНА И НЕ РАЗРЕШЕНА.** Перед ней требуется отдельное решение владельца. Действующий Host 0.6.1c, Gateway, `main`, `power`, owner security не менялись. NX-03/discover.mjs и NX-26 не входят в 0.6.1d.

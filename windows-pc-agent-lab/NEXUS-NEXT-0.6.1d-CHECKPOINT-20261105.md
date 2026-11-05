@@ -15,3 +15,12 @@
 Исходный HEAD: 6430d3d184a9a64e3c7fafa2d8b40eaed218a255. NX-13 и NX-19 приняты и не изменены. При переданном launchPid новое окно Steam/steamwebhelper получает ownership только при launchRootPid === launchPid; чужой или отсутствующий root возвращает foreign_launch_root до регистрации окон, вкладок и PID. Делегирование старому Steam в трее при пустом snapshot требует согласия на закрытие. Нормальный холодный запуск сохраняет ownership, restored tabs остаются fail-closed (0.4.3).
 
 Адресная проверка: node --test --test-name-pattern=NX-052-21 windows-pc-agent-lab/nexus-host/stage2-052.test.mjs — 2 PASS, 0 FAIL. Ранее прошедшие локальные проверки не повторялись. Исторические результаты выше относятся к прежним SHA. Новый CI Windows/Linux/Gateway ожидается после push коммита с этой доработкой; точный SHA и CI URL фиксируются в итоговом ответе. Установка запрещена; backup/rollback описаны в ACTIVATE. NX-03/discover.mjs, runner b4b43b8, Host 0.6.1c, Gateway, main, power и security не изменены.
+
+## Финальный проверенный чекпоинт подготовки к установке (05.11.2026)
+
+- **Immutable code SHA:** `ba9689d4eee5c2a9d83e67475dd405eabdf39119` (ветка `experiment/nexus-0.6.1d-20261105`). Документационные изменения после этого SHA не меняют код сборки; для установки использовать именно этот SHA, а не текущий HEAD ветки.
+- **CI:** [GitHub Actions 42072599361](https://github.com/entoni441-prog/mcp-android/actions/runs/42072599361) — Gateway **PASS**, Ubuntu **PASS**, Windows **PASS** на указанном code SHA; подтверждено по трём jobs.
+- **Локальные адресные тесты:** 36 PASS / 0 FAIL / 1 SKIP (только real GUI/Notepad). SHA-256 всех **5/5 runtime** файлов совпадают с `MANIFEST-NEXT-0.6.1d.sha256`.
+- **Независимое ревью Claude:** NX-13, NX-19 ранее приняты; повторное ревью коммита `ba9689d4` не выявило блокирующих дефектов NX-21. Вердикт **READY FOR INSTALL REVIEW**, не является разрешением на установку.
+- Три замечания к ACTIVATE устранены **только в документации**: закреплён точный SHA и CI, добавлена обязательная проверка восстановления supervisor после задачи `NEXUS-Host-Run`, подчёркнут реальный E2E Steam ancestry на ПК (CI не заменяет проверку).
+- **СТОП установки:** до отдельного явного разрешения владельца. Действующий Windows Host 0.6.1c, Gateway, `main`, `power`, security не изменялись. NX-03 и NX-26 не входят в эту сборку.
