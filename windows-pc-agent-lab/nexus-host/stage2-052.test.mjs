@@ -85,8 +85,11 @@ test('N-01 discovery index: unsafe targets, uninstallers, duplicates removed; sl
     {name: 'Paint (copy)', exe: 'C:\\WINDOWS\\system32\\MSPAINT.EXE'},
     {name: 'Tool', exe: 'C:\\a\\tool.exe'}, {name: 'Tool', exe: 'C:\\b\\tool.exe'},
     {name: 'Блокнот++', exe: 'C:\\x\\np.exe'}, null, {name: 5, exe: 'C:\\x.exe'},
+    // 0.6.1d NX-052-03: AppX / Store applications like ChatGPT discovered with full path
+    {name: 'ChatGPT', exe: 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1029.7803.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe'},
   ]);
-  assert.deepEqual(idx.map(x => x.app), ['paint', 'tool', 'tool-2']);
+  assert.deepEqual(idx.map(x => x.app), ['chatgpt', 'paint', 'tool', 'tool-2']);
+  assert.equal(idx.find(x => x.app === 'chatgpt').cls, 'agent');
   assert.equal(slug('Microsoft Edge'), 'microsoft-edge');
   assert.equal(slug('Café Ünïcode'), 'cafe-unicode');
   assert.ok(idx.every(x => /^[a-z0-9][a-z0-9_-]{0,39}$/.test(x.app)));
