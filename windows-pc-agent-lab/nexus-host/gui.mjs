@@ -629,6 +629,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       const isOn = f => f?.ok === true && (f.pid === args.pid || (!!f.topHwnd && hwnds.has(String(f.topHwnd))));
       if (isOn(w.focused)) return {focused: true, already: true, method: 'none', hwnd: w.focused.topHwnd ?? null};
       const attempts = [];
+      const titlebarProbes = [];
       const main = w.windows.find(x => x.hwnd) || w.windows[0];
       const r = await uia({mode: 'activate', pid: args.pid, ...(main.hwnd ? {hwnd: Number(main.hwnd)} : {}), title: String(main.name || '').slice(0, 200)});
       // 0.5.1 diagnostics: which step worked, and why not (minimised / off-screen / Windows foreground lock).
@@ -646,11 +647,26 @@ export function createGui({caps, home, workspace, platform = process.platform, r
           const rc = win.rect; if (!rc || !m) continue;
           for (const [fx, fy] of [[0.62, 10], [0.5, 10], [0.75, 10]]) {
             const ux = Math.round(rc.x + rc.w * fx), uy = Math.round(rc.y + fy);
-            const at = await uia({mode: 'at', x: ux, y: uy});
+            const at = await uia({mode: 'at', x: ux, y: uy, nativeHitTest: true});
             const el = at.at?.elem || {};
             const own = !!win.hwnd && String(at.at?.window?.hwnd) === String(win.hwnd);
             const passive = ['Window', 'TitleBar', 'Pane', 'Custom', 'Group'].includes(el.controlType) && !classifyClick('click', at.at);
-            attempts.push({method: 'titlebar_probe', ok: own && passive, control: el.controlType || null});
+            // Only claim occlusion when an independent native WindowFromPoint/GA_ROOT read confirms
+            // UIA.FromPoint's OTHER window HWND + PID. UIA failure, stale/racing hit or out-of-screen
+            // point is unverified, not proof of either occlusion or a Windows foreground lock.
+            const hit = at.at?.nativeHit, top = at.at?.window;
+            const nativeAgrees = hit?.ok === true && Number.isSafeInteger(Number(hit.hwnd)) && Number(hit.hwnd) > 0 &&
+              Number.isInteger(Number(hit.pid)) && Number(hit.pid) > 0 && Number(hit.hwnd) === Number(top?.hwnd) &&
+              Number(hit.pid) === Number(top?.pid) && Number(hit.pid) === Number(at.at?.pid);
+            const screenPoint = m.rectToScreen({x: ux, y: uy, w: 0, h: 0});
+            const visiblePoint = !!screenPoint && screenPoint.x >= inf.x && screenPoint.y >= inf.y &&
+              screenPoint.x < inf.x + inf.w && screenPoint.y < inf.y + inf.h;
+            const foreign = visiblePoint && nativeAgrees && !own && String(hit.hwnd) !== String(win.hwnd);
+            const blocker = foreign ? {hwnd: Number(hit.hwnd), pid: Number(hit.pid), process: String(at.at?.process || '').slice(0, 64)} : null;
+            const probe = {method: 'titlebar_probe', ok: own && passive, control: el.controlType || null,
+              nativeVerified: nativeAgrees, ...(blocker ? {blockedBy: blocker} : {})};
+            titlebarProbes.push(probe);
+            attempts.push(probe);
             if (!own || !passive) continue;
             const sp = m.rectToScreen({x: ux, y: uy, w: 0, h: 0});
             await getRobot().cmd(`click ${sp.x} ${sp.y} left 1`);
@@ -662,12 +678,23 @@ export function createGui({caps, home, workspace, platform = process.platform, r
           }
         }
       }
-      // Most likely cause when the window exists, is not minimised and every call "succeeded": Windows foreground lock
-      // (a background process may not take the foreground). A real click on the title bar is the input that unlocks it.
+      // NX-26: all titlebar points occupied by independently verified other windows = occluded.
+      // Do not report Windows' foreground lock merely because AppActivate failed while an
+      // inaccessible or covered title bar prevented every safe fallback click.
+      const occluded = titlebarProbes.length >= 2 && titlebarProbes.every(p => p.blockedBy);
+      const clickedButNotFocused = attempts.some(p => p.method === 'titlebar_click');
+      const blockers = occluded ? [...new Map(titlebarProbes.map(p =>
+        [String(p.blockedBy.hwnd), p.blockedBy])).values()] : [];
       const cause = !main.hwnd || r.windowFound === false ? 'window_not_found_by_hwnd' : r.offscreen ? 'window_offscreen_or_covered'
+        : occluded ? 'titlebar_occluded'
+        : clickedButNotFocused ? 'foreground_lock_likely'
+        : titlebarProbes.length ? 'titlebar_not_reachable'
         : (r.setFocus || r.appActivateByPid) ? 'foreground_lock_likely' : 'activation_refused';
       return {focused: false, method: 'none', cause, foregroundProcess: r.focused?.process || null, foregroundHwnd: r.focused?.topHwnd ?? null, windows: [...hwnds], attempts,
-        hint: caps.gui_input ? 'Window not reachable (covered or minimised?). No input was sent to other windows.' : 'Enable gui_input to allow the safe title-bar fallback.'};
+        ...(occluded ? {occlusion: {verified: true, probes: titlebarProbes.length, blockedBy: blockers}} : {}),
+        hint: occluded ? 'Target title bar is covered by another window. No input was sent to it.'
+          : caps.gui_input ? 'Window not reachable (covered or minimised?). No input was sent to other windows unless a safe titlebar_click was recorded.'
+          : 'Enable gui_input to allow the safe title-bar fallback.'};
     },
 
     async mouse_action(args, {consented = null, decision = null, policyOk = null} = {}) {

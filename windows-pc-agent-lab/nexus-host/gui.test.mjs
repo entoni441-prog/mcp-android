@@ -195,7 +195,63 @@ test('focus_window: only allowlisted apps; success is confirmed by UIA, not by t
   const r = await g2.focus_window({pid: 50});
   assert.equal(r.focused, false);
   assert.equal(r.attempts[0].method, 'UIA.SetFocus+AppActivate'); assert.equal(r.attempts[0].byPid, true);
-  assert.equal(r.cause, 'foreground_lock_likely');
+  assert.equal(r.cause, 'titlebar_not_reachable');
+});
+
+
+test('NX-26: occluded real-style charmap title bar is reported from matching UIA + native hit-test, no click', async () => {
+  const f = fakes({focused: {ok: true, pid: 9964, process: 'msinfo32', topHwnd: 853450},
+    activateFocus: {ok: true, pid: 9964, process: 'msinfo32', topHwnd: 853450}});
+  const old = f.uia;
+  const hitRequests = [];
+  f.uia = async a => {
+    if (a.mode === 'at') hitRequests.push(a);
+    if (a.mode === 'windows') return {root: ROOT, target: {pid: a.pid, process: 'charmap'},
+      windows: [{name: 'Таблица символов', hwnd: 591374, rect: {x: 15, y: 63, w: 490, h: 425}}], focused: {pid: 9964, process: 'msinfo32'}};
+    if (a.mode === 'at') return {root: ROOT, at: {pid: 9964, process: 'msinfo32',
+      elem: {controlType: 'Window'}, window: {hwnd: 853450, pid: 9964},
+      nativeHit: {ok: true, hwnd: 853450, pid: 9964}}};
+    return old(a);
+  };
+  const out = await gui(f).focus_window({pid: 16104});
+  assert.equal(out.focused, false);
+  assert.equal(out.cause, 'titlebar_occluded');
+  assert.equal(out.occlusion.verified, true);
+  assert.equal(out.occlusion.probes, 3);
+  assert.deepEqual(out.occlusion.blockedBy, [{hwnd: 853450, pid: 9964, process: 'msinfo32'}]);
+  assert.equal(hitRequests.length, 3);
+  assert.ok(hitRequests.every(x => x.nativeHitTest === true));
+  assert.equal(f.robotCmds.filter(x => x.startsWith('click')).length, 0);
+});
+
+test('NX-26: disagreement with Win32 or unavailable native hit must not claim occlusion or click a foreign title bar', async () => {
+  for (const nativeHit of [null, {ok:false}, {ok:true, hwnd: 111, pid: 9964},
+    {ok:true, hwnd:853450, pid:777}, {ok:true, hwnd:500, pid:9964}]) {
+    const f = fakes({focused: {ok:true,pid:9964,process:'msinfo32'},
+      activateFocus: {ok:true,pid:9964,process:'msinfo32'}});
+    const old = f.uia;
+    f.uia = async a => a.mode === 'at' ? {root:ROOT, at: {pid:9964,process:'msinfo32',
+      elem:{controlType:'Window'},window:{hwnd:853450,pid:9964}, ...(nativeHit ? {nativeHit} : {})}}
+      : old(a);
+    const out = await gui(f).focus_window({pid:50});
+    assert.equal(out.cause,'titlebar_not_reachable',JSON.stringify(nativeHit));
+    assert.equal(out.occlusion,undefined);
+    assert.ok(!f.robotCmds.some(c => c.startsWith('click')));
+  }
+});
+
+test('NX-26: safe target titlebar click still works and only an actual failed click can suggest foreground lock', async () => {
+  const f=fakes({focused:{ok:true,pid:9964,process:'msinfo32'},
+    activateFocus:{ok:true,pid:9964,process:'msinfo32'}});
+  const old=f.uia;
+  f.uia = async a => a.mode === 'at' ? {root:ROOT,at:{pid:50,process:'Notepad',
+    elem:{controlType:'Window'},window:{hwnd:500,pid:50},nativeHit:{ok:true,hwnd:500,pid:50}}}
+    : old(a);
+  const out=await gui(f).focus_window({pid:50});
+  assert.equal(out.focused,false);
+  assert.equal(out.cause,'foreground_lock_likely');
+  assert.ok(out.attempts.some(x => x.method === 'titlebar_click'));
+  assert.equal(f.robotCmds.filter(x => x.startsWith('click')).length,1);
 });
 
 test('inspect_ui / window_info map rectangles to screen points and refuse other apps', async () => {

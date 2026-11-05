@@ -217,6 +217,31 @@ function NxEdgeTranslateBubble($e, $top, $epid) {
   } catch { return $null } # UIA or Win32 failure MUST retain consent.
   return $null
 }
+# NX-26 read-only Win32 hit-test at the exact titlebar probe point.
+# WindowFromPoint respects Z-order. GA_ROOT converts child HWND to the actual top-level window.
+function Nx26NativeHit($x, $y) {
+  try {
+    if (-not ('Nx26.HitTest' -as [type])) {
+      Add-Type -Namespace Nx26 -Name HitTest -MemberDefinition @'
+[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+public struct POINT { public int X; public int Y; }
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern System.IntPtr WindowFromPoint(POINT point);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern System.IntPtr GetAncestor(System.IntPtr hwnd, uint flags);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr hwnd, out uint processId);
+public static long TopAt(int x, int y) {
+  var child = WindowFromPoint(new POINT { X = x, Y = y });
+  return child == System.IntPtr.Zero ? 0 : GetAncestor(child, 2).ToInt64();
+}
+'@
+    }
+    $nativeHwnd = [int64][Nx26.HitTest]::TopAt([int]$x, [int]$y)
+    if ($nativeHwnd -le 0) { return @{ ok = $false } }
+    [uint32]$hitProcessId = 0
+    [void][Nx26.HitTest]::GetWindowThreadProcessId([IntPtr]$nativeHwnd, [ref]$hitProcessId)
+    if ($hitProcessId -le 0) { return @{ ok = $false } }
+    return @{ ok = $true; hwnd = $nativeHwnd; pid = [int]$hitProcessId }
+  } catch { return @{ ok = $false } }
+}
 $res = @{ mode = $a.mode; root = (NxRect $AE::RootElement) }
 if ($null -ne $a.pid) { $res.target = @{ pid = [int]$a.pid; process = (NxPName ([int]$a.pid)) } }
 switch ($a.mode) {
@@ -230,6 +255,7 @@ switch ($a.mode) {
     if ($null -ne $tab) { $res.at.tab = @{ rid = (NxRid $tab); name = (NxStr $tab.Current.Name 120) } }
     $top = NxTopOf $e
     $res.at.window = NxWin $top
+    if ($a.nativeHitTest -eq $true) { $res.at.nativeHit = Nx26NativeHit ([int]$a.x) ([int]$a.y) }
     try { $p = $TW.GetParent($e); if ($null -ne $p) { $res.at.parentType = (NxType $p); $res.at.parent = @{ name = (NxStr $p.Current.Name 200); className = $p.Current.ClassName; hwnd = [int64]$p.Current.NativeWindowHandle } } } catch { }
     $proof = NxEdgeTranslateBubble $e $top $epid
     if ($null -ne $proof) { $res.at.nativeBubble = $proof }
