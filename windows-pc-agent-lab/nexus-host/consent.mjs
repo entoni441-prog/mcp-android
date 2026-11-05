@@ -135,7 +135,7 @@ export function createConsent({audit = () => {}, now = () => Date.now(), journal
      *  - a new window without tabs (classic Notepad, Calculator) → owned;
      *  - otherwise at most ONE new tab may be owned; several new tabs at once are ambiguous → nothing is owned.
      */
-    recordCreated(before = [], after = [], source, {token = null} = {}) {
+    recordCreated(before = [], after = [], source, {token = null, launchPid = null} = {}) {
       const created = {windows: [], tabs: []};
       const refuse = reason => { created.ownership = 'none'; created.reason = reason;
         audit({event: 'nexus_created_refused', source, reason, windows: (after || []).length}); return created; };
@@ -144,6 +144,12 @@ export function createConsent({audit = () => {}, now = () => Date.now(), journal
       const prevT = new Set(before.flatMap(w => tabsOf(w).map(t => t.rid)));
       const newWins = after.filter(w => !prevW.has(String(w.hwnd)));
       const newTabs = after.flatMap(w => tabsOf(w).filter(t => !prevT.has(t.rid)).map(t => ({w, t})));
+      // NX-21: an empty window snapshot does not prove Steam was not already running in the tray.
+      // A delegated launch belongs to the old Steam root, never to our newly spawned launcher.
+      if (launchPid !== null && newWins.some(w =>
+        /^(steam|steamwebhelper)(\.exe)?$/i.test(w.process || '') && w.launchRootPid !== launchPid)) {
+        return refuse('foreign_launch_root');
+      }
       // 0.5.0: a unique token (NEXUS scratch file name) identifies exactly what NEXUS opened, even on a cold start
       // with a restored session: only tabs/windows whose NAME contains the token are owned.
       if (token) {
