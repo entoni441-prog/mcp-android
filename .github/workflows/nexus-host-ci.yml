@@ -1,7 +1,7 @@
 name: nexus-host-ci
 on:
   push:
-    branches: [experiment/nexus-host-mcp-20261101, experiment/nexus-0.4.0-20261101, experiment/nexus-0.4.1-20261101, experiment/nexus-0.4.2-20261101, experiment/nexus-0.4.3-ownership-20261101, experiment/nexus-0.5.0-unified-20261101, experiment/nexus-0.5.1-cleanup-stop-20261102, experiment/nexus-0.5.2-owner-access-20261102]
+    branches: [experiment/nexus-host-mcp-20261101, experiment/nexus-0.4.0-20261101, experiment/nexus-0.4.1-20261101, experiment/nexus-0.4.2-20261101, experiment/nexus-0.4.3-ownership-20261101, experiment/nexus-0.5.0-unified-20261101, experiment/nexus-0.5.1-cleanup-stop-20261102, experiment/nexus-0.5.2-owner-access-20261102, experiment/nexus-0.6.1d-acceptance-fixes-20261105]
     paths: ['windows-pc-agent-lab/nexus-host/**', 'windows-pc-agent-lab/nexus-gateway/**', 'windows-pc-agent-lab/v3/actions.mjs', '.github/workflows/nexus-host-ci.yml']
   workflow_dispatch:
 permissions:

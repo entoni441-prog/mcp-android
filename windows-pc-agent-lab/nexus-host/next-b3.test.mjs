@@ -29,7 +29,14 @@ test('classifyCommand: R0/R1/R2/R3/deny table', () => {
     ['reg', ['add', 'HKLM\\...\\System', '/v', 'EnableLUA', '/d', '0'], 'uac_change'], ['manage-bde', ['-off', 'C:'], 'bitlocker_change'],
     ['netsh', ['advfirewall', 'set', 'allprofiles', 'state', 'off'], 'firewall_change'], ['cmdkey', ['/list'], 'credential_access'], ['reg', ['save', 'HKLM\\SAM', 'x'], 'credential_access'],
     ['bcdedit', ['/set'], 'boot_or_disk_destruction'], ['bw', ['list', 'items'], 'credential_store:bw'], ['certutil', ['-urlcache'], 'denied_program:certutil'],
+    ['format', ['C:', '/FS:NTFS'], 'boot_or_disk_destruction'], ['powershell', ['-c', 'format-volume', 'D:'], 'boot_or_disk_destruction'],
     ['reg', ['add', 'HKLM\\x', '/v', 'AutoAdminLogon'], 'autologon_or_logon_change']]) assert.equal(classifyCommand(e, a).reason, why, `${e} ${a}`);
+  // 0.6.1d regression test: Format-List / Format-Table in read-only PowerShell commands must not be classified as boot_or_disk_destruction
+  for (const cmd of ['Get-CimInstance Win32_OperatingSystem | Format-List', 'Get-StartApps | Format-Table', 'Get-Date -Format yyyy', 'Get-Process | Format-Custom']) {
+    const cl = classifyCommand('powershell', ['-NoProfile', '-Command', cmd]);
+    assert.notEqual(cl.reason, 'boot_or_disk_destruction', `Format-* falsely triggered boot_or_disk_destruction: ${cmd}`);
+    assert.equal(cl.cls, 'R3');
+  }
   assert.equal(C('git', ['status', 'x\0']), 'deny');
 });
 

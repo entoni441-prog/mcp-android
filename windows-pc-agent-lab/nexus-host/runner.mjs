@@ -41,7 +41,7 @@ export const DENY_RULES = Object.freeze([
   [/\bmanage-bde\b[\s\S]*-(off|disable|protectors\s+-delete)|\b(disable|suspend)-bitlocker\b/i, 'bitlocker_change'],
   [/\badvfirewall\b[\s\S]*\bstate\s+off\b|\bset-netfirewallprofile\b[\s\S]*-enabled\s+(false|0)|\bfirewall\s+set\s+opmode\s+disable/i, 'firewall_change'],
   [/\bvaultcmd\b|\bcmdkey\b|\bmimikatz\b|\bntdsutil\b|\breg(\.exe)?\s+save\s+hklm\\(sam|security|system)\b|comsvcs[\s\S]*minidump|\bprocdump\b[\s\S]*lsass|\bget-credential\b|\bexport-pfxcertificate\b/i, 'credential_access'],
-  [/\b(bcdedit|diskpart|format|cipher\s+\/w|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl|fsutil\s+(file\s+setzerodata|usn\s+deletejournal))\b/i, 'boot_or_disk_destruction'],
+  [/\b(bcdedit|diskpart|format-volume|cipher\s+\/w|vssadmin\s+delete|wbadmin\s+delete|wevtutil\s+cl|fsutil\s+(file\s+setzerodata|usn\s+deletejournal))\b|(?<!-)\bformat(?:\.com|\.exe)?\b(?!-)/i, 'boot_or_disk_destruction'],
   [/\bautoadminlogon\b|\bdefaultpassword\b|\bnetplwiz\b|\buserpasswords2\b|disablecad\b/i, 'autologon_or_logon_change'],
 ]);
 /**
