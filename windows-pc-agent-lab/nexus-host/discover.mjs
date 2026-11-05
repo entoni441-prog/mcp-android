@@ -13,9 +13,29 @@ const PS = `$ErrorActionPreference='SilentlyContinue'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $sh = New-Object -ComObject WScript.Shell
 $roots = @("$env:ProgramData\\Microsoft\\Windows\\Start Menu\\Programs", "$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs")
-$out = foreach ($r in $roots) { Get-ChildItem -LiteralPath $r -Recurse -Filter *.lnk -File | Select-Object -First 1500 | ForEach-Object {
+$out = [System.Collections.Generic.List[object]]::new()
+foreach ($r in $roots) { Get-ChildItem -LiteralPath $r -Recurse -Filter *.lnk -File | Select-Object -First 1500 | ForEach-Object {
   $t = $sh.CreateShortcut($_.FullName).TargetPath
-  if ($t) { [pscustomobject]@{name=$_.BaseName; exe=$t} } } }
+  if ($t) { $out.Add([pscustomobject]@{name=$_.BaseName; exe=$t}) } } }
+# 0.6.1d NX-052-03: discover AppX / Store packages (e.g. ChatGPT) enumerated via Get-StartApps
+try {
+  $pkgs = @{}
+  Get-AppxPackage | ForEach-Object { if ($_.PackageFamilyName) { $pkgs[$_.PackageFamilyName] = $_ } }
+  Get-StartApps | Where-Object { $_.AppID -like '*!*' } | ForEach-Object {
+    $parts = $_.AppID -split '!', 2
+    $pkg = $pkgs[$parts[0]]
+    if ($pkg -and $pkg.InstallLocation) {
+      try {
+        $m = Get-AppxPackageManifest $pkg
+        $app = @($m.Package.Applications.Application) | Where-Object { $_.Id -eq $parts[1] } | Select-Object -First 1
+        if ($app -and $app.Executable) {
+          $exe = Join-Path $pkg.InstallLocation ($app.Executable -replace '/', '\\')
+          if (Test-Path -LiteralPath $exe) { $out.Add([pscustomobject]@{name=$_.Name; exe=$exe}) }
+        }
+      } catch {}
+    }
+  }
+} catch {}
 $out | ConvertTo-Json -Compress`;
 
 /** Lowercase slug usable as open_app {app} (pattern ^[a-z0-9][a-z0-9_-]{0,39}$). */
