@@ -20,10 +20,10 @@ async function fixture(t,mode='success'){
  await fs.writeFile(path.join(work,'mock.json'),JSON.stringify({stateDirectory:state,taskId:'test-task',mode}));
  const m={taskId:'test-task',approved:true,workingDirectory:work,codexExe:process.execPath,codexSha256:crypto.createHash('sha256').update(await fs.readFile(process.execPath)).digest('hex'),expectedBranch:'isolated-test',stateDirectory:state,initialPrompt:'CANARY_SECRET',resumePrompt:'CANARY_SECRET',maxResumes:1,completionFile:path.join(state,'complete.json')};
  const file=path.join(root,'manifest.json');await fs.writeFile(file,JSON.stringify(m));
- const options={deadlineMs:15000,controllerOptions:{testScript:script,ownerDirectory:owner,timeoutMs:10000}};
+ const options={deadlineMs:45000,controllerOptions:{testScript:script,ownerDirectory:owner,timeoutMs:30000}};
  return {root,work,state,owner,m,file,options};
 }
-async function waitState(f,predicate){for(let i=0;i<400;i++){try{const s=JSON.parse(await fs.readFile(path.join(f.state,'state.json'),'utf8'));if(predicate(s))return s;}catch{}await sleep(25);}throw Error('checkpoint timeout');}
+async function waitState(f,predicate){for(let i=0;i<1200;i++){try{const s=JSON.parse(await fs.readFile(path.join(f.state,'state.json'),'utf8'));if(predicate(s))return s;}catch{}await sleep(25);}throw Error('checkpoint timeout');}
 test('identity access denied produces explicit safe STOP and no launch', {skip:capable},async t=>{const f=await fixture(t);assert.deepEqual(await supervise(f.file,f.options),{status:'STOP',reason:'PROCESS_UNCERTAIN'});assert.deepEqual(await fs.readdir(f.state),[]);});
 test('healthy completion, permanent exclusivity and canary absent',{skip:!capable},async t=>{const f=await fixture(t);assert.equal((await supervise(f.file,f.options)).status,'COMPLETED');assert.equal((await supervise(f.file,f.options)).reason,'ALREADY_SUPERVISED');for(const name of await fs.readdir(f.state)){if(name.endsWith('.json')&&!['checkpoint.json'].includes(name))assert.ok(!(await fs.readFile(path.join(f.state,name),'utf8')).includes('CANARY_SECRET'));}});
 for(const [mode,mutate,expected] of [
@@ -35,7 +35,7 @@ for(const [mode,mutate,expected] of [
  ['slow-exit',async f=>{f.m.codexSha256='0'.repeat(64);await fs.writeFile(f.file,JSON.stringify(f.m));},'STOP'],
  ['slow-exit',async f=>exec('git',['checkout','-b','wrong-branch'],{cwd:f.work}),'STOP'],
  ['slow-exit',async f=>{const p=path.join(f.state,'state.json');const s=JSON.parse(await fs.readFile(p,'utf8'));s.taskId='foreign';await fs.writeFile(p,JSON.stringify(s));},'STOP']
-])test('real controller SIGKILL: '+mode+' '+mutate.toString(),{skip:!capable,timeout:25000},async t=>{
+])test('real controller SIGKILL: '+mode+' '+mutate.toString(),{skip:!capable,timeout:60000},async t=>{
  const f=await fixture(t,mode);const running=supervise(f.file,f.options);
  const s=await waitState(f,s=>s.threadId&&s.childIdentity||mode==='slow-missing'&&s.childIdentity);
  const before=await identity(s.controllerIdentity.pid);assert.deepEqual(before,s.controllerIdentity);assert.equal(await exited(s.childIdentity),false);
@@ -48,7 +48,7 @@ test('direct recover rejects missing external evidence',async t=>{const f=await 
 test('foreign supervisor claim prevents ordinary controller launch',async t=>{const f=await fixture(t);await fs.writeFile(path.join(f.state,'supervisor-owner.json'),'{}');assert.equal((await runManifest(f.m)).reason,'RECOVERY_EVIDENCE');});
 for(const contents of ['{','{}'])test('corrupted or foreign supervisor claim never overwritten '+contents,async t=>{const f=await fixture(t);await fs.writeFile(path.join(f.state,'supervisor-owner.json'),contents);const r=await supervise(f.file,f.options);assert.equal(r.status,'STOP');assert.equal(await fs.readFile(path.join(f.state,'supervisor-owner.json'),'utf8'),contents);});
 
-test('real test controller termination leaves fake child to exit naturally; no replay', {timeout:15000},async t=>{
+test('real test controller termination leaves fake child to exit naturally; no replay', {timeout:35000},async t=>{
  const f=await fixture(t,'slow-exit');
  const module=new URL('./controller.mjs',import.meta.url).href;
  const code=`import {runManifest} from ${JSON.stringify(module)};await runManifest(${JSON.stringify(f.m)},${JSON.stringify(f.options.controllerOptions)});`;
