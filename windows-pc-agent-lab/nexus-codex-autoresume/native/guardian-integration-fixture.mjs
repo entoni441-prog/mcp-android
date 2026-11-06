@@ -38,6 +38,7 @@ if(!nativeScope){
 
 const state=path.join(root,'state'),owner=path.join(root,'owner'),repo=path.join(root,'repo');
 const fake=fileURLToPath(new URL('./guarded-fake-codex.mjs',import.meta.url));
+const hangRunner=fileURLToPath(new URL('./hung-controller-test.mjs',import.meta.url));
 const save=async(name,obj)=> {
   const tmp=path.join(root,name+'.'+crypto.randomUUID()+'.tmp');
   await fs.writeFile(tmp,JSON.stringify(obj));
@@ -72,26 +73,40 @@ const live=async()=>{
     const s=JSON.parse(await fs.readFile(path.join(state,'state.json'),'utf8'));
     const p=JSON.parse(await fs.readFile(path.join(state,'guardian-process.json'),'utf8'));
     const c=JSON.parse(await fs.readFile(path.join(state,'checkpoint.json'),'utf8'));
-    return s.status==='RUNNING'&&typeof s.threadId==='string'&&s.childPid===c.pid&&
-      Number.isSafeInteger(p.controllerPid)&&p.controllerPid!==c.pid;
-  }catch{return false;}
+    if(s.status==='RUNNING'&&typeof s.threadId==='string'&&s.childPid===c.pid&&
+        Number.isSafeInteger(p.controllerPid)&&p.controllerPid!==c.pid){
+      return {controllerPid:p.controllerPid,childPid:c.pid};
+    }
+  }catch{}
+  return null;
 };
 let hanging;
 if(mode==='hang')hanging=setInterval(async()=>{
-  if(!observed&&await live()){
+  if(observed)return;
+  const ids=await live();
+  if(!ids)return;
+  try{
+    // The controller wrapper running runManifest has blocked its own event
+    // loop. It remains alive but its independent PID-scoped heartbeat stops.
+    const marker=JSON.parse(await fs.readFile(path.join(root,'controller-hang-observed.json'),'utf8'));
+    const st=await fs.stat(path.join(root,'controller-heartbeat-'+ids.controllerPid+'.txt'));
+    process.kill(ids.controllerPid,0);
+    process.kill(ids.childPid,0);
+    if(marker.controllerPid!==ids.controllerPid||!marker.eventLoopBlocked||
+       Date.now()-st.mtimeMs<750)return;
     observed=true;
-    await save('hang-observed.json',{controllerAndCliAlive:true,guardianPid:process.pid});
-    // Simulates an unresponsive Guardian while its *real controller and mock
-    // Codex child remain alive*. The native kernel Job watchdog must terminate
-    // the entire tree, without trusting any discovered PID.
+    await save('hang-observed.json',{controllerAndCliAlive:true,
+      controllerHeartbeatStale:true,guardianPid:process.pid});
+    // Propagate controller-level liveness loss to the native Job watchdog.
     alive=false;clearInterval(heartbeat);clearInterval(hanging);
-  }
-},50);
+  }catch{}
+},80);
 
 try{
   const r=await runGuardian(m,{
     testScript:fake,ownerDirectory:owner,initialTimeoutMs:35000,
-    orphanWaitMs:1500,resumeTimeoutMs:12000
+    orphanWaitMs:1500,resumeTimeoutMs:12000,
+    testControllerRunner:mode==='hang'?hangRunner:undefined
   });
   alive=false;clearInterval(heartbeat);if(hanging)clearInterval(hanging);
   await save('integration-result.json',r);
