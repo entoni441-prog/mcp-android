@@ -33,9 +33,12 @@ export function assessRestart(e) {
   if(!op||typeof op!=='object'||!validOpId(op.operationId))return STOP('OPERATION_UNVERIFIED');
   if(!validEpoch(op.epoch)||op.epoch!==e.previousEpoch)return STOP('OPERATION_EPOCH_MISMATCH');
   if(op.state==='COMMITTED'){
-    return op.externalReceiptVerified===true ?
-      Object.freeze({decision:'COMPLETE',reason:'OPERATION_COMMITTED'}) :
-      STOP('COMMIT_UNVERIFIED');
+    if(op.externalReceiptVerified!==true)return STOP('COMMIT_UNVERIFIED');
+    // COMMITTED is the receipt of ONE external operation, not proof that the
+    // whole Codex task is finished. Only the validated task completion marker
+    // above can return COMPLETE. Never replay the committed side effect.
+    if(e.resumeBudgetRemaining!==1)return STOP('RESUME_BUDGET_UNVERIFIED');
+    return Object.freeze({decision:'ELIGIBLE',reason:'RESUME_AFTER_VERIFIED_OPERATION_NO_REPLAY',epoch:e.epoch});
   }
   if(op.state==='IN_FLIGHT'){
     // Conservative: even idempotent external APIs need a confirmed server-side
