@@ -1,0 +1,30 @@
+name: nexus-controller-recovery-ci
+
+on:
+  push:
+    branches:
+      - experiment/nexus-codex-controller-recovery-20261106
+    paths:
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/**'
+      - '.github/workflows/nexus-controller-recovery-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-tests:
+    name: Controller recovery (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify bounded recovery and fail-closed invariants
+        run: node --test windows-pc-agent-lab/nexus-codex-autoresume/controller.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/supervisor.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/pilot-worker.test.mjs

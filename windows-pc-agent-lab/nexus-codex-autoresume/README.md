@@ -165,12 +165,23 @@ integration, GUI auto-resume or production deployment. The supervisor itself is
 not automatically recovered. Ordinary controller run retains its original
 ChildProcess-based behavior when used without supervision.
 
-Validation in the restricted Windows workspace: CIM returned HRESULT 0x80041003
-(access denied). Therefore autonomous controller-crash recovery cannot receive
-REAL PASS here. Tests explicitly skip identity-dependent integration cases rather
-than substitute PID-only evidence. A separate real SIGKILL test terminates an
-owned test controller and lets its fake child exit on a bounded timer, proving
-no initial replay after the permanent claim. Full recovery acceptance still needs
-an environment with readable process identity and independent operator injection
-against the explicitly authorized test-only Codex job. Mock success is preliminary
-only; no real Codex CLI recovery has been claimed.
+Validation: in the **restricted Codex sandbox**, CIM returned access denied and
+identity-dependent tests correctly skipped or safely STOPped. The independent
+NEXUS Windows connector **does** have read-only CIM access. Its complete local
+suite passed 36 tests with one environment-specific skip and no failures.
+A real test on the owner's Windows exercised supervisor -> controller -> actual
+bundled Codex CLI. A one-shot external watcher verified the controller PID,
+CLI PID, supervisor PID, creation times, process paths and checkpoint before
+terminating only the test controller. The supervisor automatically continued
+the identical UUIDv7 CLI session with attempt=1 and produced the task completion
+marker without modifying the exclusive effect marker. This establishes an
+experimental **REAL PASS** for controller recovery with an independently live
+supervisor, not generalized production exactly-once guarantees.
+
+The earlier trial with a shorter worker completed before the external crash
+injection and safely STOPped with COMPLETION_UNCONFIRMED. Its state was not
+reused. No production apps, Host, cloudflared or Gateway were interrupted.
+Supervisor recovery after its *own* crash, system startup integration,
+durable deduplication for external APIs and Codex Desktop GUI task recovery
+remain out of scope. Never install this controller on the working Host without
+a separate approved deployment and rollback plan.
