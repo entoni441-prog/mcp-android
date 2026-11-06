@@ -1,0 +1,33 @@
+name: nexus-codex-saved-crash-ci
+on:
+  push:
+    branches: [experiment/nexus-codex-crash-saved-20261106]
+    paths:
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/native/real-codex-saved-session-crash.test.mjs'
+      - '.github/workflows/nexus-codex-saved-crash-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-syntax-and-guards:
+    runs-on: windows-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Parse exact-session real CLI harness (DO NOT EXECUTE CLI)
+        run: node --check windows-pc-agent-lab/nexus-codex-autoresume/native/real-codex-saved-session-crash.test.mjs
+      - name: Verify durable no-replay ledger tests
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs
+  linux-portability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Parse-only real CLI diagnostic (never authenticates)
+        run: node --check windows-pc-agent-lab/nexus-codex-autoresume/native/real-codex-saved-session-crash.test.mjs
