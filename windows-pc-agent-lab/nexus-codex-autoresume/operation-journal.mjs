@@ -59,17 +59,22 @@ export async function confirmOperation(dir,{taskId,operationId,epoch},receipt){
 }
 export async function getOperation(dir,{taskId,operationId,epoch}){
   valid(taskId,operationId,epoch);
-  for(const stage of ['COMMITTED','IN_FLIGHT','PREPARED']){
+  const found={};
+  for(const stage of ['PREPARED','IN_FLIGHT','COMMITTED']){
     const v=await read(location(dir,taskId,operationId,epoch,stage));
     if(v){
       const expected=marker(taskId,operationId,epoch,stage);
       if(Object.entries(expected).some(([k,val])=>v[k]!==val))throw Error('JOURNAL_MISMATCH');
       if(stage==='COMMITTED'&&(!name.test(v.externalId)||Object.keys(v).some(k=>!['taskId','operationId','epoch','stage','externalId'].includes(k))))throw Error('JOURNAL_MISMATCH');
       if(stage!=='COMMITTED'&&Object.keys(v).length!==4)throw Error('JOURNAL_MISMATCH');
-      return {stage,epoch,externalId:stage==='COMMITTED'?v.externalId:undefined};
+      found[stage]=v;
     }
   }
-  return {stage:'UNREGISTERED',epoch};
+  // A surviving late-stage receipt is never accepted without the full durable chain.
+  if(found.COMMITTED&&(!found.IN_FLIGHT||!found.PREPARED))throw Error('JOURNAL_MISMATCH');
+  if(found.IN_FLIGHT&&!found.PREPARED)throw Error('JOURNAL_MISMATCH');
+  const stage=found.COMMITTED?'COMMITTED':found.IN_FLIGHT?'IN_FLIGHT':found.PREPARED?'PREPARED':'UNREGISTERED';
+  return {stage,epoch,externalId:found.COMMITTED?.externalId};
 }
 export async function recoveryDisposition(dir,identity,currentEpoch){
   const op=await getOperation(dir,identity);
