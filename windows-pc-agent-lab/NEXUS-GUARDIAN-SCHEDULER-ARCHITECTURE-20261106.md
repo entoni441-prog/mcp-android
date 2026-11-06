@@ -61,3 +61,13 @@ The 0.2 CLI child SIGKILL and 0.3 Guardian controller SIGKILL remain independent
 7. No change to main/production without a separate explicit approval.
 
 The next implementation is the **native Windows process containment and singleton helper**. It should be completed with the existing tooling if technically possible, without installing an unnecessary SDK/subscription or attempting to bypass any tool safety barrier.
+
+## Final verification checkpoint — 2026-11-06
+
+- Implementation: pure restart eligibility contract and an append-only durable operation journal in the experiment branch. The journal now rejects unanchored COMMITTED or IN_FLIGHT records without their full preceding durable chain.
+- Owner Windows Node 24: **51/51 PASS**, 0 failed.
+- GitHub Actions: run **42169390839**, **Windows SUCCESS + Ubuntu SUCCESS (2/2)** on source commit `50ab4f13ab6808eb34a49efc108ffc9aa50836c0`.
+  https://github.com/entoni441-prog/mcp-android/actions/runs/42169390839
+- Disabled Scheduler XML template is a design artifact only, not installed or activated.
+- **NOT IMPLEMENTED OR VERIFIED:** real Windows Job Object launcher, OS-owned mutex, heartbeat watchdog, persisted budget/epoch allocator, integration of the journal into actual Codex actions, real hung-process and reboot recovery tests, notification path and operational Guardian recovery. No production readiness claim.
+- No reason to repeat Auto-Resume 0.2 and Guardian 0.3 real SIGKILL trials; they remain independent accepted prior checkpoints.
