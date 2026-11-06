@@ -40,9 +40,9 @@ async function sandbox(t){
   t.after(()=>fs.rm(dir,{recursive:true,force:true}));
   return dir;
 }
-function start(id,dir,mode,heartbeat=2200,limit=18000){
+function start(id,dir,mode,heartbeat=2200,limit=18000,extraEnv={}){
   const args=['run',id,process.execPath,fixtureScript,dir,mode,String(heartbeat),String(limit)];
-  const child=spawn(runner,args,{cwd:here,windowsHide:true,stdio:['ignore','pipe','pipe']});
+  const child=spawn(runner,args,{cwd:here,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...process.env,...extraEnv}});
   let out='',err='';
   child.stdout.on('data',c=>{out+=c.toString();});
   child.stderr.on('data',c=>{err+=c.toString();});
@@ -201,4 +201,20 @@ test('non-fixture executable arguments are rejected before any process is starte
   assert.equal(close,64);
   assert.match(stdout,/INVALID_TEST_ARGS/);
   assert.deepEqual(await fs.readdir(dir),[]);
+});
+
+test('failed Job assignment kills the exact suspended child before it can act',{timeout:12000},async t=>{
+  if(!supported(t))return;
+  const dir=await sandbox(t);
+  const p=start('reject-job-'+crypto.randomUUID().slice(0,8),dir,'normal',2500,7000,{
+    NEXUS_TEST_BEFORE_ASSIGN:'1'
+  });
+  const res=await result(p,4000);
+  assert.equal(res.code,70);
+  assert.match(res.out,/JOB_ASSIGN_INJECTED/);
+  const st=await read(path.join(dir,'job-host-status.json'));
+  assert.equal(st.reason,'TEST_BEFORE_ASSIGN');
+  assert.equal(st.jobActive,0);
+  assert.equal(await waitGone(st.childPid),true);
+  assert.equal((await fs.readdir(dir)).includes('effect-once.txt'),false);
 });
