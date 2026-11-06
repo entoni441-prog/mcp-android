@@ -1,3 +1,4 @@
+import {identity, exited, digest} from './lifecycle.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -27,7 +28,7 @@ export async function validate(m) {
   // Require a pre-existing state directory so realpath resolves every ancestor.
   const state = await fs.realpath(m.stateDirectory);
   const completionParent = await fs.realpath(path.dirname(m.completionFile));
-  if (inside(repo,state) || inside(state,repo) || !inside(state,completionParent) || m.completionFile === state || ['state.json','owner.json'].includes(path.basename(m.completionFile).toLowerCase())) fail('PATH_OVERLAP');
+  if (inside(repo,state) || inside(state,repo) || !inside(state,completionParent) || m.completionFile === state || ['state.json','owner.json','supervisor.json','supervisor-owner.json'].includes(path.basename(m.completionFile).toLowerCase())) fail('PATH_OVERLAP');
   if (await exists(m.completionFile)) { const s = await fs.lstat(m.completionFile); if (s.isSymbolicLink() || !s.isFile()) fail('MANIFEST_PATH'); }
   return m;
 }
@@ -57,10 +58,36 @@ export async function runManifest(input, options = {}) {
     };
     stateFile = path.join(m.stateDirectory,'state.json');
     // Permanent exclusive claim: even a supervisor crash must never silently rerun a task.
-    const claim = await fs.open(path.join(m.stateDirectory,'owner.json'),'wx',0o600).catch(() => fail('ALREADY_CLAIMED'));
-    try { await claim.writeFile(JSON.stringify({taskId:m.taskId})); await claim.sync(); } finally { await claim.close(); }
-    state = { taskId:m.taskId, attempt:0, childPid:null, threadId:null, recordedStatus:null, createdAt:new Date().toISOString() };
-    await save('CREATED','CREATED');
+    const manifestDigest=digest(m);
+    if(await exists(path.join(m.stateDirectory,'supervisor-owner.json'))){
+      const c=JSON.parse(await fs.readFile(path.join(m.stateDirectory,'supervisor-owner.json'),'utf8'));
+      if(!options.supervised || c.token!==options.supervised.token || c.taskId!==m.taskId || c.manifestDigest!==manifestDigest || JSON.stringify(await identity(process.ppid))!==JSON.stringify(c.identity)) fail('RECOVERY_EVIDENCE');
+    }else if(options.supervised) fail('RECOVERY_EVIDENCE');
+    if(options.recover){
+      const owner=JSON.parse(await fs.readFile(path.join(m.stateDirectory,'owner.json'),'utf8'));
+      const claim=JSON.parse(await fs.readFile(path.join(m.stateDirectory,'supervisor-owner.json'),'utf8'));
+      const candidate=JSON.parse(await fs.readFile(stateFile,'utf8'));
+      if(!options.supervised || claim.token!==options.supervised.token || owner.supervisorToken!==claim.token || owner.taskId!==m.taskId || owner.manifestDigest!==manifestDigest || candidate.manifestDigest!==manifestDigest || candidate.taskId!==m.taskId) fail('RECOVERY_EVIDENCE');
+      if(JSON.stringify(await identity(process.ppid))!==JSON.stringify(claim.identity)) fail('RECOVERY_EVIDENCE');
+      state=candidate;
+      if(candidate.childIdentity?.parent!==candidate.controllerIdentity?.pid) fail('RECOVERY_EVIDENCE');
+      if(!await exited(candidate.controllerIdentity)||!await exited(candidate.childIdentity)) fail('PROCESS_UNCERTAIN');
+      await guard();
+      if(await exists(m.completionFile)){
+        const stat=await fs.lstat(m.completionFile);
+        if(!stat.isFile()||stat.isSymbolicLink()||stat.size>1024)fail('RECOVERY_UNSAFE');
+        const marker=JSON.parse(await fs.readFile(m.completionFile,'utf8'));
+        if(marker.taskId!==m.taskId||marker.status!=='completed')fail('RECOVERY_UNSAFE');
+        state=candidate;return await save('COMPLETED','COMPLETION_MARKER');
+      }
+      if(!['RUNNING','RECOVERING'].includes(candidate.status)||candidate.recordedStatus||candidate.eventUnsafe||!uuid.test(candidate.threadId??'')) fail('RECOVERY_UNSAFE');
+      if(candidate.attempt!==0) fail('RESUMES_EXHAUSTED');
+      state=candidate; await guard(); state.attempt=1;await save('RECOVERING','RESERVED_RECOVERY');
+    }else{
+      const claim=await fs.open(path.join(m.stateDirectory,'owner.json'),'wx',0o600).catch(()=>fail('ALREADY_CLAIMED'));
+      try{await claim.writeFile(JSON.stringify({taskId:m.taskId,manifestDigest,supervisorToken:options.supervised?.token??null}));await claim.sync();}finally{await claim.close();}
+      state={taskId:m.taskId,manifestDigest,controllerIdentity:options.supervised ? await identity(process.pid) : null,attempt:0,childPid:null,childIdentity:null,threadId:null,recordedStatus:null,createdAt:new Date().toISOString()};await save('CREATED','CREATED');
+    }
     const completed = async () => {
       try {
         const stat = await fs.lstat(m.completionFile);
@@ -72,6 +99,8 @@ export async function runManifest(input, options = {}) {
     for (;;) {
       await guard();
       if (await completed()) return await save('COMPLETED','COMPLETION_MARKER');
+      if(await exists(m.completionFile)) return await save('STOP','INVALID_MARKER');
+      if(options.recover && !await exited(state.childIdentity)) fail('PROCESS_UNCERTAIN');
       const args = state.attempt === 0
         ? ['exec','--json','--sandbox','workspace-write','-C',m.workingDirectory,m.initialPrompt]
         : ['exec','resume','--json',state.threadId,m.resumePrompt];
@@ -86,20 +115,25 @@ export async function runManifest(input, options = {}) {
       child.stderr.on('data',() => {});
       child.stdout.on('data', chunk => {
         buffer += decoder.write(chunk);
-        if (buffer.length > 65536) { bad = true; buffer = ''; return; }
+        if (buffer.length > 65536) { bad = true; state.eventUnsafe=true; void save('STOP','BAD_EVENTS'); buffer = ''; return; }
         let n;
         while ((n = buffer.indexOf('\n')) >= 0) {
           const line = buffer.slice(0,n); buffer = buffer.slice(n+1);
           try {
             const e = JSON.parse(line);
             if (e.type === 'thread.started') {
-              if (typeof e.thread_id !== 'string' || !uuid.test(e.thread_id) || (state.threadId && state.threadId !== e.thread_id)) bad = true;
+              if (typeof e.thread_id !== 'string' || !uuid.test(e.thread_id) || (state.threadId && state.threadId !== e.thread_id)) { bad=true; state.eventUnsafe=true; void save('STOP','BAD_EVENTS'); }
               else { state.threadId = e.thread_id; void save(state.attempt ? 'RECOVERING':'RUNNING','THREAD_RECORDED').catch(() => { bad = true; }); }
-            } else if (['turn.completed','turn.failed'].includes(e.type)) state.recordedStatus = e.type;
-          } catch { bad = true; }
+            } else if (['turn.completed','turn.failed'].includes(e.type)) { state.recordedStatus=e.type; void save('RUNNING','TURN_RECORDED'); } else if (/approval|permission|request_user_input/i.test(e.type??'')) { bad=true; state.eventUnsafe=true; void save('STOP','APPROVAL_BOUNDARY'); }
+          } catch { bad = true; state.eventUnsafe=true; void save('STOP','BAD_EVENTS'); }
         }
       });
       state.childPid = child.pid ?? null;
+      state.childIdentity = options.supervised ? await identity(child.pid) : null;
+      if (state.childIdentity) {
+        const actual=await fs.realpath(state.childIdentity.exe), expected=await fs.realpath(m.codexExe);
+        if(state.childIdentity.parent!==process.pid || (process.platform==='win32' ? actual.toLowerCase()!==expected.toLowerCase() : actual!==expected)) fail('PROCESS_UNCERTAIN');
+      }
       await save(state.attempt ? 'RECOVERING':'RUNNING','CHILD_STARTED');
       let interval;
       const boundary = new Promise(resolve => {
@@ -138,7 +172,7 @@ export async function runManifest(input, options = {}) {
     }
   } catch (e) {
     if (activeChild) { activeChild.stdout.destroy(); activeChild.stderr.destroy(); activeChild.unref(); }
-    const reason = ['MANIFEST_SCHEMA','MANIFEST_PATH','PATH_OVERLAP','ALREADY_CLAIMED','OWNER_STOP','CLI_HASH','WRONG_BRANCH','DIRTY_WORKTREE'].includes(e.message) ? e.message : 'IO_ERROR';
+    const reason = ['MANIFEST_SCHEMA','MANIFEST_PATH','PATH_OVERLAP','ALREADY_CLAIMED','OWNER_STOP','CLI_HASH','WRONG_BRANCH','DIRTY_WORKTREE','RECOVERY_EVIDENCE','RECOVERY_UNSAFE','PROCESS_UNCERTAIN','RESUMES_EXHAUSTED'].includes(e.message) ? e.message : 'IO_ERROR';
     if (state) return await save('STOP',reason);
     return {status:'STOP',reason};
   }
@@ -147,8 +181,10 @@ export async function runManifest(input, options = {}) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   let result;
   try {
-    if (process.argv.length !== 4 || process.argv[2] !== 'run') fail('USAGE');
-    result = await runManifest(JSON.parse(await fs.readFile(process.argv[3],'utf8')));
+    if (process.argv.length !== 4 || !['run','recover'].includes(process.argv[2])) fail('USAGE');
+    const opts=process.send ? await new Promise(r=>process.once('message',r)) : {};
+    if(process.argv[2]==='recover'&&!process.send) fail('RECOVERY_EVIDENCE');
+    result=await runManifest(JSON.parse(await fs.readFile(process.argv[3],'utf8')),{...opts,recover:process.argv[2]==='recover'});
   } catch { result = {status:'STOP',reason:'INVALID_INPUT'}; }
   console.log(JSON.stringify(result));
   if (result.status !== 'COMPLETED') process.exitCode = 1;

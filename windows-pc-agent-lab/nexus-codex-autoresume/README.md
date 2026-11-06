@@ -129,3 +129,48 @@ precede each spawn but cannot eliminate executable replacement races. Supervisor
 using different state directories cannot coordinate a global singleton; operators
 must launch only one task. Unbounded or approval-requiring work must stop for owner
 handling. No installation, login, commit, push, or production trial is included.
+
+## Experimental independent supervisor 0.2
+
+Entry point: `node supervisor.mjs run <absolute-manifest.json>`. Uses the existing
+strict manifest schema above, with maxResumes exactly 1. State directory must be
+pre-created outside the repository. The task must independently check its
+completion marker before any effect, including on resume. This is a cooperative,
+idempotent one-task experiment, not a general exactly-once execution service.
+
+The supervisor forks a separate controller. Permanent `supervisor-owner.json`
+and `owner.json` claims prevent unattended second invocation, including after
+supervisor death. `supervisor.json` holds allowlisted status and launch identity;
+`state.json` holds the manifest digest, exact thread UUID, child identity and
+monotonic attempt reservation. No prompt, raw event, command line or environment
+is written. Claims are never automatically cleared. Keep this dedicated directory
+private: these files are crash evidence, not protection against a malicious user
+who can rewrite state or code.
+
+Recovery requires the same live supervisor through private inherited IPC, matching
+task and immutable manifest digest, original controller exit and verified child
+exit. Windows uses read-only CIM executable, parent and UTC creation time; Linux
+uses /proc executable, parent and start tick. Missing identity or inaccessible CIM
+means STOP. PID reuse with different creation time proves the original process is
+absent. The supervisor waits for an orphan's natural exit, never kills a discovered
+PID, and rechecks absence in recover before launch. Failed turns, approval events,
+invalid markers, unknown state, owner stop, branch/hash changes and exhausted
+budget block replay. A durable reservation before resume consumes the single
+budget even if launching fails. Never uses --last or repeats the initial prompt.
+
+Default total supervisor deadline is ten minutes; controller default is five
+minutes. Deadline may terminate only the supervisor's own controller handle;
+an orphan is left untouched. There is no scheduler, service installation, Host
+integration, GUI auto-resume or production deployment. The supervisor itself is
+not automatically recovered. Ordinary controller run retains its original
+ChildProcess-based behavior when used without supervision.
+
+Validation in the restricted Windows workspace: CIM returned HRESULT 0x80041003
+(access denied). Therefore autonomous controller-crash recovery cannot receive
+REAL PASS here. Tests explicitly skip identity-dependent integration cases rather
+than substitute PID-only evidence. A separate real SIGKILL test terminates an
+owned test controller and lets its fake child exit on a bounded timer, proving
+no initial replay after the permanent claim. Full recovery acceptance still needs
+an environment with readable process identity and independent operator injection
+against the explicitly authorized test-only Codex job. Mock success is preliminary
+only; no real Codex CLI recovery has been claimed.

@@ -17,7 +17,7 @@ if (resume) {
   console.log(JSON.stringify({type:'turn.completed'}));
 } else {
   if (mode === 'bad') { console.log('invalid JSON CANARY_SECRET'); process.exit(5); }
-  if (mode !== 'missing') {
+  if (!['missing','slow-missing'].includes(mode)) {
     const event = JSON.stringify({type:'thread.started',thread_id:THREAD_ID,secret:'CANARY_SECRET'});
     // Deliberately split one event across multiple writes.
     process.stdout.write(event.slice(0,17));
@@ -36,5 +36,6 @@ if (resume) {
     process.exit(8);
   }
   if (mode === 'missing' || mode === 'exhaust') process.exit(7);
+  if (mode === 'slow-exit' || mode === 'slow-missing' || mode === 'slow-orphan') { await new Promise(r=>setTimeout(r,mode === 'slow-orphan' ? 6000 : 2200)); process.exit(9); }
   setInterval(() => {},1000);
 }
