@@ -18,13 +18,19 @@ if(!exact)process.exit(64);
 // before CREATE_SUSPENDED / Job assignment. Verify the actual parent + child
 // identity against the receipt it writes immediately after ResumeThread.
 // This avoids duplicating Windows TEMP/TMP interpretation in Node.
-let nativeScope=false;
+let nativeScope=false,nativeTaskId=null;
 for(let tries=0;tries<60;tries++){
   try{
     const row=JSON.parse(await fs.readFile(path.join(root,'job-host-status.json'),'utf8'));
     if(row.status==='RUNNING'&&row.ownerPid===process.ppid&&
-       row.childPid===process.pid&&Number.isSafeInteger(row.jobActive)&&row.jobActive>=1){
-      nativeScope=true;break;
+       row.childPid===process.pid&&Number.isSafeInteger(row.jobActive)&&row.jobActive>=1&&
+       typeof row.taskId==='string'&&/^[A-Za-z0-9_-]{1,48}$/.test(row.taskId)){
+      const first=JSON.parse(await fs.readFile(path.join(root,'native-epoch-000.json'),'utf8'));
+      const budget=JSON.parse(await fs.readFile(path.join(root,'budget-anchor.json'),'utf8'));
+      if(first.taskId===row.taskId&&first.epoch===0&&
+         first.ownerPid===row.ownerPid&&budget.taskId===row.taskId&&budget.maxAttempts===5){
+        nativeTaskId=row.taskId;nativeScope=true;break;
+      }
     }
   }catch{}
   await new Promise(resolve=>setTimeout(resolve,35));
@@ -53,10 +59,10 @@ await Promise.all([state,owner,repo].map(p=>fs.mkdir(p)));
 await exec('git',['init','-b','isolated-test'],{cwd:repo,timeout:12000,windowsHide:true});
 await fs.writeFile(path.join(repo,'.git','info','exclude'),'mock.json\n');
 await fs.writeFile(path.join(repo,'mock.json'),JSON.stringify({
-  stateDirectory:state,taskId:'guardian-integration-task',mode:mode==='normal'?'success':'hold'
+  stateDirectory:state,taskId:nativeTaskId,mode:mode==='normal'?'success':'hold'
 }));
 const sha=crypto.createHash('sha256').update(await fs.readFile(process.execPath)).digest('hex');
-const m={taskId:'guardian-integration-task',approved:true,workingDirectory:repo,
+const m={taskId:nativeTaskId,approved:true,workingDirectory:repo,
   codexExe:process.execPath,codexSha256:sha,expectedBranch:'isolated-test',
   stateDirectory:state,initialPrompt:'TEST_ONLY_NO_EXTERNAL_ACTIONS',
   resumePrompt:'TEST_ONLY_NO_EXTERNAL_ACTIONS',maxResumes:1,completionFile:path.join(state,'complete.json')
