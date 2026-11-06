@@ -100,6 +100,7 @@ test('parallel second owner is rejected by kernel mutex; original remains alive'
   let pid;
   try{
     const state=await until(path.join(dir,'job-host-status.json'),s=>s.status==='RUNNING');
+    await until(path.join(dir,'fixture-status.json'),s=>s.ready===true&&s.pid===state.childPid);
     pid=state.childPid;
     assert.ok(alive(state.ownerPid)&&alive(state.childPid));
     const second=start(id,dir,'hold',3000,22000);
