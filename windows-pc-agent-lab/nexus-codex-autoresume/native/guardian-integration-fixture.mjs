@@ -8,10 +8,11 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {runGuardian} from '../guardian.mjs';
+import {prepareOperation} from '../operation-journal.mjs';
 
 const exec=promisify(execFile), root=process.argv[2], mode=process.argv[3];
 const exact=process.argv.length===4 && typeof root==='string' && path.isAbsolute(root)
-  && path.basename(root).startsWith('nexus-job-test-') && ['normal','hang'].includes(mode);
+  && path.basename(root).startsWith('nexus-job-test-') && ['normal','hang','prepared'].includes(mode);
 if(!exact)process.exit(64);
 
 // Native Win32 owner has already validated this directory using Path.GetTempPath
@@ -56,6 +57,28 @@ await claim.writeFile(JSON.stringify({testOnly:true,runPid:process.pid}));
 await claim.sync();await claim.close();
 
 await Promise.all([state,owner,repo].map(p=>fs.mkdir(p)));
+if(mode==='prepared'){
+  // Negative-control recovery boundary: one durable PREPARED receipt but
+  // NO external call, NO fake effect, NO real Codex process. Native Job owner
+  // may be killed to test OS proof and a dry-run epoch-1 ledger claim.
+  // This synthetic UUID is NEVER used to invoke a real CLI.
+  const threadId='019a8f9b-1452-71c0-8a17-6915a0904d67';
+  await prepareOperation(state,{taskId:nativeTaskId,operationId:'local_effect_001',epoch:0});
+  const h=await fs.open(path.join(state,'state.json'),'wx',0o600);
+  try {
+    await h.writeFile(JSON.stringify({taskId:nativeTaskId,threadId,status:'RUNNING',
+      attempt:0,recordedStatus:null,childPid:null}));
+    await h.sync();
+  }finally{await h.close();}
+  const heartbeatPath=path.join(root,'heartbeat-'+process.pid+'.txt');
+  await fs.writeFile(heartbeatPath,String(Date.now()));
+  setInterval(async()=>{try{await fs.writeFile(heartbeatPath,String(Date.now()));}catch{}},100);
+  const ready=await fs.open(path.join(root,'synthetic-prepared-ready.json'),'wx',0o600);
+  try{await ready.writeFile(JSON.stringify({taskId:nativeTaskId,threadId,
+    noExternalEffect:true,guardianStarted:false}));await ready.sync();}finally{await ready.close();}
+  await new Promise(()=>{});
+  process.exit(90); // unreachable without external owner termination
+}
 await exec('git',['init','-b','isolated-test'],{cwd:repo,timeout:12000,windowsHide:true});
 await fs.writeFile(path.join(repo,'.git','info','exclude'),'mock.json\n');
 await fs.writeFile(path.join(repo,'mock.json'),JSON.stringify({
