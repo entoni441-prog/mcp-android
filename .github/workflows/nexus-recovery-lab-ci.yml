@@ -1,0 +1,29 @@
+name: nexus-recovery-lab-ci
+
+on:
+  push:
+    branches:
+      - experiment/nexus-codex-recovery-20261106
+    paths:
+      - 'windows-pc-agent-lab/nexus-recovery-lab/**'
+      - '.github/workflows/nexus-recovery-lab-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-lab:
+    name: Recovery lab (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test crash checkpoint and isolated TCP replay
+        run: node --test windows-pc-agent-lab/nexus-recovery-lab/worker.test.mjs windows-pc-agent-lab/nexus-recovery-lab/transport.test.mjs
