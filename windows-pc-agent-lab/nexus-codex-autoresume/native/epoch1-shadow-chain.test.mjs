@@ -121,6 +121,20 @@ test('OS Job death + exact session journal + single epoch-1 SHADOW claim, never 
   // This does NOT create native-epoch-001 or launch a recovery process.
   const consumed=await claimRecoveryAttempt(root,task,1);
   assert.deepEqual(consumed,{decision:'CLAIMED',epoch:1,attempt:1,remaining:4});
+  // Even when the budget is already burned, a SYNTHETIC UUID must never
+  // enter the real read-only Codex recovery launcher.
+  const alternate=path.join(dirOfFile,'real-readonly-resume-fixture.mjs');
+  let refused;
+  try{
+    const r=await exec(exe,['run',task,process.execPath,alternate,root,
+      'resume-readonly','8000','17000'],{
+        cwd:dirOfFile,timeout:8000,windowsHide:true,maxBuffer:2048
+      });
+    refused={exitCode:0,stdout:r.stdout};
+  }catch(e){refused={exitCode:Number(e.code)||99,stdout:String(e.stdout||'')};}
+  assert.equal(refused.exitCode,24,'synthetic-only UUID MUST NOT launch a real CLI');
+  assert.match(refused.stdout,/E1_READONLY_PREFLIGHT_DENIED/);
+  assert.equal(await fs.access(path.join(root,'native-epoch-001.json')).then(()=>true,()=>false),false);
   const nativeShadow=await reserve(task,root);
   assert.equal(nativeShadow.exitCode,0,JSON.stringify(nativeShadow));
   assert.deepEqual(nativeShadow.response,{
