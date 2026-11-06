@@ -27,6 +27,8 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP 'GuardianNamedJob-0.7.exe'
           & $csc /nologo /target:exe /r:System.Core.dll ('/out:' + $out) $src
           if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Static check owner-only real Codex crash harness (never execute here)
+        run: node --check windows-pc-agent-lab/nexus-codex-autoresume/native/real-codex-crash-smoke.mjs
       - name: Named kernel Job lifecycle including forced owner death
         env:
           NEXUS_JOBHOST_EXE: ${{ runner.temp }}\GuardianNamedJob-0.7.exe
