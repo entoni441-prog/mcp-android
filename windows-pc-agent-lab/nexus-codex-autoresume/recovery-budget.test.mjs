@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import {spawn} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {
   initializeRecoveryBudget,inspectRecoveryBudget,claimRecoveryAttempt,assessStableReset
 } from './recovery-budget.mjs';
@@ -118,4 +120,32 @@ test('reset assessment cannot mutate durable budget or restore attempts',async t
   assert.equal(assessStableReset(e).decision,'NEEDS_NATIVE_ATTESTATION');
   assert.equal((await inspectRecoveryBudget(dir,'task_01')).used,1);
   assert.equal((await inspectRecoveryBudget(dir,'task_01')).remaining,4);
+});
+
+test('independent process crash cannot refund or repeat a spent attempt',{timeout:15000},async t=>{
+  const dir=await fixture(t);await initializeRecoveryBudget(dir,'task_01');
+  const worker=fileURLToPath(new URL('./recovery-budget-child.mjs',import.meta.url));
+  const p=spawn(process.execPath,[worker,dir,'task_01','1'],{
+    stdio:['ignore','pipe','pipe'],windowsHide:true
+  });
+  t.after(()=>{if(p.exitCode===null)p.kill('SIGKILL');});
+  let output='';
+  const delivered=new Promise((resolve,reject)=>{
+    p.once('error',reject);
+    p.stdout.on('data',chunk=>{
+      output+=chunk.toString();
+      if(output.includes('\n'))resolve(JSON.parse(output.trim().split(/\r?\n/)[0]));
+    });
+    p.once('exit',()=>reject(new Error('WORKER_EXITED_BEFORE_CLAIM')));
+  });
+  const claim=await Promise.race([
+    delivered,new Promise((_,reject)=>setTimeout(()=>reject(Error('WORKER_NO_RECEIPT')),6000))
+  ]);
+  assert.equal(claim.decision,'CLAIMED');
+  assert.equal(claim.epoch,1);
+  p.kill('SIGKILL');
+  await new Promise(resolve=>p.once('close',resolve));
+  assert.equal((await inspectRecoveryBudget(dir,'task_01')).used,1);
+  assert.equal((await claimRecoveryAttempt(dir,'task_01',1)).reason,'EPOCH_MISMATCH');
+  assert.equal((await claimRecoveryAttempt(dir,'task_01',2)).attempt,2);
 });
