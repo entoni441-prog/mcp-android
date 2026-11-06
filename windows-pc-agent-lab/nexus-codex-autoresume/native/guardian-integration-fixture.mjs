@@ -14,7 +14,15 @@ const exec=promisify(execFile), root=process.argv[2], mode=process.argv[3];
 const exact=process.argv.length===4 && typeof root==='string' && path.isAbsolute(root)
   && path.basename(root).startsWith('nexus-job-test-') && ['normal','hang'].includes(mode)
   && path.relative(path.resolve(os.tmpdir()),path.resolve(root)).split(path.sep)[0]!=='..';
-if(!exact)process.exit(64);
+if(!exact){
+  try{await fs.writeFile(path.join(root,'guard-entry-error.json'),JSON.stringify({
+    reason:'INVALID_TEST_SCOPE',argvLen:process.argv.length,
+    rootAbsolute:path.isAbsolute(root||''),nameOk:path.basename(root||'').startsWith('nexus-job-test-'),
+    modeOk:['normal','hang'].includes(mode),
+    underTemp:path.relative(path.resolve(os.tmpdir()),path.resolve(root||'.')).split(path.sep)[0]!=='..'
+  }));}catch{}
+  process.exit(64);
+}
 
 const state=path.join(root,'state'),owner=path.join(root,'owner'),repo=path.join(root,'repo');
 const fake=fileURLToPath(new URL('./guarded-fake-codex.mjs',import.meta.url));
