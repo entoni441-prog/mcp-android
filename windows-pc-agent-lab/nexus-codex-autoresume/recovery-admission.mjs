@@ -20,8 +20,10 @@ const keys=(obj,expected)=>obj&&typeof obj==='object'&&!Array.isArray(obj)&&
   Object.keys(obj).length===expected.length&&expected.every(k=>Object.hasOwn(obj,k));
 const natkeys=['taskId','epoch','restartCount','ownerPid','ownerStartTicks'];
 export async function inspectRecoveryAdmission({root,taskId,threadId,operationId}={}){
-  if(typeof root!=='string'||!path.isAbsolute(root)||!id.test(taskId)||
-     !uuid.test(threadId)||!id.test(operationId))return stop('INVALID_IDENTITY');
+  if(typeof root!=='string'||!path.isAbsolute(root)||
+     typeof taskId!=='string'||!id.test(taskId)||
+     typeof threadId!=='string'||!uuid.test(threadId)||
+     typeof operationId!=='string'||!id.test(operationId))return stop('INVALID_IDENTITY');
   const stateDir=path.join(root,'state');
   try{
     // Owner stop is an absolute block; no external ledger can waive it.
@@ -40,7 +42,11 @@ export async function inspectRecoveryAdmission({root,taskId,threadId,operationId
     if(!keys(epoch,natkeys)||epoch.taskId!==taskId||epoch.epoch!==0||
        epoch.restartCount!==0||!Number.isSafeInteger(epoch.ownerPid)||epoch.ownerPid<=0||
        !tickMatch)return stop('NATIVE_EPOCH_UNVERIFIED');
-    const assignment=await fs.readFile(path.join(root,'native-job-assigned-e0.txt'),'utf8');
+    const assignmentFile=path.join(root,'native-job-assigned-e0.txt');
+    const stat=await fs.lstat(assignmentFile);
+    if(!stat.isFile()||stat.isSymbolicLink()||stat.size>1024)
+      return stop('JOB_ASSIGNMENT_UNVERIFIED');
+    const assignment=await fs.readFile(assignmentFile,'utf8');
     const fields=assignment.trimEnd().split(/\r?\n/);
     const expected=['taskId='+taskId,'ownerPid='+epoch.ownerPid,
       'ownerStartTicks='+tickMatch[1]];
