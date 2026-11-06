@@ -1,0 +1,42 @@
+name: nexus-guardian-budget-native-ci
+on:
+  push:
+    branches: [experiment/nexus-guardian-budget-20261106]
+    paths:
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/native/**'
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget*'
+      - '.github/workflows/nexus-guardian-budget-native-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-accounting:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Compile native owner
+        shell: pwsh
+        run: |
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $exe = Join-Path $env:RUNNER_TEMP 'GuardianBudgetNative.exe'
+          $src = (Resolve-Path 'windows-pc-agent-lab/nexus-codex-autoresume/native/GuardianJobHost.cs').Path
+          & $csc /nologo /target:exe /r:System.Core.dll ('/out:' + $exe) $src
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Test native owner, durable budget and full mock Guardian chain
+        env:
+          NEXUS_JOBHOST_EXE: ${{ runner.temp }}\GuardianBudgetNative.exe
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/native/jobhost.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/native/guardian-chain.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget.test.mjs
+  portable-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify budget, STOP outbox, journal and restart gating
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/stop-outbox.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs
