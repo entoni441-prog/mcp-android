@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
+import {observeKernelJob} from '../kernel-job-observation.mjs';
 
 const call=promisify(execFile);
 const here=path.dirname(fileURLToPath(import.meta.url));
@@ -66,6 +67,10 @@ test('kernel-backed named job is PRESENT while Guardian runs and NOT_FOUND after
   const assignment=await fs.readFile(path.join(dir,'native-job-assigned-e0.txt'),'utf8');
   assert.match(assignment,/jobAssigned=1/);
   const live=await observe(task,dir);
+  const pinned=crypto.createHash('sha256').update(await fs.readFile(native)).digest('hex');
+  const activeProof=await observeKernelJob({root:dir,taskId:task,nativeExe:native,expectedSha256:pinned});
+  assert.equal(activeProof.decision,'STOP');
+  assert.equal(activeProof.reason,'JOB_OBJECT_STILL_PRESENT');
   assert.equal(live.status,'PRESENT',JSON.stringify(live));
   assert.ok(live.active>=1);
   assert.equal(live.authorization,'NONE');
@@ -73,6 +78,9 @@ test('kernel-backed named job is PRESENT while Guardian runs and NOT_FOUND after
   assert.equal(stopped.code,20,JSON.stringify({...running.getOutput(),stopped}));
   const after=await observe(task,dir);
   assert.deepEqual(after,{status:'NOT_FOUND',authorization:'NONE'});
+  const kernel=await observeKernelJob({root:dir,taskId:task,nativeExe:native,expectedSha256:pinned});
+  assert.deepEqual(kernel,{decision:'OS_OBSERVATION_ONLY',
+    reason:'JOB_NOT_FOUND_IN_CURRENT_SESSION',canResume:false});
   assert.equal(await waitGone(receipt.childPid),true);
 });
 test('SIGKILL of exact native owner removes named Job and every owned descendant',{timeout:16000},async t=>{
@@ -145,4 +153,16 @@ test('extra OS Job handle keeps the tree alive after owner death; probe must blo
   while(Date.now()<end);
   assert.deepEqual(gone,{status:'NOT_FOUND',authorization:'NONE'});
   assert.equal(await waitGone(receipt.childPid),true);
+});
+
+test('pinned native probe refuses wrong checksum and missing OS receipt',{timeout:3500},async t=>{
+  if(!supported(t))return;
+  const dir=await scratch(t),task='jobproof-negative-'+crypto.randomUUID().slice(0,8);
+  const sha=crypto.createHash('sha256').update(await fs.readFile(native)).digest('hex');
+  const wrong=await observeKernelJob({root:dir,taskId:task,nativeExe:native,
+    expectedSha256:'0'.repeat(64)});
+  assert.deepEqual(wrong,{decision:'STOP',reason:'PROBE_BINARY_MISMATCH'});
+  const missing=await observeKernelJob({root:dir,taskId:task,nativeExe:native,
+    expectedSha256:sha});
+  assert.deepEqual(missing,{decision:'STOP',reason:'PROBE_FAILED_OR_UNCERTAIN'});
 });
