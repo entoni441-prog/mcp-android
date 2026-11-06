@@ -77,8 +77,10 @@ async function poll(){
 }
 try{
   await fs.mkdir(root,{recursive:true});
-  const real=await fs.realpath(root);
-  if(path.resolve(real).toLowerCase()!==path.resolve(root).toLowerCase())
+  // Reject a redirect of the watched directory itself. CI runner's parent
+  // Temp directory can be a junction/alias and need not stringify identically.
+  const directory=await fs.lstat(root);
+  if(!directory.isDirectory()||directory.isSymbolicLink())
     throw Error('WATCH_ROOT_REDIRECTED');
   await fs.mkdir(pathIn('outbox'),{recursive:true});
   do{
