@@ -176,6 +176,28 @@ class GuardianJobHost {
         return 12;
       }
       owned=true;
+      // Native owner allocates the FIRST durable generation, while holding
+      // the kernel mutex, BEFORE a Guardian/controller can execute. Restarting
+      // an already used state directory cannot silently replay its effects.
+      // A later epoch may only be introduced after independently verifying
+      // exact-thread state, zero Job processes and the irreversible-action journal.
+      if (String.Equals(Path.GetFileName(script),"guardian-integration-fixture.mjs",StringComparison.OrdinalIgnoreCase)) {
+        string claimPath=Path.Combine(dir,"native-epoch-000.json");
+        try {
+          string receipt="{\"taskId\":\""+task+"\",\"epoch\":0,\"restartCount\":0,\"ownerPid\":"+ownerPid+"}\n";
+          byte[] bytes=Encoding.UTF8.GetBytes(receipt);
+          using(FileStream claim=new FileStream(claimPath,FileMode.CreateNew,FileAccess.Write,FileShare.None)){
+            claim.Write(bytes,0,bytes.Length);
+            claim.Flush(true);
+          }
+        }catch(IOException){
+          if(File.Exists(claimPath)){
+            Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"NATIVE_EPOCH_ALREADY_CLAIMED\"}");
+            return 17;
+          }
+          throw new InvalidOperationException("NATIVE_EPOCH_IO_ERROR");
+        }
+      }
       job=CreateJobObject(IntPtr.Zero,null);
       if (job==IntPtr.Zero) throw new InvalidOperationException("JOB_CREATE_FAILED");
       JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
