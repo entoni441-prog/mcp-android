@@ -68,9 +68,9 @@ try{
     thread,'This is an isolated read-only diagnostic. Do not invoke tools or modify files. Reply exactly NEXUS-CLI-CRASH-RESUMED.']);
   second.feed();
   const resumed=await Promise.race([second.death,limit(55000,'RESUME_TIMEOUT')]);
-  // Let streamed JSONL finish briefly without trusting descendant pipe closure.
-  await Promise.race([new Promise(resolve=>second.child.stdout.once('end',resolve)),
-    limit(500,'OUTPUT_DRAIN_TIMEOUT').catch(()=>undefined)]);
+  // Give already-sent JSONL a bounded drain without awaiting a descendant
+  // holding inherited output handles open indefinitely.
+  await new Promise(resolve=>setTimeout(resolve,250));
   const events=second.events;
   const ids=events.filter(e=>e.type==='thread.started').map(e=>e.thread_id);
   const outputs=events.filter(e=>e.type==='item.completed'&&e.item?.type==='agent_message').map(e=>e.item.text||'');
