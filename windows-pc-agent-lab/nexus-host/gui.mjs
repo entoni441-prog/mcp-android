@@ -472,6 +472,40 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     },
 
     /**
+     * Isolated window-management exception for Windows Terminal (NX-TM-01).
+     * Never sends a mouse click/key to the shell, never reads terminal content.
+     * Owner must explicitly request this exact window (ownerRequested=true).
+     * UIA checks the top-level HWND and PID again immediately before changing
+     * ONLY WindowVisualState to Minimized. All other shell input stays denied.
+     */
+    async minimize_window(args) {
+      requireCap(caps, 'gui_input'); winOnly();
+      if (!onlyKeys(args, ['pid', 'title', 'ownerRequested']) || !int(args.pid, 1, 2 ** 31)) bad();
+      if (args.title !== undefined && (typeof args.title !== 'string' || !args.title || args.title.length > 200)) bad();
+      if (args.ownerRequested !== true || caps.grantsFromChat === false)
+        throw Error('owner_request_required: minimize a protected shell window only when owner explicitly requested it');
+      const found = await uia({mode: 'windows', pid: args.pid});
+      if (String(found.target?.process || '').replace(/\.exe$/i, '').toLowerCase() !== 'windowsterminal')
+        throw Error('minimize_target_not_supported: terminal-only window-management exception');
+      let wins = (found.windows || []).filter(w => Number.isSafeInteger(Number(w.hwnd)) && Number(w.hwnd) > 0 &&
+        Number(w.pid) === args.pid);
+      if (args.title) wins = wins.filter(w => String(w.name || '').toLowerCase().includes(args.title.toLowerCase()));
+      if (wins.length !== 1)
+        return {status: wins.length > 1 ? 'ambiguous' : 'not_found',
+          candidates: wins.slice(0, 10).map(w => String(w.name || '').slice(0, 100)),
+          instruction: 'Specify a unique title and current PID from list_windows; no window was changed.'};
+      await ownerGuard();
+      const w = wins[0];
+      const effect = await uia({mode: 'minimize', pid: args.pid, hwnd: Number(w.hwnd)});
+      if (effect?.verified !== true || Number(effect.pid) !== args.pid ||
+          String(effect.process || '').replace(/\.exe$/i, '').toLowerCase() !== 'windowsterminal' ||
+          String(effect.hwnd) !== String(w.hwnd) || effect.isMinimizedAfter !== true)
+        throw Error('minimize_not_verified: no other input was attempted');
+      return {status: effect.wasMinimized ? 'already_minimized' : 'minimized',
+        process: 'WindowsTerminal', pid: args.pid, verified: true, shellInputSent: false};
+    },
+
+    /**
      * 0.5.1 D5: close a window or tab by name. Autonomous when NEXUS opened it, or when the owner asked for exactly this
      * in chat (ownerRequested) and the owner's switch grantsFromChat is on. Otherwise consent_required. Unsaved changes in
      * an owner document are never discarded silently: onUnsaved 'ask' (default) cancels the prompt and returns
