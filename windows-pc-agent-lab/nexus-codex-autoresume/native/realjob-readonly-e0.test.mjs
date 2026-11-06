@@ -27,7 +27,12 @@ const here=path.dirname(fileURLToPath(import.meta.url));
 const fixture=path.join(here,'real-readonly-fixture.mjs');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const sha=async p=>crypto.createHash('sha256').update(await fs.readFile(p)).digest('hex');
-const timeout=async(p,ms)=>Promise.race([p,sleep(ms).then(()=>({timeout:true}))]);
+const timeout=async(p,ms)=>{
+  let handle;
+  try{return await Promise.race([p,new Promise(resolve=>{
+    handle=setTimeout(()=>resolve({timeout:true}),ms);
+  })]);}finally{clearTimeout(handle);}
+};
 const alive=pid=>{try{process.kill(pid,0);return true;}catch{return false;}};
 const waitGone=async(pid,ms=7000)=>{
   const until=Date.now()+ms;while(Date.now()<until){if(!alive(pid))return true;await sleep(50);}
