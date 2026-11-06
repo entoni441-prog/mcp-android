@@ -29,10 +29,18 @@ jobs:
         env:
           NEXUS_JOBHOST_EXE: ${{ runner.temp }}\GuardianJobHost-05.exe
         run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/native/jobhost.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/native/guardian-chain.test.mjs
-      - name: Guardian and controller regression
-        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/guardian.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/controller.test.mjs
       - name: Immutable journal and restart eligibility
         run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs
+  legacy-regression:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Independent original Guardian and controller acceptance
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/guardian.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/controller.test.mjs
   portable:
     runs-on: ubuntu-latest
     timeout-minutes: 8
