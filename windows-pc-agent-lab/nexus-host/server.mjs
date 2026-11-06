@@ -125,7 +125,7 @@ export function loadConfig(env = process.env) {
 /** One runtime per host process: Java daemon, browser, task table. Tests inject fakes via deps.runtime. */
 /** Journal (owner requirement 02.11): tools that only poll/observe are not listed. */
 /** NEXT stale_args: input tools refused after a resume until one of OBSERVE_TOOLS re-identified the target. */
-export const STALE_TOOLS = new Set(['mouse_action', 'keyboard_action', 'browser_action', 'close_window', 'focus_window']);
+export const STALE_TOOLS = new Set(['mouse_action', 'keyboard_action', 'browser_action', 'close_window', 'focus_window', 'minimize_window']);
 export const OBSERVE_TOOLS = new Set(['capture_screen', 'window_info', 'inspect_ui', 'browser_snapshot', 'list_windows']);
 const QUIET_TOOLS = new Set(['live_frame', 'live_control', 'get_capabilities', 'host_diagnostics', 'connection_status', 'task_status']);
 /** Process / app name the call acted on — names only (journal and Live View caption never carry arguments or text). */
@@ -186,7 +186,7 @@ export function createRuntime(cfg, deps = {}) {
   const rtRef = {reobserve: null}; // NEXT stale_args: set after a pause/STOP/task resume until the target is observed again
   const handlers = {
     image_selftest: a => gui.image_selftest(a), capture_screen: a => observe(a, gui.capture_screen(a)), focus_window: a => gui.focus_window(a),
-    window_info: a => observe(a, gui.window_info(a)), close_window: a => gui.close_window(a), inspect_ui: a => observe(a, gui.inspect_ui(a)), mouse_action: a => gui.mouse_action(a), keyboard_action: a => gui.keyboard_action(a),
+    window_info: a => observe(a, gui.window_info(a)), close_window: a => gui.close_window(a), minimize_window: a => gui.minimize_window(a), inspect_ui: a => observe(a, gui.inspect_ui(a)), mouse_action: a => gui.mouse_action(a), keyboard_action: a => gui.keyboard_action(a),
     list_processes: a => procs.list_processes(a), process_action: a => procs.process_action(a), run_task: a => procs.run_task(a),
     // 0.5.2 N-03: handoff ids (h-…) go through the existing task tools — the gateway catalog is unchanged until stage 6.
     task_status: async a => {
