@@ -8,6 +8,7 @@
  * Modes:
  *  focused                     → foreground info (focused element process) + calibration rect
  *  at        {x,y}             → process under the point (UIA coordinate space) + focused
+ *  minimize  {pid,hwnd}        → ONLY validated WindowsTerminal WindowPattern visual state; no mouse/key/commands
  *  activate  {pid,title?}      → WScript.Shell.AppActivate(pid), fallback AppActivate(title); result re-read from UIA
  *  windows   {pid}             → top-level windows owned by pid (or ApplicationFrameHost frames hosting it)
  *  tree      {pid,depth,max}   → control tree of those windows (bounded)
