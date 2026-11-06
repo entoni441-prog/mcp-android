@@ -1,0 +1,65 @@
+name: nexus-guardian-native-e1-ci
+on:
+  push:
+    branches: [experiment/nexus-guardian-native-epoch1-readonly-20261106]
+    paths:
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/native/**'
+      - '.github/workflows/nexus-guardian-native-e1-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-e1-safety:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Compile native Job owner with strictly test-only epoch1
+        shell: pwsh
+        run: |
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $src = (Resolve-Path 'windows-pc-agent-lab/nexus-codex-autoresume/native/GuardianJobHost.cs').Path
+          $out = Join-Path $env:RUNNER_TEMP 'GuardianNativeE1ReadOnly.exe'
+          & $csc /nologo /target:exe /r:System.Core.dll ('/out:' + $out) $src
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Syntax-check exact native e1 and read-only test harness
+        run: |
+          node --check windows-pc-agent-lab/nexus-codex-autoresume/native/real-readonly-resume-fixture.mjs
+          node --check windows-pc-agent-lab/nexus-codex-autoresume/native/realjob-readonly-e0.test.mjs
+      - name: Kernel Job and synthetic epoch1 dry-run, NO real CLI
+        env:
+          NEXUS_JOBHOST_EXE: ${{ runner.temp }}\GuardianNativeE1ReadOnly.exe
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/native/epoch1-shadow-chain.test.mjs
+  windows-original-regressions:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Compile native Job owner on separate Windows runner
+        shell: pwsh
+        run: |
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $src = (Resolve-Path 'windows-pc-agent-lab/nexus-codex-autoresume/native/GuardianJobHost.cs').Path
+          $out = Join-Path $env:RUNNER_TEMP 'GuardianNativeE1Regression.exe'
+          & $csc /nologo /target:exe /r:System.Core.dll ('/out:' + $out) $src
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Original kernel owner and full mock Guardian regression
+        env:
+          NEXUS_JOBHOST_EXE: ${{ runner.temp }}\GuardianNativeE1Regression.exe
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/native/jobhost.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/native/guardian-chain.test.mjs
+  portable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Operation journal, admission and durable budget guards
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/recovery-admission.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs
