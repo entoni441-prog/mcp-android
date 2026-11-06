@@ -45,7 +45,7 @@ const rejects=[
   ['restart overflow',{restartCount:6},'RESTART_BUDGET_EXHAUSTED'],
   ['unknown boot mode',{bootMode:'boot'},'BOOT_MODE_UNVERIFIED'],
   ['unknown reboot state',{rebootDetected:null},'REBOOT_STATE_UNVERIFIED'],
-  ['GUI at startup',{isGuiTask:true,bootMode:'post-reboot'},'GUI_REQUIRES_LOGON'],
+  ['GUI without logon',{isGuiTask:true,bootMode:'normal'},'GUI_REQUIRES_LOGON'],
   ['CLI reboot unverified at logon',{bootMode:'logon',rebootDetected:true},'REBOOT_RESUME_UNPROVEN'],
   ['old guardian still alive',{guardianKnownAlive:true},'PRIOR_PROCESS_ALIVE'],
   ['old controller still alive',{controllerKnownAlive:true},'PRIOR_PROCESS_ALIVE'],
