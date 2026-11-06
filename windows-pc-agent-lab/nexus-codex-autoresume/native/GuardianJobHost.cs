@@ -231,7 +231,7 @@ class GuardianJobHost {
       // The exact-thread recovery child has NOT passed acceptance yet.
       // Do not burn epoch 1 or launch anything until that gate is delivered.
       if(recovering){
-        Console.WriteLine("{\\"status\\":\\"STOP\\",\\"reason\\":\\"RECOVERY_NOT_ENABLED\\"}");
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"RECOVERY_NOT_ENABLED\"}");
         return 25;
       }
       if(integration){
