@@ -16,3 +16,16 @@ The experiment controller must kill only the exact worker it launched after READ
 Single controller only; concurrent starts are unsupported. Atomic publication requires a filesystem supporting hard links. File sync protects checkpoint contents; this experiment demonstrates process crash recovery, not power-loss durability or exactly-once delivery to external services. Partial first-run state intentionally needs manual inspection and is not repaired.
 
 Only test-owned child workers may be killed by tests. Do not operate Host, supervisor, cloudflared, Gateway, main, Codex Desktop, user processes, security, power or production. E2E data belongs exclusively in the specified sandbox; repository changes are limited to these three lab files.
+
+## Stage 2: isolated TCP retry
+
+```powershell
+node --test windows-pc-agent-lab/nexus-recovery-lab/transport.test.mjs
+node windows-pc-agent-lab/nexus-recovery-lab/transport.mjs
+```
+
+No packages, worker runs, files or external services are involved. Each invocation binds a fresh Node net server only to 127.0.0.1, port 0. The client sends a synthetic command with fixed taskId and idempotencyKey. The server commits one in-memory effect and destroys the first accepted socket BEFORE ACK. The client detects EOF/error, opens one new connection and retries the identical serialized command at most once. The server deduplicates the key and ACKs without another effect. Invalid client keys fail closed before transmission. The no-reconnect negative control confirms the unknown outcome is not reported as success.
+
+The report contains only status, connectionCount, forcedDrops, committedEffects, retryCount, originalId and ack. No payload, synthetic secret, socket address or raw error is printed. Each request has a 1-second timeout; the run has a 5-second deadline. Finally blocks destroy owned sockets and close the owned server. Tests have deadlines below 15 seconds.
+
+This is a real loopback TCP drop/retry test, NOT a real Cloudflare disconnection. Deduplication exists only in this server's memory during one run; it makes no claim about durable remote effects, server restart recovery or production transport behavior. Stage 2 adds only transport.mjs, transport.test.mjs and this README section; existing worker files are unchanged.
