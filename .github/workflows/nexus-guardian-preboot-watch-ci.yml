@@ -1,0 +1,31 @@
+name: nexus-guardian-preboot-watch-ci
+on:
+  push:
+    branches: [experiment/nexus-guardian-preboot-watch-20261106]
+    paths:
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/preboot-watch*'
+      - '.github/workflows/nexus-guardian-preboot-watch-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-standby:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Kernel-mutex standby and immutable STOP tests
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/preboot-watch.test.mjs
+  linux-standby:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Standby read-only STOP and journal tests
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/preboot-watch.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/stop-outbox.test.mjs
