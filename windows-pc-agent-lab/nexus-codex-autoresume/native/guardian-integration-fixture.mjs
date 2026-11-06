@@ -4,7 +4,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import os from 'node:os';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
@@ -12,16 +11,29 @@ import {runGuardian} from '../guardian.mjs';
 
 const exec=promisify(execFile), root=process.argv[2], mode=process.argv[3];
 const exact=process.argv.length===4 && typeof root==='string' && path.isAbsolute(root)
-  && path.basename(root).startsWith('nexus-job-test-') && ['normal','hang'].includes(mode)
-  && path.relative(path.resolve(os.tmpdir()),path.resolve(root)).split(path.sep)[0]!=='..';
-if(!exact){
+  && path.basename(root).startsWith('nexus-job-test-') && ['normal','hang'].includes(mode);
+if(!exact)process.exit(64);
+
+// Native Win32 owner has already validated this directory using Path.GetTempPath
+// before CREATE_SUSPENDED / Job assignment. Verify the actual parent + child
+// identity against the receipt it writes immediately after ResumeThread.
+// This avoids duplicating Windows TEMP/TMP interpretation in Node.
+let nativeScope=false;
+for(let tries=0;tries<60;tries++){
+  try{
+    const row=JSON.parse(await fs.readFile(path.join(root,'job-host-status.json'),'utf8'));
+    if(row.status==='RUNNING'&&row.ownerPid===process.ppid&&
+       row.childPid===process.pid&&Number.isSafeInteger(row.jobActive)&&row.jobActive>=1){
+      nativeScope=true;break;
+    }
+  }catch{}
+  await new Promise(resolve=>setTimeout(resolve,35));
+}
+if(!nativeScope){
   try{await fs.writeFile(path.join(root,'guard-entry-error.json'),JSON.stringify({
-    reason:'INVALID_TEST_SCOPE',argvLen:process.argv.length,
-    rootAbsolute:path.isAbsolute(root||''),nameOk:path.basename(root||'').startsWith('nexus-job-test-'),
-    modeOk:['normal','hang'].includes(mode),
-    underTemp:path.relative(path.resolve(os.tmpdir()),path.resolve(root||'.')).split(path.sep)[0]!=='..'
+    reason:'NATIVE_JOB_OWNER_UNVERIFIED',argvLen:process.argv.length
   }));}catch{}
-  process.exit(64);
+  process.exit(65);
 }
 
 const state=path.join(root,'state'),owner=path.join(root,'owner'),repo=path.join(root,'repo');
