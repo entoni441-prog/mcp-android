@@ -12,7 +12,7 @@ if(args[0]!=='exec'||!args.includes('--json'))process.exit(64);
 const resume=args[1]==='resume';
 const config=JSON.parse(await fs.readFile(path.join(process.cwd(),'mock.json'),'utf8'));
 const {taskId,stateDirectory:state,mode}=config;
-if(taskId!=='guardian-integration-task'||!['success','hold'].includes(mode))process.exit(65);
+if(typeof taskId!=='string'||!/^[A-Za-z0-9_-]{1,48}$/.test(taskId)||!['success','hold'].includes(mode))process.exit(65);
 const identity={taskId,operationId:'local_effect_001',epoch:0};
 const marker=()=>fs.writeFile(path.join(state,'complete.json'),JSON.stringify({taskId,status:'completed'}));
 if(resume){
