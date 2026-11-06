@@ -9,6 +9,7 @@ using System.Runtime.InteropServices;
 using System.Diagnostics;
 using System.Threading;
 using System.Linq;
+using System.Security.Cryptography;
 
 class GuardianJobHost {
   const uint CREATE_SUSPENDED = 0x00000004;
@@ -293,8 +294,125 @@ class GuardianJobHost {
     }
   }
 
+  // STRICTLY TEST-ONLY epoch-one reservation, WITHOUT a recovery worker.
+  // No effect may have begun, all evidence is the synthetic PREPARED fixture,
+  // and the original named Job must be gone at the kernel boundary.
+  static int ReserveShadow(string[] args) {
+    if(args.Length!=3||args[0]!="reserve-shadow"||
+       !Regex.IsMatch(args[1],@"^[A-Za-z0-9_-]{1,48}$")||
+       !Path.IsPathRooted(args[2])||!Directory.Exists(args[2])||
+       !IsTestPath(args[2]))return 64;
+    string task=args[1],dir=Path.GetFullPath(args[2]);
+    string mutexName="Global\\NEXUS-Codex-JobTest-"+task;
+    IntPtr mutex=IntPtr.Zero;
+    bool owned=false;
+    try{
+      mutex=CreateMutex(IntPtr.Zero,true,mutexName);
+      int mutexErr=Marshal.GetLastWin32Error();
+      if(mutex==IntPtr.Zero)throw new InvalidOperationException("MUTEX_CREATE_FAILED");
+      if(mutexErr==ERROR_ALREADY_EXISTS){
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"DUPLICATE_OWNER\"}");
+        return 12;
+      }
+      owned=true;
+      if(File.Exists(Path.Combine(dir,"native-epoch-001-shadow.json"))||
+         File.Exists(Path.Combine(dir,"native-epoch-001.json"))){
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"SHADOW_EPOCH_ALREADY_CLAIMED\"}");
+        return 17;
+      }
+      if(!RecoveryPreflight(dir,task)){
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"PREVIOUS_OWNER_UNVERIFIED\"}");
+        return 24;
+      }
+      string[] v=File.ReadAllLines(Path.Combine(dir,"native-job-identity-e0.txt"));
+      string prefix="Local\\NEXUS-Codex-Proof-"+task+"-";
+      int priorOwner,session;long priorTicks;
+      if(v.Length!=7||v[0]!="taskId="+task||
+         !Int32.TryParse(v[1].Replace("ownerPid=",""),out priorOwner)||
+         v[1]!="ownerPid="+priorOwner||
+         !Int64.TryParse(v[2].Replace("ownerStartTicks=",""),out priorTicks)||
+         v[2]!="ownerStartTicks="+priorTicks||
+         !v[3].StartsWith("jobName="+prefix,StringComparison.Ordinal)||
+         !Regex.IsMatch(v[3].Substring(("jobName="+prefix).Length),@"^[a-f0-9]{32}$")||
+         v[4]!="killOnClose=1"||v[5]!="noBreakaway=1"||
+         !Int32.TryParse(v[6].Replace("sessionId=",""),out session)||
+         v[6]!="sessionId="+session||session!=Process.GetCurrentProcess().SessionId){
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"KERNEL_IDENTITY_INVALID\"}");
+        return 31;
+      }
+      string priorEpoch=File.ReadAllText(Path.Combine(dir,"native-epoch-000.json"));
+      if(!priorEpoch.Contains("\"ownerPid\":"+priorOwner+",\"ownerStartTicks\":"+priorTicks+"}")){
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"PRIOR_OWNER_MISMATCH\"}");
+        return 31;
+      }
+      IntPtr old=OpenJobObject(JOB_OBJECT_QUERY,false,v[3].Substring("jobName=".Length));
+      int openErr=Marshal.GetLastWin32Error();
+      if(old!=IntPtr.Zero){
+        CloseHandle(old);
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"OLD_KERNEL_JOB_STILL_PRESENT\"}");
+        return 32;
+      }
+      if(openErr!=ERROR_FILE_NOT_FOUND){
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"OLD_KERNEL_JOB_UNCERTAIN\"}");
+        return 33;
+      }
+      // PREPARED means no irreversible action has been dispatched in this
+      // STRICT synthetic fixture. Any IN_FLIGHT/COMMITTED => absolute STOP.
+      string state=Path.Combine(dir,"state");
+      string baseOp=task+"-local_effect_001-e0-";
+      string prepared="{\"taskId\":\""+task+
+        "\",\"operationId\":\"local_effect_001\",\"epoch\":0,\"stage\":\"PREPARED\"}\n";
+      string thread="019a8f9b-1452-71c0-8a17-6915a0904d67";
+      string expectedState="{\"taskId\":\""+task+"\",\"threadId\":\""+thread+
+        "\",\"status\":\"RUNNING\",\"attempt\":0,\"recordedStatus\":null,\"childPid\":null}";
+      string expectedReady="{\"taskId\":\""+task+"\",\"threadId\":\""+thread+
+        "\",\"noExternalEffect\":true,\"guardianStarted\":false}";
+      if(File.Exists(Path.Combine(state,baseOp+"IN_FLIGHT.json"))||
+         File.Exists(Path.Combine(state,baseOp+"COMMITTED.json"))||
+         File.Exists(Path.Combine(state,"effect-once.txt"))||
+         File.Exists(Path.Combine(state,"complete.json"))||
+         File.ReadAllText(Path.Combine(state,baseOp+"PREPARED.json"))!=prepared||
+         File.ReadAllText(Path.Combine(state,"state.json"))!=expectedState||
+         File.ReadAllText(Path.Combine(dir,"synthetic-prepared-ready.json"))!=expectedReady){
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"OPERATION_EFFECT_BOUNDARY_UNPROVEN\"}");
+        return 34;
+      }
+      string anchorText="{\"version\":1,\"taskId\":\""+task+"\",\"baseEpoch\":0,\"maxAttempts\":5}";
+      if(File.ReadAllText(Path.Combine(dir,"budget-anchor.json"))!=anchorText+"\n"){
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"BUDGET_ANCHOR_UNVERIFIED\"}");
+        return 35;
+      }
+      string previousHash;
+      using(var sha=SHA256.Create()){
+        previousHash=BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(anchorText)))
+          .Replace("-","").ToLowerInvariant();
+      }
+      string expectedAttempt="{\"version\":1,\"taskId\":\""+task+
+        "\",\"attempt\":1,\"epoch\":1,\"prevHash\":\""+previousHash+"\"}\n";
+      if(File.ReadAllText(Path.Combine(dir,"budget-attempt-001.json"))!=expectedAttempt||
+         File.Exists(Path.Combine(dir,"budget-attempt-002.json"))){
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"DURABLE_FENCE_UNVERIFIED\"}");
+        return 36;
+      }
+      // Never use native-epoch-001.json here: this is NOT an accepted real
+      // recovery. The shadow receipt cannot be mistaken for an enabled epoch.
+      string shadow="{\"taskId\":\""+task+"\",\"epoch\":1,\"shadowOnly\":true,"+
+        "\"canResume\":false,\"oldKernelJobGone\":true,\"budgetAttempt\":1}\n";
+      CreateReceipt(Path.Combine(dir,"native-epoch-001-shadow.json"),shadow);
+      Console.WriteLine("{\"status\":\"SHADOW_EPOCH_RESERVED\",\"epoch\":1,\"canResume\":false}");
+      return 0;
+    }catch{
+      Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"SHADOW_EVIDENCE_UNREADABLE\"}");
+      return 40;
+    }finally{
+      if(owned)ReleaseMutex(mutex);
+      if(mutex!=IntPtr.Zero)CloseHandle(mutex);
+    }
+  }
+
   static int Main(string[] args) {
     if (Environment.OSVersion.Platform != PlatformID.Win32NT) return 64;
+    if (args.Length>0 && args[0]=="reserve-shadow") return ReserveShadow(args);
     if (args.Length>0 && (args[0]=="probe"||args[0]=="probe-hold")) return Probe(args);
     // EXPLICITLY TEST-ONLY: no arbitrary executable, no production manifest.
     // run <taskId> <nodeExe> <testScript> <tempStateDir> <mode> <heartbeatTimeoutMs> <runtimeMs>
