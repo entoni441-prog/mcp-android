@@ -35,3 +35,16 @@ This verifies the independent CLI and exact-session resume **in a normal, non-cr
 ## Boundaries
 
 No production/main/Gateway/NEXUS Host modifications; no new Codex installation; no paid subscription or new account; no desktop GUI manipulation. Changes are confined to experimental Git branch and local sandbox tests. All remote owner programs and installed NEXUS Host were left running.
+
+## Native owner / budget identity integration (additional checkpoint)
+
+The isolated Win32 `GuardianJobHost.cs` now publishes the `budget-anchor.json` (five-attempt, epoch-0 ledger) **while holding the OS mutex and before the first child resumes**, alongside its existing immutable native epoch claim. An interrupted partial startup is fail-closed.
+
+The actual Guardian integration fixture checks the native owner PID, child PID, native epoch receipt and budget receipt and binds **the same OS task ID** to the Guardian manifest, controller, local operation journal and restart-budget ledger. The mock Codex validates the corresponding bounded task ID instead of a separate hard-coded name.
+
+Acceptance:
+- Real owner's Windows: the full native/Guardian chain and a genuinely blocked controller both passed; the combined local check had 26 PASS, 1 SKIP for missing Windows symlink rights, and 0 FAIL.
+- Independent GitHub Actions **42203350189**: **Windows native tests 27/27 PASS**, **Ubuntu portable policy/budget/outbox/journal 75/75 PASS**, both jobs success. https://github.com/entoni441-prog/mcp-android/actions/runs/42203350189
+- No actual `recover` launch was enabled. The new budget ledger is an initial durable accounting fence, not permission to launch a recovery child. The owner STOP notification remains queued locally, not externally delivered.
+
+Caution: a native Job object's OS ownership still does not automatically prove a newly started process may resume a prior unknown irreversible `IN_FLIGHT` operation. The production admission gate, real Codex crash/recovery acceptance, provider reconciliation, 30-minute native stable-window reset, notifications and Windows reboot acceptance remain pending.
