@@ -136,6 +136,55 @@ class GuardianJobHost {
     return false;
   }
 
+  // Durable, create-only evidence. Never overwrite a previous generation.
+  static void CreateReceipt(string file,string data) {
+    byte[] bytes=Encoding.UTF8.GetBytes(data);
+    using(FileStream h=new FileStream(file,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {
+      h.Write(bytes,0,bytes.Length);h.Flush(true);
+    }
+  }
+  static long ProcessStartTicks(int pid) {
+    using(Process p=Process.GetProcessById(pid))
+      return p.StartTime.ToUniversalTime().Ticks;
+  }
+  // A reused PID is NOT proof the previous instance is still alive.
+  // Any error other than a confirmed nonexistent PID fails closed.
+  static bool PriorInstanceGone(int pid,long startTicks) {
+    try { return ProcessStartTicks(pid)!=startTicks; }
+    catch(ArgumentException) { return true; }
+    catch { return false; }
+  }
+  static bool RecoveryPreflight(string dir,string task) {
+    try {
+      if(File.Exists(Path.Combine(dir,"owner","owner-stop.json")) ||
+         File.Exists(Path.Combine(dir,"owner","host-off")) ||
+         File.Exists(Path.Combine(dir,"state","complete.json")) ||
+         File.Exists(Path.Combine(dir,"native-epoch-001.json")))return false;
+      string[] fields=File.ReadAllLines(Path.Combine(dir,"native-job-assigned-e0.txt"));
+      if(fields.Length!=8||fields[0]!="taskId="+task||
+         fields[5]!="jobAssigned=1"||fields[6]!="inheritedHandles=0"||
+         fields[7]!="breakaway=0")return false;
+      int owner,child;long ownerTicks,childTicks;
+      if(!Int32.TryParse(fields[1].Replace("ownerPid=",""),out owner) ||
+         fields[1]!="ownerPid="+owner ||
+         !Int64.TryParse(fields[2].Replace("ownerStartTicks=",""),out ownerTicks) ||
+         fields[2]!="ownerStartTicks="+ownerTicks ||
+         !Int32.TryParse(fields[3].Replace("childPid=",""),out child) ||
+         fields[3]!="childPid="+child ||
+         !Int64.TryParse(fields[4].Replace("childStartTicks=",""),out childTicks) ||
+         fields[4]!="childStartTicks="+childTicks ||
+         owner<1||child<1||ownerTicks<1||childTicks<1)return false;
+      string expectedEpoch="{\"taskId\":\""+task+"\",\"epoch\":0,\"restartCount\":0,\"ownerPid\":"+owner+",\"ownerStartTicks\":"+ownerTicks+"}\n";
+      if(File.ReadAllText(Path.Combine(dir,"native-epoch-000.json"))!=expectedEpoch)return false;
+      // A previous owner with a live kernel job may not be replaced.
+      if(!PriorInstanceGone(owner,ownerTicks)||!PriorInstanceGone(child,childTicks))return false;
+      string previousStatus=File.ReadAllText(Path.Combine(dir,"job-host-status.json"));
+      if(!previousStatus.Contains("\"taskId\":\""+task+"\",\"status\":\"RUNNING\"")||
+         !previousStatus.Contains("\"ownerPid\":"+owner+",\"childPid\":"+child))return false;
+      return true;
+    }catch{return false;}
+  }
+
   static int Main(string[] args) {
     if (Environment.OSVersion.Platform != PlatformID.Win32NT) return 64;
     // EXPLICITLY TEST-ONLY: no arbitrary executable, no production manifest.
@@ -149,7 +198,7 @@ class GuardianJobHost {
         !Path.IsPathRooted(args[4]) || !Directory.Exists(args[4]) ||
         !IsTestPath(args[4]) ||
         !(String.Equals(Path.GetFileName(args[3]),"guardian-integration-fixture.mjs",StringComparison.OrdinalIgnoreCase)
-            ? new [] {"normal","hang"}.Contains(args[5])
+            ? new [] {"normal","hang","recover","committed"}.Contains(args[5])
             : new [] {"normal", "hold", "hang", "tree"}.Contains(args[5]))) {
       Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"INVALID_TEST_ARGS\"}");
       return 64;
@@ -167,6 +216,7 @@ class GuardianJobHost {
     PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
     bool owned=false, childCreated=false, assigned=false;
     int ownerPid = Process.GetCurrentProcess().Id;
+    long ownerStartTicks=ProcessStartTicks(ownerPid);
     try {
       mutex=CreateMutex(IntPtr.Zero, true, mutexName);
       int mutexErr = Marshal.GetLastWin32Error();
@@ -176,22 +226,23 @@ class GuardianJobHost {
         return 12;
       }
       owned=true;
-      // Native owner allocates the FIRST durable generation, while holding
-      // the kernel mutex, BEFORE a Guardian/controller can execute. Restarting
-      // an already used state directory cannot silently replay its effects.
-      // A later epoch may only be introduced after independently verifying
-      // exact-thread state, zero Job processes and the irreversible-action journal.
-      if (String.Equals(Path.GetFileName(script),"guardian-integration-fixture.mjs",StringComparison.OrdinalIgnoreCase)) {
-        string claimPath=Path.Combine(dir,"native-epoch-000.json");
-        try {
-          string receipt="{\"taskId\":\""+task+"\",\"epoch\":0,\"restartCount\":0,\"ownerPid\":"+ownerPid+"}\n";
-          byte[] bytes=Encoding.UTF8.GetBytes(receipt);
-          using(FileStream claim=new FileStream(claimPath,FileMode.CreateNew,FileAccess.Write,FileShare.None)){
-            claim.Write(bytes,0,bytes.Length);
-            claim.Flush(true);
-          }
+      bool integration=String.Equals(Path.GetFileName(script),"guardian-integration-fixture.mjs",StringComparison.OrdinalIgnoreCase);
+      bool recovering=integration && mode=="recover";
+      if(integration){
+        if(recovering && !RecoveryPreflight(dir,task)){
+          Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"NATIVE_RECOVERY_UNSAFE\"}");
+          return 24;
+        }
+        string receiptPath=Path.Combine(dir,recovering?"native-epoch-001.json":"native-epoch-000.json");
+        try{
+          // Task restart budget is currently ONE per exact saved session.
+          // This durable record is burned BEFORE the recovery child can run.
+          string receipt="{\"taskId\":\""+task+"\",\"epoch\":"+(recovering?1:0)+
+            ",\"restartCount\":"+(recovering?1:0)+",\"ownerPid\":"+ownerPid+
+            ",\"ownerStartTicks\":"+ownerStartTicks+"}\n";
+          CreateReceipt(receiptPath,receipt);
         }catch(IOException){
-          if(File.Exists(claimPath)){
+          if(File.Exists(receiptPath)){
             Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"NATIVE_EPOCH_ALREADY_CLAIMED\"}");
             return 17;
           }
@@ -221,6 +272,17 @@ class GuardianJobHost {
       if (!AssignProcessToJobObject(job,pi.hProcess))
         throw new InvalidOperationException("JOB_ASSIGN_FAILED");
       assigned=true;
+      if(integration){
+        // Assignment is acknowledged durably BEFORE the child can execute.
+        // Only the native owner holds the Job handle. InheritHandles=false,
+        // no breakaway flags, KILL_ON_JOB_CLOSE => owner death empties the Job.
+        string assignedReceipt="taskId="+task+"\nownerPid="+ownerPid+
+          "\nownerStartTicks="+ownerStartTicks+
+          "\nchildPid="+pi.dwProcessId+
+          "\nchildStartTicks="+ProcessStartTicks((int)pi.dwProcessId)+
+          "\njobAssigned=1\ninheritedHandles=0\nbreakaway=0\n";
+        CreateReceipt(Path.Combine(dir,recovering?"native-job-assigned-e1.txt":"native-job-assigned-e0.txt"),assignedReceipt);
+      }
       if (ResumeThread(pi.hThread)==WAIT_FAILED)
         throw new InvalidOperationException("CHILD_RESUME_FAILED");
       WriteState(dir,task,"RUNNING","JOB_ASSIGNED",ownerPid,pi.dwProcessId,Active(job));
