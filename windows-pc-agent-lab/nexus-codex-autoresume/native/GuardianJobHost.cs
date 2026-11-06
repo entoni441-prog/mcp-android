@@ -228,6 +228,12 @@ class GuardianJobHost {
       owned=true;
       bool integration=String.Equals(Path.GetFileName(script),"guardian-integration-fixture.mjs",StringComparison.OrdinalIgnoreCase);
       bool recovering=integration && mode=="recover";
+      // The exact-thread recovery child has NOT passed acceptance yet.
+      // Do not burn epoch 1 or launch anything until that gate is delivered.
+      if(recovering){
+        Console.WriteLine("{\\"status\\":\\"STOP\\",\\"reason\\":\\"RECOVERY_NOT_ENABLED\\"}");
+        return 25;
+      }
       if(integration){
         if(recovering && !RecoveryPreflight(dir,task)){
           Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"NATIVE_RECOVERY_UNSAFE\"}");
