@@ -1,0 +1,33 @@
+name: nexus-guardian-budget-ci
+on:
+  push:
+    branches: [experiment/nexus-guardian-budget-20261106]
+    paths:
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget*'
+      - '.github/workflows/nexus-guardian-budget-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-budget:
+    name: Persistent recovery budget (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Budget, isolated crash and exclusive receipt tests
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget.test.mjs
+  ubuntu-budget:
+    name: Persistent recovery budget and existing journal (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Budget and exact-once operation journal regressions
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs
