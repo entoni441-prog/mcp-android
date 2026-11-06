@@ -35,3 +35,11 @@ Base: 3a02388e3c043a7b9fec42748f8525b2287b7442
 - https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-createjobobjectw
 - https://learn.microsoft.com/en-us/windows/win32/api/jobapi/nf-jobapi-isprocessinjob
 - https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
+
+## Final revalidation and intermittent regression
+- CI run 42209532659: a Windows native lifecycle test initially failed 5/6 after the test Guardian exited with code 21 (CHILD_NONZERO), whereas the heartbeat-stale test expected code 20. The issue was intermittent and cannot be definitively explained by the available evidence.
+- Rather than accepting the result or reducing assertions, the integration test now captures bounded exact native/Guardian/controller/mock-CLI diagnostic files on recurrence.
+- Follow-up CI 42209809859: Windows named kernel 6/6 PASS, original Win32/Guardian 11/11 PASS, budget/admission 36/36 PASS; Ubuntu policy and journal 72/72 PASS. Both jobs SUCCESS.
+- The final workflow also statically verified the real Codex read-only crash diagnostic's JavaScript syntax; it DID NOT run a real Codex CLI on GitHub.
+- Link: https://github.com/entoni441-prog/mcp-android/actions/runs/42209809859
+- This is a validated isolated kernel-observation stage, not proof of stable production automatic recovery. Treat the earlier CHILD_NONZERO flake as an unresolved test-reliability issue until it is reproducibly explained.
