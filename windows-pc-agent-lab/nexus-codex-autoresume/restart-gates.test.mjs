@@ -23,7 +23,7 @@ test('matching completion receipt avoids all resumed execution',()=>{
 });
 test('committed operation requires verified external receipt',()=>{
   const e=ok();e.operation={...e.operation,state:'COMMITTED',externalReceiptVerified:true};
-  assert.deepEqual(assessRestart(e),{decision:'COMPLETE',reason:'OPERATION_COMMITTED'});
+  assert.deepEqual(assessRestart(e),{decision:'ELIGIBLE',reason:'RESUME_AFTER_VERIFIED_OPERATION_NO_REPLAY',epoch:2});
   e.operation.externalReceiptVerified=false;
   assert.equal(assessRestart(e).reason,'COMMIT_UNVERIFIED');
 });
@@ -76,3 +76,5 @@ test('GUI logon still requires proven Codex resume and Job empty',()=>{
   e.jobEmptyConfirmed=false;
   assert.equal(assessRestart(e).decision,'STOP');
 });
+
+test('committed effect without task marker is NOT completed and needs remaining budget',()=>{const e=ok();e.operation={...e.operation,state:'COMMITTED',externalReceiptVerified:true};e.resumeBudgetRemaining=0;assert.equal(assessRestart(e).reason,'RESUME_BUDGET_UNVERIFIED');e.resumeBudgetRemaining=1;assert.equal(assessRestart(e).decision,'ELIGIBLE');e.completionReceiptValid=true;assert.equal(assessRestart(e).decision,'COMPLETE');});
