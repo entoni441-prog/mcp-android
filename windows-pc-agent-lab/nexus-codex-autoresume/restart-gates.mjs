@@ -13,10 +13,12 @@ export function assessRestart(e) {
   if(e.taskMatches!==true||e.exclusiveClaimsMatch!==true)return STOP('TASK_IDENTITY_UNPROVEN');
   if(e.codeHashMatches!==true||e.branchMatches!==true||e.worktreeClean!==true)return STOP('ENVIRONMENT_CHANGED');
   if(!validEpoch(e.epoch)||!validEpoch(e.previousEpoch)||e.epoch!==e.previousEpoch+1)return STOP('EPOCH_INVALID');
+  if(e.restartBudgetDurable!==true)return STOP('RESTART_BUDGET_UNVERIFIED');
   if(!Number.isSafeInteger(e.restartCount)||e.restartCount<0||e.restartCount>5)return STOP('RESTART_BUDGET_EXHAUSTED');
-  if(e.bootMode!=='normal'&&e.bootMode!=='logon'&&e.bootMode!=='post-reboot')return STOP('BOOT_MODE_UNVERIFIED');
+  if(e.bootMode!=='normal'&&e.bootMode!=='logon')return STOP('BOOT_MODE_UNVERIFIED');
   if(e.isGuiTask===true&&e.bootMode!=='logon')return STOP('GUI_REQUIRES_LOGON');
-  if(e.bootMode==='post-reboot'&&e.codexResumeAfterRebootProven!==true)return STOP('REBOOT_RESUME_UNPROVEN');
+  if(e.rebootDetected!==false&&e.rebootDetected!==true)return STOP('REBOOT_STATE_UNVERIFIED');
+  if(e.rebootDetected===true&&e.codexResumeAfterRebootProven!==true)return STOP('REBOOT_RESUME_UNPROVEN');
   // Stale heartbeat is an alarm, never itself proof that a prior worker is gone.
   if(e.guardianKnownAlive===true||e.controllerKnownAlive===true||e.codexKnownAlive===true)return STOP('PRIOR_PROCESS_ALIVE');
   if(e.heartbeatStale!==true||e.priorGuardianExitVerified!==true)return STOP('DEATH_UNVERIFIED');
