@@ -410,6 +410,102 @@ class GuardianJobHost {
     }
   }
 
+
+  // A strictly isolated REAL CLI READ-ONLY test. This is NOT production
+  // recover: it only accepts the exact synthetic PREPARED local test boundary.
+  // Called AFTER native singleton mutex acquisition and BEFORE e1 claim/Job.
+  static bool ReadOnlyRecoveryPreflight(string dir,string task) {
+    try {
+      if(!RecoveryPreflight(dir,task)||
+         File.Exists(Path.Combine(dir,"native-epoch-001-shadow.json"))||
+         File.Exists(Path.Combine(dir,"native-job-identity-e1.txt"))||
+         File.Exists(Path.Combine(dir,"native-job-assigned-e1.txt")))return false;
+      string[] proof=File.ReadAllLines(Path.Combine(dir,"native-job-identity-e0.txt"));
+      string prefix="Local\\NEXUS-Codex-Proof-"+task+"-";
+      int pid, session;long ticks;
+      if(proof.Length!=7||proof[0]!="taskId="+task||
+         !Int32.TryParse(proof[1].Replace("ownerPid=",""),out pid)||
+         proof[1]!="ownerPid="+pid||
+         !Int64.TryParse(proof[2].Replace("ownerStartTicks=",""),out ticks)||
+         proof[2]!="ownerStartTicks="+ticks||
+         !proof[3].StartsWith("jobName="+prefix,StringComparison.Ordinal)||
+         !Regex.IsMatch(proof[3].Substring(("jobName="+prefix).Length),@"^[a-f0-9]{32}$")||
+         proof[4]!="killOnClose=1"||proof[5]!="noBreakaway=1"||
+         !Int32.TryParse(proof[6].Replace("sessionId=",""),out session)||
+         proof[6]!="sessionId="+session||
+         session!=Process.GetCurrentProcess().SessionId)return false;
+      string[] assigned=File.ReadAllLines(Path.Combine(dir,"native-job-assigned-e0.txt"));
+      if(assigned.Length!=8||assigned[0]!="taskId="+task||
+         assigned[1]!="ownerPid="+pid||
+         assigned[2]!="ownerStartTicks="+ticks||
+         assigned[5]!="jobAssigned=1"||
+         assigned[6]!="inheritedHandles=0"||assigned[7]!="breakaway=0")
+         return false;
+      // An OS Job still existing, including one kept alive by a third-party
+      // handle after owner death, ALWAYS blocks resumption.
+      IntPtr previous=OpenJobObject(JOB_OBJECT_QUERY,false,
+        proof[3].Substring("jobName=".Length));
+      int osError=Marshal.GetLastWin32Error();
+      if(previous!=IntPtr.Zero){CloseHandle(previous);return false;}
+      if(osError!=ERROR_FILE_NOT_FOUND)return false;
+
+      string ready=File.ReadAllText(Path.Combine(dir,"real-readonly-ready.json"));
+      Match tid=Regex.Match(ready,@"""threadId"":""(?<id>[0-9a-fA-F-]{36})""");
+      if(!tid.Success||!Regex.IsMatch(tid.Groups["id"].Value,
+        @"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"))
+        return false;
+      string thread=tid.Groups["id"].Value;
+      string expectedReady="{\"taskId\":\""+task+"\",\"threadId\":\""+thread+
+        "\",\"readOnly\":true,\"baselineCompleted\":true,\"guardianStarted\":false,"+
+        "\"noFilesystemEffect\":true}";
+      string state="{\"taskId\":\""+task+"\",\"threadId\":\""+thread+
+        "\",\"status\":\"RUNNING\",\"attempt\":0,\"recordedStatus\":null,\"childPid\":null}";
+      if(ready!=expectedReady||
+         File.ReadAllText(Path.Combine(dir,"state","state.json"))!=state)
+        return false;
+      string turn=File.ReadAllText(Path.Combine(dir,"real-readonly-turn-started.json"));
+      Match child=Regex.Match(turn,@"""pid"":(?<pid>[1-9][0-9]*)");
+      int childPid;
+      if(!child.Success||!Int32.TryParse(child.Groups["pid"].Value,out childPid)||
+         turn!="{\"taskId\":\""+task+"\",\"threadId\":\""+thread+
+           "\",\"pid\":"+childPid+",\"turnStarted\":true}")
+        return false;
+      try{using(Process p=Process.GetProcessById(childPid)){return false;}}
+      catch(ArgumentException){} // exact test second-turn Codex is gone
+      // All evidence is ONLY a prepared receipt. Nothing irreversible started.
+      string stateDir=Path.Combine(dir,"state");
+      string first=task+"-local_effect_001-e0-";
+      string prepared="{\"taskId\":\""+task+
+        "\",\"operationId\":\"local_effect_001\",\"epoch\":0,\"stage\":\"PREPARED\"}\n";
+      if(File.ReadAllText(Path.Combine(stateDir,first+"PREPARED.json"))!=prepared||
+         File.Exists(Path.Combine(stateDir,first+"IN_FLIGHT.json"))||
+         File.Exists(Path.Combine(stateDir,first+"COMMITTED.json"))||
+         File.Exists(Path.Combine(stateDir,"effect-once.txt"))||
+         File.Exists(Path.Combine(stateDir,"complete.json"))||
+         File.Exists(Path.Combine(dir,"owner","owner-stop.json"))||
+         File.Exists(Path.Combine(dir,"owner","host-off")))
+        return false;
+      string anchor="{\"version\":1,\"taskId\":\""+task+"\",\"baseEpoch\":0,\"maxAttempts\":5}";
+      if(File.ReadAllText(Path.Combine(dir,"budget-anchor.json"))!=anchor+"\n")
+        return false;
+      string priorHash;
+      using(var sh=SHA256.Create()){
+        priorHash=BitConverter.ToString(sh.ComputeHash(Encoding.UTF8.GetBytes(anchor)))
+          .Replace("-","").ToLowerInvariant();
+      }
+      string attempt="{\"version\":1,\"taskId\":\""+task+
+        "\",\"attempt\":1,\"epoch\":1,\"prevHash\":\""+priorHash+"\"}\n";
+      if(File.ReadAllText(Path.Combine(dir,"budget-attempt-001.json"))!=attempt)
+        return false;
+      string[] budgets=Directory.GetFiles(dir,"budget-*");
+      if(budgets.Length!=2 ||
+         budgets.Any(x=>Path.GetFileName(x)!="budget-anchor.json"&&
+           Path.GetFileName(x)!="budget-attempt-001.json"))
+        return false;
+      return true;
+    }catch{return false;}
+  }
+
   static int Main(string[] args) {
     if (Environment.OSVersion.Platform != PlatformID.Win32NT) return 64;
     if (args.Length>0 && args[0]=="reserve-shadow") return ReserveShadow(args);
@@ -421,14 +517,16 @@ class GuardianJobHost {
         !Path.IsPathRooted(args[2]) || !File.Exists(args[2]) ||
         !String.Equals(Path.GetFileName(args[2]), "node.exe", StringComparison.OrdinalIgnoreCase) ||
         !Path.IsPathRooted(args[3]) || !File.Exists(args[3]) ||
-        !new [] {"job-fixture.mjs", "guardian-integration-fixture.mjs", "real-readonly-fixture.mjs"}.Contains(Path.GetFileName(args[3]),StringComparer.OrdinalIgnoreCase) ||
+        !new [] {"job-fixture.mjs", "guardian-integration-fixture.mjs", "real-readonly-fixture.mjs", "real-readonly-resume-fixture.mjs"}.Contains(Path.GetFileName(args[3]),StringComparer.OrdinalIgnoreCase) ||
         !Path.IsPathRooted(args[4]) || !Directory.Exists(args[4]) ||
         !IsTestPath(args[4]) ||
         !(String.Equals(Path.GetFileName(args[3]),"guardian-integration-fixture.mjs",StringComparison.OrdinalIgnoreCase)
             ? new [] {"normal","hang","prepared","recover","committed"}.Contains(args[5])
             : String.Equals(Path.GetFileName(args[3]),"real-readonly-fixture.mjs",StringComparison.OrdinalIgnoreCase)
               ? args[5]=="real-readonly"
-              : new [] {"normal", "hold", "hang", "tree"}.Contains(args[5]))) {
+              : String.Equals(Path.GetFileName(args[3]),"real-readonly-resume-fixture.mjs",StringComparison.OrdinalIgnoreCase)
+                ? args[5]=="resume-readonly"
+                : new [] {"normal", "hold", "hang", "tree"}.Contains(args[5]))) {
       Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"INVALID_TEST_ARGS\"}");
       return 64;
     }
@@ -457,8 +555,10 @@ class GuardianJobHost {
       }
       owned=true;
       bool integration=String.Equals(Path.GetFileName(script),"guardian-integration-fixture.mjs",StringComparison.OrdinalIgnoreCase)||
-        String.Equals(Path.GetFileName(script),"real-readonly-fixture.mjs",StringComparison.OrdinalIgnoreCase);
+        String.Equals(Path.GetFileName(script),"real-readonly-fixture.mjs",StringComparison.OrdinalIgnoreCase)||
+        String.Equals(Path.GetFileName(script),"real-readonly-resume-fixture.mjs",StringComparison.OrdinalIgnoreCase);
       bool recovering=integration && mode=="recover";
+      bool readonlyE1=String.Equals(Path.GetFileName(script),"real-readonly-resume-fixture.mjs",StringComparison.OrdinalIgnoreCase)&&mode=="resume-readonly";
       // The exact-thread recovery child has NOT passed acceptance yet.
       // Do not burn epoch 1 or launch anything until that gate is delivered.
       if(recovering){
@@ -466,22 +566,26 @@ class GuardianJobHost {
         return 25;
       }
       if(integration){
+        if(readonlyE1 && !ReadOnlyRecoveryPreflight(dir,task)){
+          Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"E1_READONLY_PREFLIGHT_DENIED\"}");
+          return 24;
+        }
         if(recovering && !RecoveryPreflight(dir,task)){
           Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"NATIVE_RECOVERY_UNSAFE\"}");
           return 24;
         }
-        string receiptPath=Path.Combine(dir,recovering?"native-epoch-001.json":"native-epoch-000.json");
+        string receiptPath=Path.Combine(dir,(recovering||readonlyE1)?"native-epoch-001.json":"native-epoch-000.json");
         try{
           // Task restart budget is currently ONE per exact saved session.
           // This durable record is burned BEFORE the recovery child can run.
-          string receipt="{\"taskId\":\""+task+"\",\"epoch\":"+(recovering?1:0)+
-            ",\"restartCount\":"+(recovering?1:0)+",\"ownerPid\":"+ownerPid+
+          string receipt="{\"taskId\":\""+task+"\",\"epoch\":"+(recovering||readonlyE1?1:0)+
+            ",\"restartCount\":"+(recovering||readonlyE1?1:0)+",\"ownerPid\":"+ownerPid+
             ",\"ownerStartTicks\":"+ownerStartTicks+"}\n";
           CreateReceipt(receiptPath,receipt);
           // Start the durable restart budget under the SAME native mutex, before
           // the first worker is resumed. Child runners cannot initialize it.
           // An interrupted creation fails closed; no receipt is overwritten.
-          if(!recovering){
+          if(!recovering&&!readonlyE1){
             string budget="{\"version\":1,\"taskId\":\""+task+"\",\"baseEpoch\":0,\"maxAttempts\":5}\n";
             CreateReceipt(Path.Combine(dir,"budget-anchor.json"),budget);
           }
@@ -512,7 +616,7 @@ class GuardianJobHost {
           "\nownerStartTicks="+ownerStartTicks+"\njobName="+jobName+
           "\nkillOnClose=1\nnoBreakaway=1\nsessionId="+
           Process.GetCurrentProcess().SessionId+"\n";
-        CreateReceipt(Path.Combine(dir,"native-job-identity-e0.txt"),proof);
+        CreateReceipt(Path.Combine(dir,readonlyE1?"native-job-identity-e1.txt":"native-job-identity-e0.txt"),proof);
       }
       STARTUPINFO si = new STARTUPINFO();
       si.cb=Marshal.SizeOf(typeof(STARTUPINFO));
@@ -541,7 +645,7 @@ class GuardianJobHost {
           "\nchildPid="+pi.dwProcessId+
           "\nchildStartTicks="+ProcessStartTicks((int)pi.dwProcessId)+
           "\njobAssigned=1\ninheritedHandles=0\nbreakaway=0\n";
-        CreateReceipt(Path.Combine(dir,recovering?"native-job-assigned-e1.txt":"native-job-assigned-e0.txt"),assignedReceipt);
+        CreateReceipt(Path.Combine(dir,(recovering||readonlyE1)?"native-job-assigned-e1.txt":"native-job-assigned-e0.txt"),assignedReceipt);
       }
       if (ResumeThread(pi.hThread)==WAIT_FAILED)
         throw new InvalidOperationException("CHILD_RESUME_FAILED");
