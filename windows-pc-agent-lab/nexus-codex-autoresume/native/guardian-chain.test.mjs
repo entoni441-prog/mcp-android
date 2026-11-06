@@ -6,6 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {getOperation,recoveryDisposition} from '../operation-journal.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url));
 const fixture=path.join(here,'guardian-integration-fixture.mjs');
 const native=process.env.NEXUS_JOBHOST_EXE||path.join(os.tmpdir(),'nexus-guardian-jobhost-20261106.exe');
@@ -71,6 +72,8 @@ test('native Job -> real Guardian -> real controller -> fake Codex completes wit
   assert.equal(guardian.status,'COMPLETED');
   assert.equal(guardian.attempt,0);
   assert.equal(state.status,'COMPLETED');
+  const operation=await getOperation(path.join(dir,'state'),{taskId:'guardian-integration-task',operationId:'local_effect_001',epoch:0});
+  assert.equal(operation.stage,'COMMITTED','local test effect must have a verified durable journal receipt');
   assert.equal(checkpoint.pid,state.childPid);
   assert.notEqual(control.controllerPid,checkpoint.pid);
   assert.equal(await gone(nativeState.childPid),true);
@@ -94,6 +97,9 @@ test('genuine live Guardian/controller/CLI subtree is killed on guardian heartbe
   assert.equal(nativeState.reason,'HEARTBEAT_STALE_JOB_EMPTY');
   assert.equal(nativeState.jobActive,0);
   assert.equal(state.status,'RUNNING');
+  const identity={taskId:'guardian-integration-task',operationId:'local_effect_001',epoch:0};
+  assert.equal((await getOperation(path.join(dir,'state'),identity)).stage,'IN_FLIGHT');
+  assert.deepEqual(await recoveryDisposition(path.join(dir,'state'),identity,1),{decision:'STOP',reason:'RECONCILIATION_REQUIRED'});
   assert.equal(checkpoint.pid,state.childPid);
   assert.equal(await gone(nativeState.childPid),true);
   assert.equal(await gone(control.controllerPid),true);
