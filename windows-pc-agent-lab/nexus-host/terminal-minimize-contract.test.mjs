@@ -34,7 +34,9 @@ test('NX-TM-01: the embedded fixed PowerShell UIA script parses without executin
   if(process.platform!=='win32'){t.skip('Windows parser');return;}
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nexus-tm-ast-'));
   const file=path.join(dir,'fixed-uia.ps1');
-  fs.writeFileSync(file,UIA_SCRIPT,'utf8');
+  // Windows PowerShell 5.1 reads BOM-less .ps1 as ANSI. The actual Host uses UTF-16LE -EncodedCommand.
+  // Include UTF-8 BOM here so the parser sees the same Cyrillic UIA regexes as the Host.
+  fs.writeFileSync(file,Buffer.concat([Buffer.from([0xef,0xbb,0xbf]),Buffer.from(UIA_SCRIPT,'utf8')]));
   try{
     const parser="$tokens=$null;$errors=$null; [System.Management.Automation.Language.Parser]::ParseFile($env:NEXUS_TEST_UIA_AST,[ref]$tokens,[ref]$errors) | Out-Null; if($errors.Count -gt 0){ $errors | Select-Object -First 6 | ForEach-Object { Write-Output ('ErrorId='+$_.ErrorId+';Line='+$_.Extent.StartLineNumber+';Column='+$_.Extent.StartColumnNumber+';Text='+$_.Extent.Text.Substring(0,[Math]::Min(60,$_.Extent.Text.Length))) }; exit 1 }; Write-Output 'POWERSHELL_AST_PASS'";
     const r=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',parser],
