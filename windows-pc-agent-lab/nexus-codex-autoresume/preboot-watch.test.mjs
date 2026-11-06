@@ -18,13 +18,14 @@ async function testRoot(t){
 }
 async function run(exe,args,timeout=10000){
   const p=spawn(exe,args,{windowsHide:true,stdio:['ignore','pipe','pipe']});
-  let output='';
+  let output='',stderr='';
   p.stdout.on('data',d=>output+=d.toString());
+  p.stderr.on('data',d=>stderr+=d.toString());
   const result=new Promise(resolve=>{
-    p.on('exit',(code,signal)=>resolve({code,signal,output}));
-    p.on('error',e=>resolve({error:e.code||'SPAWN_ERROR',output}));
+    p.on('exit',(code,signal)=>resolve({code,signal,output,stderr}));
+    p.on('error',e=>resolve({error:e.code||'SPAWN_ERROR',output,stderr}));
   });
-  return Promise.race([result,delay(timeout).then(()=>{p.kill();return {timeout:true,output};})]);
+  return Promise.race([result,delay(timeout).then(()=>{p.kill();return {timeout:true,output,stderr};})]);
 }
 async function observe(file,predicate=()=>true,ms=8000){
   const end=Date.now()+ms;
@@ -37,7 +38,7 @@ async function observe(file,predicate=()=>true,ms=8000){
 test('standby starts with empty queue and cannot authorize recovery',async t=>{
   const root=await testRoot(t);
   const r=await run(process.execPath,[monitor,'--root',root,'--mode','once']);
-  assert.equal(r.code,0);
+  assert.equal(r.code,0,r.stderr);
   const s=JSON.parse(r.output);
   assert.equal(s.mode,'STANDBY_NO_EXECUTION');
   assert.equal(s.canResume,false);
@@ -52,7 +53,7 @@ test('durable sanitized STOP receipt is surfaced but never sent or acknowledged'
     taskId:'guardian_preboot',epoch:1,reason:'RECONCILIATION_REQUIRED'
   });
   const r=await run(process.execPath,[monitor,'--root',root,'--mode','once']);
-  assert.equal(r.code,0);
+  assert.equal(r.code,0,r.stderr);
   const state=JSON.parse(r.output);
   assert.equal(state.pending.length,1);
   assert.equal(state.pending[0].reason,'RECONCILIATION_REQUIRED');
@@ -64,7 +65,7 @@ test('malformed STOP receipt produces visible STOP without sending',async t=>{
   await fs.mkdir(path.join(root,'outbox'),{recursive:true});
   await fs.writeFile(path.join(root,'outbox','stop-notice-e0001.json'),'{}');
   const r=await run(process.execPath,[monitor,'--root',root,'--mode','once']);
-  assert.equal(r.code,0);
+  assert.equal(r.code,0,r.stderr);
   assert.equal(JSON.parse(r.output).health,'STOP');
   assert.equal(JSON.parse(r.output).reason,'OUTBOX_INVALID');
 });
@@ -73,7 +74,7 @@ test('owner stop is visible and stops the resident loop',async t=>{
   await fs.mkdir(root,{recursive:true});
   await fs.writeFile(path.join(root,'owner-stop.json'),'{}');
   const r=await run(process.execPath,[monitor,'--root',root,'--mode','resident']);
-  assert.equal(r.code,0);
+  assert.equal(r.code,0,r.stderr);
   const h=await observe(path.join(root,'watch-summary.json'));
   assert.equal(h.ownerStop,true);
   assert.equal(h.health,'STOP');
