@@ -28,8 +28,8 @@ async function fixture(t,mode='success') {
   const opts = {testScript:script,ownerDirectory:owner,timeoutMs:4000};
   return {root,work,state,owner,m,opts,run:() => runManifest(m,opts)};
 }
-async function waitFile(file) {
-  for (let i=0;i<200;i++) { try { return JSON.parse(await fs.readFile(file,'utf8')); } catch {} await new Promise(r=>setTimeout(r,25)); }
+async function waitFile(file, accept=()=>true) {
+  for (let i=0;i<600;i++) { try { const data=JSON.parse(await fs.readFile(file,'utf8')); if (accept(data)) return data; } catch {} await new Promise(r=>setTimeout(r,25)); }
   throw new Error('checkpoint timeout');
 }
 
@@ -49,7 +49,8 @@ test('external exact child PID kill triggers same-thread automatic resume and on
   let childPid;
   t.after(()=>{ if(childPid) { try { process.kill(childPid,'SIGKILL'); } catch {} } if(supervisor.exitCode===null) supervisor.kill('SIGKILL'); });
   const checkpoint=await waitFile(path.join(f.state,'checkpoint.json'));
-  const state=await waitFile(path.join(f.state,'state.json'));
+  // A saved thread UUID is the recovery prerequisite; checkpoint alone is not.
+  const state=await waitFile(path.join(f.state,'state.json'),x=>x.threadId===THREAD_ID&&x.childPid===checkpoint.pid);
   childPid=checkpoint.pid;
   assert.equal(childPid,state.childPid); assert.notEqual(childPid,supervisor.pid);
   assert.equal(checkpoint.threadId,THREAD_ID);
