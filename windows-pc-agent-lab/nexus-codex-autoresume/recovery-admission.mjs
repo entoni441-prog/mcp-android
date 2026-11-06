@@ -31,17 +31,19 @@ export async function inspectRecoveryAdmission({root,taskId,threadId,operationId
     const budget=await inspectRecoveryBudget(root,taskId);
     if(budget.decision!=='READY')return stop(budget.reason||'BUDGET_UNVERIFIED');
     if(budget.used!==0||budget.nextEpoch!==1)return stop('PRIOR_RECOVERY_ALREADY_CLAIMED');
-    const epoch=await load(path.join(root,'native-epoch-000.json'));
+    const epochPath=path.join(root,'native-epoch-000.json');
+    const epoch=await load(epochPath);
+    // Windows DateTime.Ticks exceeds JavaScript's safe integer range.
+    // Compare the original *decimal bytes*, never a rounded JSON number.
+    const epochText=await fs.readFile(epochPath,'utf8');
+    const tickMatch=epochText.match(/"ownerStartTicks":([1-9][0-9]{15,})/);
     if(!keys(epoch,natkeys)||epoch.taskId!==taskId||epoch.epoch!==0||
        epoch.restartCount!==0||!Number.isSafeInteger(epoch.ownerPid)||epoch.ownerPid<=0||
-       !Number.isSafeInteger(epoch.ownerStartTicks)||epoch.ownerStartTicks<=0)
-      return stop('NATIVE_EPOCH_UNVERIFIED');
+       !tickMatch)return stop('NATIVE_EPOCH_UNVERIFIED');
     const assignment=await fs.readFile(path.join(root,'native-job-assigned-e0.txt'),'utf8');
     const fields=assignment.trimEnd().split(/\r?\n/);
-    const expected=[
-      'taskId='+taskId,'ownerPid='+epoch.ownerPid,
-      'ownerStartTicks='+epoch.ownerStartTicks
-    ];
+    const expected=['taskId='+taskId,'ownerPid='+epoch.ownerPid,
+      'ownerStartTicks='+tickMatch[1]];
     if(fields.length!==8||expected.some((x,i)=>fields[i]!==x)||
        !/^childPid=[1-9]\d*$/.test(fields[3])||
        !/^childStartTicks=[1-9]\d*$/.test(fields[4])||
