@@ -41,6 +41,13 @@ async function finish(r,ms=17000){
   if(v.timeout){r.p.kill('SIGKILL');throw Error('CHAIN_TIMEOUT');}
   return {...v,...r.output()};
 }
+async function diagnostic(dir){
+  const entries=await fs.readdir(dir).catch(()=>[]);
+  const readOptional=async name=>file(path.join(dir,name)).catch(()=>null);
+  return {entries,entryError:await readOptional('guard-entry-error.json'),
+    guardianResult:await readOptional('integration-result.json'),
+    nativeResult:await readOptional('job-host-status.json')};
+}
 async function sha(dir){
   return crypto.createHash('sha256').update(await fs.readFile(path.join(dir,'state','effect-once.txt'))).digest('hex');
 }
@@ -53,7 +60,7 @@ test('native Job -> real Guardian -> real controller -> fake Codex completes wit
   const dir=await folder(t);
   const r=run('chain-normal-'+crypto.randomUUID().slice(0,8),dir,'normal');
   const ended=await finish(r);
-  assert.equal(ended.code,0,ended.out+' '+ended.err);
+  assert.equal(ended.code,0,JSON.stringify({out:ended.out,err:ended.err,diagnostic:await diagnostic(dir)}));
   const nativeState=await file(path.join(dir,'job-host-status.json'));
   const guardian=await file(path.join(dir,'integration-result.json'));
   const state=await file(path.join(dir,'state','state.json'));
@@ -77,7 +84,7 @@ test('genuine live Guardian/controller/CLI subtree is killed on guardian heartbe
   const dir=await folder(t);
   const r=run('chain-hang-'+crypto.randomUUID().slice(0,8),dir,'hang');
   const ended=await finish(r);
-  assert.equal(ended.code,20,ended.out+' '+ended.err);
+  assert.equal(ended.code,20,JSON.stringify({out:ended.out,err:ended.err,diagnostic:await diagnostic(dir)}));
   const nativeState=await file(path.join(dir,'job-host-status.json'));
   const state=await file(path.join(dir,'state','state.json'));
   const control=await file(path.join(dir,'state','guardian-process.json'));
