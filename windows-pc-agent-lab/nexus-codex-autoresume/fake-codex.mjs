@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-export const THREAD_ID = '12345678-1234-4234-8234-123456789abc';
+export const THREAD_ID = '019a8f9b-1452-71c0-8a17-6915a0904d67';
 
 // A test-only script, launched as: node fake-codex.mjs exec [...].
 const args = process.argv.slice(2);

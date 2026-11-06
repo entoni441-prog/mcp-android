@@ -107,7 +107,7 @@ launched through Node. It reads test-only `mock.json` from its working directory
 first run, then holds in mode `hold`. After that process is killed, the resumed
 invocation writes resumed.json and complete.json without repeating the effect.
 Other modes exercise error boundaries. Fixed thread UUID:
-`12345678-1234-4234-8234-123456789abc`.
+`019a8f9b-1452-71c0-8a17-6915a0904d67`.
 
 The exported `runManifest` accepts test-only options `testScript`, `ownerDirectory`
 and `timeoutMs`; they are unavailable in the manifest/CLI. Tests use Node's own

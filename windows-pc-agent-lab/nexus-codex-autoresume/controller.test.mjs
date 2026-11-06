@@ -8,7 +8,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { runManifest } from './controller.mjs';
-const THREAD_ID = '12345678-1234-4234-8234-123456789abc';
+const THREAD_ID = '019a8f9b-1452-71c0-8a17-6915a0904d67';
 const exec = promisify(execFile);
 const script = fileURLToPath(new URL('./fake-codex.mjs',import.meta.url));
 const controller = new URL('./controller.mjs',import.meta.url).href;

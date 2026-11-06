@@ -9,7 +9,7 @@ import { StringDecoder } from 'node:string_decoder';
 
 const exec = promisify(execFile);
 const git = (args, cwd) => exec('git',args,{cwd,timeout:10000,maxBuffer:1024*1024,windowsHide:true});
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const inside = (a, b) => { const r = path.relative(a, b); return r === '' || (!r.startsWith('..') && !path.isAbsolute(r)); };
 const exists = async p => { try { await fs.stat(p); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; } };
 const hash = async p => crypto.createHash('sha256').update(await fs.readFile(p)).digest('hex');
