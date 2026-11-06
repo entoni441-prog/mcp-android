@@ -1,0 +1,51 @@
+name: nexus-guardian-native-job-ci
+
+on:
+  push:
+    branches:
+      - experiment/nexus-guardian-jobobject-20261106
+    paths:
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/native/**'
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/restart-gates*'
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/operation-journal*'
+      - '.github/workflows/nexus-guardian-native-job-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-job-object:
+    name: Real Win32 Job/mutex process tests
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Compile with Windows installed .NET Framework C# compiler
+        shell: pwsh
+        run: |
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $output = Join-Path $env:RUNNER_TEMP 'GuardianJobHost.exe'
+          $source = 'windows-pc-agent-lab/nexus-codex-autoresume/native/GuardianJobHost.cs'
+          & $csc /nologo /target:exe /r:System.Core.dll ('/out:' + $output) $source
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Real Job Object, hung worker, detached tree, SIGKILL and mutex tests
+        env:
+          NEXUS_JOBHOST_EXE: ${{ runner.temp }}\GuardianJobHost.exe
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/native/jobhost.test.mjs
+      - name: Durable journal and restart policy
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs
+  portable-policy:
+    name: Portable fail-closed policy (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Durable journal and restart policy
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs
