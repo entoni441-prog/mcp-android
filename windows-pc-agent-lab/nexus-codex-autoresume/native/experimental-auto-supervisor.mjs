@@ -38,7 +38,7 @@ const {fileURLToPath}=await import('node:url');
 const childScript=path.join(path.dirname(fileURLToPath(import.meta.url)),
   'real-readonly-resume-fixture.mjs');
 const waitUntil=Date.now()+Number(limitArg);
-let stage='INITIALIZE',child=null,budgetConsumed=false,launchAttempted=false;
+let stage='INITIALIZE',child=null,budgetConsumed=false,launchAttempted=false,ownsClaim=false;
 let output=null;
 const writeResult=async value=>{
   const h=await fs.open(resultFile,'wx',0o600);
@@ -74,6 +74,7 @@ try{
     await lease.writeFile(JSON.stringify({version:1,taskId,mode:'test-readonly-e1'})+'\n');
     await lease.sync();
   }finally{await lease.close();}
+  ownsClaim=true;
   if(await exists(path.join(root,'native-epoch-001.json'))||
      await exists(path.join(root,'native-epoch-001-shadow.json')))throw Error('E1_ALREADY_CLAIMED');
   const ready=await read(path.join(root,'real-readonly-ready.json'));
@@ -170,22 +171,25 @@ try{
     exactSessionResumed:true,newNativeJobCompleted:true,
     ownerUnattendedWithinTest:true,productionRecoveryEnabled:false};
 }catch(e){
-  const reason=String(e.message||'UNSPECIFIED').slice(0,64);
+  const reason=(e.code==='EEXIST'&&!ownsClaim)
+    ?'SUPERVISOR_ALREADY_CLAIMED'
+    :String(e.message||'UNSPECIFIED').slice(0,64);
   output={...stop(reason),stage,taskId,budgetConsumed,launchAttempted,
     productionRecoveryEnabled:false};
   // This queues a durable local STOP only. No external notification transport
   // and no false claim of delivered alerts.
-  try{await queueStopNotice(root,{taskId,epoch:1,reason:
+  if(ownsClaim)try{await queueStopNotice(root,{taskId,epoch:1,reason:
     reason==='OWNER_STOP'||reason==='OWNER_STOP_AFTER_BUDGET'?'OWNER_STOP':
     reason==='OLD_JOB_STILL_ACTIVE_OR_TIMEOUT'?'PRIOR_PROCESS_ALIVE':
-    reason==='ADMISSION_NOT_PROVEN'?'RECONCILIATION_REQUIRED':
+    reason==='ADMISSION_NOT_PROVEN'||reason==='RECONCILIATION_REQUIRED'
+      ?'RECONCILIATION_REQUIRED':
     'NATIVE_RECOVERY_UNSAFE'});}catch{}
 }finally{
   if(child){
     if(output?.status!=='PASS')try{child.kill('SIGKILL');}catch{}
     child.stdout?.destroy();child.stderr?.destroy();child.unref();
   }
-  try{await writeResult(output);}catch{
+  if(ownsClaim)try{await writeResult(output);}catch{
     // An unrecorded outcome can NEVER be treated as a successful recovery.
     process.exitCode=40;
   }
