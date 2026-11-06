@@ -57,6 +57,21 @@ async function waitGone(pid,ms=4000){
   }
   try{process.kill(pid,0);return false;}catch{return true;}
 }
+async function diagnostic(dir){
+  const read=async rel=>fs.readFile(path.join(dir,...rel.split('/')),'utf8').then(v=>{
+    try{return JSON.parse(v);}catch{return v.slice(0,850);}
+  }).catch(()=>null);
+  return {
+    nativeStatus:await read('job-host-status.json'),
+    guardianResult:await read('integration-result.json'),
+    controllerState:await read('state/state.json'),
+    controllerReceipt:await read('state/guardian-process.json'),
+    cliCheckpoint:await read('state/checkpoint.json'),
+    hangObserved:await read('hang-observed.json'),
+    controllerHang:await read('controller-hang-observed.json'),
+    entryError:await read('guard-entry-error.json')
+  };
+}
 function supported(t){if(process.platform!=='win32'){t.skip('Win32 kernel lifecycle');return false;}return true;}
 test('kernel-backed named job is PRESENT while Guardian runs and NOT_FOUND after watchdog cleanup',{timeout:22000},async t=>{
   if(!supported(t))return;
@@ -75,7 +90,7 @@ test('kernel-backed named job is PRESENT while Guardian runs and NOT_FOUND after
   assert.ok(live.active>=1);
   assert.equal(live.authorization,'NONE');
   const stopped=await waitClosed(running,16000);
-  assert.equal(stopped.code,20,JSON.stringify({...running.getOutput(),stopped}));
+  assert.equal(stopped.code,20,JSON.stringify({...running.getOutput(),stopped,diagnostic:await diagnostic(dir)}));
   const after=await observe(task,dir);
   assert.deepEqual(after,{status:'NOT_FOUND',authorization:'NONE'});
   const kernel=await observeKernelJob({root:dir,taskId:task,nativeExe:native,expectedSha256:pinned});
