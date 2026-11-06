@@ -33,7 +33,6 @@ const admissible=process.platform==='win32' && process.argv.length===7 &&
   Number.isSafeInteger(Number(limitArg))&&Number(limitArg)>=5000&&Number(limitArg)<=110000;
 if(!admissible)process.exit(64);
 
-const resumeScript=path.join(path.dirname(new URL(import.meta.url).pathname),'real-readonly-resume-fixture.mjs');
 // Use fileURLToPath on Windows: URL path may begin /C:/.
 const {fileURLToPath}=await import('node:url');
 const childScript=path.join(path.dirname(fileURLToPath(import.meta.url)),
@@ -67,6 +66,14 @@ try{
   if(!st.isFile()||st.isSymbolicLink()||st.size<10000||st.size>5_000_000||
      (await sha(nativeExe))!==expectedSha256)throw Error('NATIVE_BINARY_UNTRUSTED');
   if(await exists(resultFile))throw Error('DUPLICATE_SUPERVISOR_RESULT');
+  // An immutable supervisor-claim fences competing observers. If this
+  // supervisor is killed, a successor must STOP instead of assuming a safe
+  // restart from an ambiguous half-completed observation.
+  const lease=await fs.open(path.join(root,'experimental-supervisor-claim.json'),'wx',0o600);
+  try{
+    await lease.writeFile(JSON.stringify({version:1,taskId,mode:'test-readonly-e1'})+'\n');
+    await lease.sync();
+  }finally{await lease.close();}
   if(await exists(path.join(root,'native-epoch-001.json'))||
      await exists(path.join(root,'native-epoch-001-shadow.json')))throw Error('E1_ALREADY_CLAIMED');
   const ready=await read(path.join(root,'real-readonly-ready.json'));
@@ -86,6 +93,7 @@ try{
   if(initial.decision!=='STOP'||initial.reason!=='JOB_OBJECT_STILL_PRESENT'||
      !Number.isSafeInteger(initial.active)||initial.active<1)
     throw Error('LIVE_OLD_KERNEL_JOB_NOT_OBSERVED');
+  process.stdout.write(JSON.stringify({status:'ARMED',taskId,canResume:false})+'\n');
 
   stage='AWAIT_OLD_KERNEL_TERMINATION';
   while(Date.now()<waitUntil){
