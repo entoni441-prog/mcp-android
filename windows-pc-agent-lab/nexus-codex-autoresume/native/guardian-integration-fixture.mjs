@@ -4,6 +4,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
@@ -12,7 +13,7 @@ import {runGuardian} from '../guardian.mjs';
 const exec=promisify(execFile), root=process.argv[2], mode=process.argv[3];
 const exact=process.argv.length===4 && typeof root==='string' && path.isAbsolute(root)
   && path.basename(root).startsWith('nexus-job-test-') && ['normal','hang'].includes(mode)
-  && path.relative(path.resolve(process.env.TEMP||''),root).split(path.sep)[0]!=='..';
+  && path.relative(path.resolve(os.tmpdir()),path.resolve(root)).split(path.sep)[0]!=='..';
 if(!exact)process.exit(64);
 
 const state=path.join(root,'state'),owner=path.join(root,'owner'),repo=path.join(root,'repo');
