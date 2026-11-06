@@ -247,6 +247,13 @@ class GuardianJobHost {
             ",\"restartCount\":"+(recovering?1:0)+",\"ownerPid\":"+ownerPid+
             ",\"ownerStartTicks\":"+ownerStartTicks+"}\n";
           CreateReceipt(receiptPath,receipt);
+          // Start the durable restart budget under the SAME native mutex, before
+          // the first worker is resumed. Child runners cannot initialize it.
+          // An interrupted creation fails closed; no receipt is overwritten.
+          if(!recovering){
+            string budget="{\"version\":1,\"taskId\":\""+task+"\",\"baseEpoch\":0,\"maxAttempts\":5}\n";
+            CreateReceipt(Path.Combine(dir,"budget-anchor.json"),budget);
+          }
         }catch(IOException){
           if(File.Exists(receiptPath)){
             Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"NATIVE_EPOCH_ALREADY_CLAIMED\"}");
