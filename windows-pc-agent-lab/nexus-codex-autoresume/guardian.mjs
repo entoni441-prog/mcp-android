@@ -127,8 +127,8 @@ export async function runGuardian(input,options={}) {
     const next={...state,attempt:1,status:'RECOVERING',reason:'GUARDIAN_RESUME_ARMED',childPid:null,updatedAt:new Date().toISOString()};
     await atomic(stateFile,next);
 
-    const args=[...(options.testScript?[options.testScript]:[]),'exec','resume','--json',next.threadId,m.resumePrompt];
-    const child=spawn(m.codexExe,args,{cwd:m.workingDirectory,stdio:['ignore','pipe','pipe'],windowsHide:true});
+    const resumeArgs=[...(options.testScript?[options.testScript]:[]),'exec','resume','--json',next.threadId,m.resumePrompt];
+    const child=spawn(m.codexExe,resumeArgs,{cwd:m.workingDirectory,stdio:['ignore','pipe','pipe'],windowsHide:true});
     const deathResume=new Promise(resolve=>{
       child.once('error',()=>resolve({error:true}));
       child.once('close',(code,signal)=>resolve({code,signal}));
