@@ -1,0 +1,30 @@
+name: nexus-guardian-scheduler-contract-ci
+
+on:
+  push:
+    branches:
+      - experiment/nexus-guardian-scheduler-20261106
+    paths:
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/**'
+      - '.github/workflows/nexus-guardian-scheduler-contract-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  invariant-tests:
+    name: Safe restart contract (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Restart and immutable receipt tests
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs
