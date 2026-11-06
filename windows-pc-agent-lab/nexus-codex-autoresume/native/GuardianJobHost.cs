@@ -421,12 +421,14 @@ class GuardianJobHost {
         !Path.IsPathRooted(args[2]) || !File.Exists(args[2]) ||
         !String.Equals(Path.GetFileName(args[2]), "node.exe", StringComparison.OrdinalIgnoreCase) ||
         !Path.IsPathRooted(args[3]) || !File.Exists(args[3]) ||
-        !new [] {"job-fixture.mjs", "guardian-integration-fixture.mjs"}.Contains(Path.GetFileName(args[3]),StringComparer.OrdinalIgnoreCase) ||
+        !new [] {"job-fixture.mjs", "guardian-integration-fixture.mjs", "real-readonly-fixture.mjs"}.Contains(Path.GetFileName(args[3]),StringComparer.OrdinalIgnoreCase) ||
         !Path.IsPathRooted(args[4]) || !Directory.Exists(args[4]) ||
         !IsTestPath(args[4]) ||
         !(String.Equals(Path.GetFileName(args[3]),"guardian-integration-fixture.mjs",StringComparison.OrdinalIgnoreCase)
-            ? new [] {"normal","hang","prepared","real-readonly","recover","committed"}.Contains(args[5])
-            : new [] {"normal", "hold", "hang", "tree"}.Contains(args[5]))) {
+            ? new [] {"normal","hang","prepared","recover","committed"}.Contains(args[5])
+            : String.Equals(Path.GetFileName(args[3]),"real-readonly-fixture.mjs",StringComparison.OrdinalIgnoreCase)
+              ? args[5]=="real-readonly"
+              : new [] {"normal", "hold", "hang", "tree"}.Contains(args[5]))) {
       Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"INVALID_TEST_ARGS\"}");
       return 64;
     }
@@ -454,7 +456,8 @@ class GuardianJobHost {
         return 12;
       }
       owned=true;
-      bool integration=String.Equals(Path.GetFileName(script),"guardian-integration-fixture.mjs",StringComparison.OrdinalIgnoreCase);
+      bool integration=String.Equals(Path.GetFileName(script),"guardian-integration-fixture.mjs",StringComparison.OrdinalIgnoreCase)||
+        String.Equals(Path.GetFileName(script),"real-readonly-fixture.mjs",StringComparison.OrdinalIgnoreCase);
       bool recovering=integration && mode=="recover";
       // The exact-thread recovery child has NOT passed acceptance yet.
       // Do not burn epoch 1 or launch anything until that gate is delivered.
