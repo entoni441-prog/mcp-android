@@ -60,3 +60,11 @@ For full regression, use the isolated matrix workflow in this branch.
 - Sentinel 0.4: policy and NEXUS read-only evaluation implemented; **Guardian self-restart NOT IMPLEMENTED / NOT TESTED**.
 
 This document is deliberately explicit so that the next session can continue from the exact checkpoint without repeating tests or guessing what is already implemented.
+
+## Verification addendum — 06.11.2026
+
+- On owner's Windows Node 24, all **33/33 Sentinel policy + read-only adapter tests PASS**, 0 failed (test-only isolated Temp data).
+- GitHub Actions run 42165994834 (the original pure policy commit) succeeded on Windows and Ubuntu. A later run 42166116397 exposed a Windows runner temporary path alias issue in the adapter; run 42166226920 still failed on Windows after a case-normalization attempt. The final fix at `06e938f` inspects each path component for symbolic links rather than comparing canonical path spellings.
+- The updated 33 tests PASS on the owner's Windows after this final fix. **The final GitHub Actions run for `06e938f` was not independently verified in this session**; do not label the final CI 2/2 PASS without checking its run and jobs.
+- The independent process-recovery runtime is **NOT IMPLEMENTED**; neither automated Guardian restart nor real Guardian crash auto-recovery has been tested. Previous Guardian 0.3 REAL PASS remains valid and untouched.
+- No production/main mutation. Experiment should remain isolated until approved implementation and fresh CI/real tests.
