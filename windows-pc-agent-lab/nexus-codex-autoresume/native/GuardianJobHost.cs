@@ -91,6 +91,8 @@ class GuardianJobHost {
   static extern bool GetExitCodeProcess(IntPtr handle, out uint code);
   [DllImport("kernel32.dll", SetLastError=true)]
   static extern bool TerminateJobObject(IntPtr job, uint exitCode);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern bool TerminateProcess(IntPtr process, uint exitCode);
 
   static string Quote(string arg) {
     return "\"" + arg.Replace("\"", "\\\"") + "\"";
@@ -161,7 +163,7 @@ class GuardianJobHost {
     string mutexName = "Global\\NEXUS-Codex-JobTest-" + task;
     IntPtr mutex=IntPtr.Zero, job=IntPtr.Zero;
     PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
-    bool owned=false, childCreated=false;
+    bool owned=false, childCreated=false, assigned=false;
     int ownerPid = Process.GetCurrentProcess().Id;
     try {
       mutex=CreateMutex(IntPtr.Zero, true, mutexName);
@@ -187,8 +189,14 @@ class GuardianJobHost {
           CREATE_SUSPENDED|CREATE_NO_WINDOW,IntPtr.Zero,Path.GetDirectoryName(script),ref si,out pi))
         throw new InvalidOperationException("CHILD_CREATE_FAILED");
       childCreated=true;
+      // Test-only fault injection: the suspended child must never execute.
+      if (Environment.GetEnvironmentVariable("NEXUS_TEST_BEFORE_ASSIGN")=="1") {
+        WriteState(dir,task,"STOP","TEST_BEFORE_ASSIGN",ownerPid,pi.dwProcessId,Active(job));
+        throw new InvalidOperationException("JOB_ASSIGN_INJECTED");
+      }
       if (!AssignProcessToJobObject(job,pi.hProcess))
         throw new InvalidOperationException("JOB_ASSIGN_FAILED");
+      assigned=true;
       if (ResumeThread(pi.hThread)==WAIT_FAILED)
         throw new InvalidOperationException("CHILD_RESUME_FAILED");
       WriteState(dir,task,"RUNNING","JOB_ASSIGNED",ownerPid,pi.dwProcessId,Active(job));
@@ -232,8 +240,12 @@ class GuardianJobHost {
       Console.WriteLine("{\"status\":\"STOP\",\"reason\":\""+(ex is InvalidOperationException?ex.Message:"NATIVE_IO_ERROR")+"\"}");
       return 70;
     } finally {
-      // Assign+resume failure, unexpected exception, or external SIGKILL:
-      // closing this handle ends ALL Job processes (KILL_ON_JOB_CLOSE).
+      // If CreateProcess succeeded but Job assignment did not, kill only the
+      // EXACT suspended process handle returned to this owner. No PID lookup.
+      // The child cannot have executed code yet (CREATE_SUSPENDED).
+      if (childCreated && !assigned && pi.hProcess!=IntPtr.Zero)
+        TerminateProcess(pi.hProcess, 54);
+      // After assignment, closing the Job handles ALL descendants.
       if (job!=IntPtr.Zero) CloseHandle(job);
       if (childCreated) {
         if (pi.hThread!=IntPtr.Zero) CloseHandle(pi.hThread);
