@@ -48,6 +48,15 @@ test('MCP handshake and tool discovery', async () => {
   assert.equal(init.body.result.serverInfo.version, '0.6.1-next');
 });
 
+test('NX-TM-01: MCP dispatcher exposes minimize but refuses unrequested terminal window management', async () => {
+  const noIntent=await call('minimize_window',{pid:99});
+  assert.equal(noIntent.isError,true);
+  assert.match(JSON.stringify(noIntent),/owner_request_required/);
+  const noVerifiedTerminal=await call('minimize_window',{pid:99,ownerRequested:true});
+  assert.equal(noVerifiedTerminal.isError,true);
+  assert.match(JSON.stringify(noVerifiedTerminal),/minimize_target_not_supported/);
+});
+
 test('workspace file round-trip with optimistic sha', async () => {
   assert.equal((await call('make_dir', {path: 'notes'})).isError, false);
   const created = await call('write_text', {path: 'notes/a.txt', content: 'привет', expectedSha256: null});
