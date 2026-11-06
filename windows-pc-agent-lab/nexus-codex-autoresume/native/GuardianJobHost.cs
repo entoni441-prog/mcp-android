@@ -208,8 +208,12 @@ class GuardianJobHost {
   // Read-only, same-Windows-session OS lifecycle probe for an exact test job.
   // NOT a recovery authorization; all outcomes remain observational.
   static int Probe(string[] args) {
-    if(args.Length!=3||args[0]!="probe"||
-       !Regex.IsMatch(args[1],@"^[A-Za-z0-9_-]{1,48}$")||
+    bool holding=args.Length>0&&args[0]=="probe-hold";
+    int holdMs=0;
+    if(!holding && (args.Length!=3||args[0]!="probe"))return 64;
+    if(holding && (args.Length!=4||!Int32.TryParse(args[3],out holdMs)||
+       holdMs<300||holdMs>6500))return 64;
+    if(!Regex.IsMatch(args[1],@"^[A-Za-z0-9_-]{1,48}$")||
        !Path.IsPathRooted(args[2])||!IsTestPath(args[2]))return 64;
     string task=args[1],dir=Path.GetFullPath(args[2]);
     try {
@@ -260,6 +264,11 @@ class GuardianJobHost {
         }
         uint active=Active(h);
         Console.WriteLine("{\"status\":\"PRESENT\",\"active\":"+active+",\"authorization\":\"NONE\"}");
+        Console.Out.Flush();
+        // TEST ONLY: leave a second OS handle open briefly. The native owner
+        // may die, yet KILL_ON_JOB_CLOSE must NOT be assumed until *all* handles
+        // including this observer have closed. No execution is authorized.
+        if(holding)Thread.Sleep(holdMs);
         return 0;
       }finally{CloseHandle(h);}
     }catch{
@@ -270,7 +279,7 @@ class GuardianJobHost {
 
   static int Main(string[] args) {
     if (Environment.OSVersion.Platform != PlatformID.Win32NT) return 64;
-    if (args.Length>0 && args[0]=="probe") return Probe(args);
+    if (args.Length>0 && (args[0]=="probe"||args[0]=="probe-hold")) return Probe(args);
     // EXPLICITLY TEST-ONLY: no arbitrary executable, no production manifest.
     // run <taskId> <nodeExe> <testScript> <tempStateDir> <mode> <heartbeatTimeoutMs> <runtimeMs>
     if (args.Length != 8 || args[0] != "run" ||
