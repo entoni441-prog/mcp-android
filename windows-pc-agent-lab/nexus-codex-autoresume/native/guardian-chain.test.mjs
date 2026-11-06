@@ -64,6 +64,9 @@ test('native Job -> real Guardian -> real controller -> fake Codex completes wit
   assert.equal(ended.code,0,JSON.stringify({out:ended.out,err:ended.err,diagnostic:await diagnostic(dir)}));
   const nativeState=await file(path.join(dir,'job-host-status.json'));
   const guardian=await file(path.join(dir,'integration-result.json'));
+  const firstEpoch=await file(path.join(dir,'native-epoch-000.json'));
+  assert.equal(firstEpoch.epoch,0);
+  assert.equal(firstEpoch.restartCount,0);
   const state=await file(path.join(dir,'state','state.json'));
   const control=await file(path.join(dir,'state','guardian-process.json'));
   const checkpoint=await file(path.join(dir,'state','checkpoint.json'));
@@ -93,6 +96,7 @@ test('genuine live Guardian/controller/CLI subtree is killed on guardian heartbe
   const control=await file(path.join(dir,'state','guardian-process.json'));
   const checkpoint=await file(path.join(dir,'state','checkpoint.json'));
   const observed=await file(path.join(dir,'hang-observed.json'));
+  assert.equal((await file(path.join(dir,'native-epoch-000.json'))).epoch,0);
   assert.equal(observed.controllerAndCliAlive,true);
   assert.equal(nativeState.reason,'HEARTBEAT_STALE_JOB_EMPTY');
   assert.equal(nativeState.jobActive,0);
@@ -111,7 +115,8 @@ test('genuine live Guardian/controller/CLI subtree is killed on guardian heartbe
   // restart an already claimed task. Same directory => duplicate claim STOP.
   const again=run('chain-hang-new-'+crypto.randomUUID().slice(0,8),dir,'hang',7000);
   const repeat=await finish(again,10000);
-  assert.notEqual(repeat.code,0);
+  assert.equal(repeat.code,17,'native OS owner must deny already-used durable epoch');
+  assert.match(repeat.out,/NATIVE_EPOCH_ALREADY_CLAIMED/);
   assert.equal(await sha(dir),hash,'already performed effect must not repeat');
   assert.equal((await fs.readdir(path.join(dir,'state'))).filter(x=>x==='effect-once.txt').length,1);
 });
