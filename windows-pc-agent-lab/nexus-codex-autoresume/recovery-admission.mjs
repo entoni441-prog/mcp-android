@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {inspectRecoveryBudget} from './recovery-budget.mjs';
 import {getOperation} from './operation-journal.mjs';
+import {observeKernelJob} from './kernel-job-observation.mjs';
 
 const id=/^[A-Za-z0-9_-]{1,64}$/;
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -83,4 +84,33 @@ export async function inspectRecoveryAdmission({root,taskId,threadId,operationId
     }
     return stop('OPERATION_STATE_UNVERIFIED');
   }catch{return stop('RECOVERY_EVIDENCE_UNREADABLE');}
+}
+
+
+// Combined read-only review. OS observation is obtained by executing an
+// independently SHA-pinned native probe, not supplied as untrusted JSON flags.
+// STILL NOT an executor: no recovery epoch is spent, no Codex is launched.
+export async function inspectRecoveryAdmissionWithKernel(args={}){
+  const fileGate=await inspectRecoveryAdmission(args);
+  // A blocked journal/owner must NEVER be overridden by a healthy Job probe.
+  if(fileGate.decision!=='REQUIRES_ATTESTATION')return fileGate;
+  const os=await observeKernelJob({
+    root:args.root,taskId:args.taskId,
+    nativeExe:args.nativeExe,expectedSha256:args.expectedSha256
+  });
+  if(os.decision!=='OS_OBSERVATION_ONLY')
+    return stop(os.reason||'KERNEL_JOB_NOT_VERIFIED');
+  // Even a verified same-session named Job absence cannot independently
+  // establish the external side-effect state or trusted authorization.
+  return Object.freeze({
+    decision:'REQUIRES_ATTESTATION',
+    reason:fileGate.operationStage==='COMMITTED'
+      ?'PROVIDER_RECONCILIATION_AND_OWNER_AUTHORIZATION_REQUIRED'
+      :'OWNER_AUTHORIZATION_AND_FENCE_REQUIRED',
+    previousEpoch:fileGate.previousEpoch,
+    nextEpoch:fileGate.nextEpoch,
+    operationStage:fileGate.operationStage,
+    kernelJobObservedMissing:true,
+    canResume:false
+  });
 }
