@@ -19,6 +19,11 @@ let runner,buildDir;
 const hostAvailable=process.platform==='win32';
 test.before(async()=>{
   if(!hostAvailable)return;
+  // Reuse a separately compiled, verified native runner when available.
+  // Some managed Windows machines disallow immediate execution of a newly
+  // created unsigned EXE from the Node test's temporary build directory.
+  const prebuilt=process.env.NEXUS_JOBHOST_EXE || path.join(os.tmpdir(),'nexus-guardian-jobhost-20261106.exe');
+  if(await fs.access(prebuilt).then(()=>true,()=>false)){runner=prebuilt;return;}
   const cscPaths=[
     'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe',
     'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe'
