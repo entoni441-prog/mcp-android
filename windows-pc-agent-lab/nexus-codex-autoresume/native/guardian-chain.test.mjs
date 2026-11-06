@@ -98,6 +98,8 @@ test('genuine live Guardian/controller/CLI subtree is killed on guardian heartbe
   const observed=await file(path.join(dir,'hang-observed.json'));
   assert.equal((await file(path.join(dir,'native-epoch-000.json'))).epoch,0);
   assert.equal(observed.controllerAndCliAlive,true);
+  assert.equal(observed.controllerHeartbeatStale,true);
+  assert.equal((await file(path.join(dir,'controller-hang-observed.json'))).eventLoopBlocked,true);
   assert.equal(nativeState.reason,'HEARTBEAT_STALE_JOB_EMPTY');
   assert.equal(nativeState.jobActive,0);
   assert.equal(state.status,'RUNNING');
