@@ -4,6 +4,7 @@ on:
     branches: [experiment/nexus-guardian-preboot-watch-20261106]
     paths:
       - 'windows-pc-agent-lab/nexus-codex-autoresume/preboot-watch*'
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/native/PrebootWatchHost.cs'
       - '.github/workflows/nexus-guardian-preboot-watch-ci.yml'
   workflow_dispatch:
 permissions:
@@ -17,7 +18,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Compile native named-mutex launcher
+        shell: pwsh
+        run: |
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $src = (Resolve-Path 'windows-pc-agent-lab/nexus-codex-autoresume/native/PrebootWatchHost.cs').Path
+          $out = Join-Path $env:RUNNER_TEMP 'NexusPrebootWatchHost.exe'
+          & $csc /nologo /target:exe ('/out:' + $out) $src
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Kernel-mutex standby and immutable STOP tests
+        env:
+          NEXUS_PREBOOT_LAUNCHER_EXE: ${{ runner.temp }}\NexusPrebootWatchHost.exe
         run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/preboot-watch.test.mjs
   linux-standby:
     runs-on: ubuntu-latest
