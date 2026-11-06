@@ -15,15 +15,19 @@ if(process.platform!=='win32'||process.argv.length!==4||
 if(!(await fs.stat(binary)).isFile())process.exit(65);
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const start=Date.now();
+function limit(ms,label){return new Promise((_,reject)=>{
+  const timer=setTimeout(()=>reject(Error(label)),ms);timer.unref();
+});}
 let thread=null,first=null,second=null,firstExited=false;
 function create(args){
   const child=spawn(binary,args,{cwd,windowsHide:true,stdio:['ignore','pipe','pipe']});
   let out='',err='',events=[];
   child.stderr.on('data',d=>{err=(err+d.toString()).slice(-1000);});
-  let finished=false;
+  // Process 'exit' is authoritative. 'close' can be delayed indefinitely
+  // when a CLI descendant inherited an stdout/stderr pipe handle.
   const death=new Promise(resolve=>{
-    child.once('close',(code,signal)=>{finished=true;resolve({code,signal})});
-    child.once('error',e=>{finished=true;resolve({error:e.code||'SPAWN_ERROR'})});
+    child.once('exit',(code,signal)=>resolve({code,signal}));
+    child.once('error',e=>resolve({error:e.code||'SPAWN_ERROR'}));
   });
   return {child,death,get events(){return events;},get err(){return err;},
     feed(cb){
@@ -53,8 +57,9 @@ try{
     });
     first.death.then(()=>{if(!thread)reject(Error('NO_THREAD_BEFORE_EXIT'))});
   });
-  await Promise.race([ready,new Promise((_,reject)=>setTimeout(()=>reject(Error('THREAD_TIMEOUT')),12000))]);
-  firstStage=await Promise.race([first.death,new Promise((_,reject)=>setTimeout(()=>reject(Error('KILL_TIMEOUT')),7000))]);
+  await Promise.race([ready,limit(12000,'THREAD_TIMEOUT')]);
+  firstStage=await Promise.race([first.death,limit(7000,'KILL_TIMEOUT')]);
+  first.child.stdout.destroy();first.child.stderr.destroy();first.child.unref();
   firstExited=true;
   if(!thread||firstStage?.error)throw Error('FIRST_NOT_KILLED');
 
@@ -62,8 +67,10 @@ try{
   second=create(['exec','resume','--json','-c','sandbox_mode="read-only"',
     thread,'This is an isolated read-only diagnostic. Do not invoke tools or modify files. Reply exactly NEXUS-CLI-CRASH-RESUMED.']);
   second.feed();
-  const resumed=await Promise.race([second.death,
-    new Promise((_,reject)=>setTimeout(()=>reject(Error('RESUME_TIMEOUT')),55000))]);
+  const resumed=await Promise.race([second.death,limit(55000,'RESUME_TIMEOUT')]);
+  // Let streamed JSONL finish briefly without trusting descendant pipe closure.
+  await Promise.race([new Promise(resolve=>second.child.stdout.once('end',resolve)),
+    limit(500,'OUTPUT_DRAIN_TIMEOUT').catch(()=>undefined)]);
   const events=second.events;
   const ids=events.filter(e=>e.type==='thread.started').map(e=>e.thread_id);
   const outputs=events.filter(e=>e.type==='item.completed'&&e.item?.type==='agent_message').map(e=>e.item.text||'');
@@ -82,6 +89,9 @@ try{
 }finally{
   // No PID-based search or taskkill; only the two exact handles owned here.
   for(const p of [first,second]){
-    if(p)try{p.child.kill('SIGKILL');}catch{}
+    if(p){
+      try{p.child.kill('SIGKILL');}catch{}
+      p.child.stdout?.destroy();p.child.stderr?.destroy();p.child.unref();
+    }
   }
 }
