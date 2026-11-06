@@ -17,7 +17,7 @@ const exact=process.argv.length===4 && typeof root==='string' && path.isAbsolute
 if(!exact)process.exit(64);
 
 const state=path.join(root,'state'),owner=path.join(root,'owner'),repo=path.join(root,'repo');
-const fake=fileURLToPath(new URL('../fake-codex.mjs',import.meta.url));
+const fake=fileURLToPath(new URL('./guarded-fake-codex.mjs',import.meta.url));
 const save=async(name,obj)=> {
   const tmp=path.join(root,name+'.'+crypto.randomUUID()+'.tmp');
   await fs.writeFile(tmp,JSON.stringify(obj));
