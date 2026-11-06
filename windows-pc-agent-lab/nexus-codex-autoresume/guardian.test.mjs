@@ -113,18 +113,30 @@ test('real controller SIGKILL then exact test-child exit resumes same thread onc
     assert.ok(!JSON.stringify(result).includes('CANARY_SECRET'));
   }finally{if(ids)tryKill(ids.childPid);if(p.p.exitCode===null)tryKill(p.p.pid);}
 });
-test('controller killed but orphan still alive: STOP, no accidental second CLI', {timeout:12000},async t=>{
+test('live PID in recovered state: STOP, never terminate or retry unknown process', {timeout:12000},async t=>{
   const f=await fixture(t);f.options.orphanWaitMs=350;
   const p=launch(f);let ids;
+  const sentinel=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});
   try{
     ids=await ready(f);
+    assert.ok(Number.isInteger(sentinel.pid));
+    // Simulate an orphan or reused PID in the durable state. The sentinel is a
+    // separate, test-created process; guardian must not signal or hijack it.
+    const statePath=path.join(f.state,'state.json');
+    const saved=await waitJson(statePath);
+    await fs.writeFile(statePath,JSON.stringify({...saved,childPid:sentinel.pid}));
     tryKill(ids.controllerPid);
     const {result}=await waitResult(p);
     assert.equal(result.status,'STOP');
     assert.equal(result.reason,'ORPHAN_OR_PID_REUSED');
     assert.equal(await fs.access(path.join(f.state,'resumed.json')).then(()=>true,()=>false),false);
     assert.equal(await fs.access(path.join(f.state,'guardian-resume-claim.json')).then(()=>true,()=>false),false);
-  }finally{if(ids)tryKill(ids.childPid);if(p.p.exitCode===null)tryKill(p.p.pid);}
+    assert.doesNotThrow(()=>process.kill(sentinel.pid,0),'guardian must leave sentinel alive');
+  }finally{
+    sentinel.kill('SIGKILL');
+    if(ids)tryKill(ids.childPid);
+    if(p.p.exitCode===null)tryKill(p.p.pid);
+  }
 });
 test('owner STOP during controller crash forbids recovery', {timeout:12000},async t=>{
   const f=await fixture(t);const p=launch(f);let ids;
