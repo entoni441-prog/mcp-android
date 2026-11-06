@@ -22,7 +22,7 @@ Windows native `GuardianJobHost.cs` (existing verified Win32 mutex and Job Objec
 1. Owner's actual Windows machine: first native full-chain mock tests 2/2 PASS; full local regression including existing Guardian, controller, Job Object, journal and policy 87/87 PASS (before the later test-only hung-controller wrapper and epoch receipt changes).
 2. GitHub Actions `42194490806` confirmed previous integrated journal mock: Windows and Ubuntu both success.
 3. GitHub Actions `42194912054` confirmed native epoch-0 durable claim: Windows and Ubuntu both success.
-4. GitHub Actions `42195433187`: new real blocked-controller test and native test suite **10/10 PASS**; Ubuntu policy success; one pre-existing Guardian SIGKILL regression test timed out waiting for `checkpoint.json` (25/26 other regressions PASS). A targeted rerun of **the failing test only** on owner's actual Windows returned 1/1 PASS. To isolate potential Windows CI interference from native stress tests, the CI workflow was separated into independent `full-chain`, `legacy-regression`, and `portable` jobs. Latest CI run `42195876495` initially pending independent confirmation.
+4. GitHub Actions `42195433187`: new real blocked-controller test and native test suite **10/10 PASS**; Ubuntu policy success; one pre-existing Guardian SIGKILL regression test timed out waiting for `checkpoint.json` (25/26 other regressions PASS). A targeted rerun of **the failing test only** on owner's actual Windows returned 1/1 PASS. To isolate potential Windows CI interference from native stress tests, the CI workflow was separated into independent `full-chain`, `legacy-regression`, and `portable` jobs. Latest CI run `42195876495` confirmed **3/3 jobs SUCCESS**: independent Windows native full-chain **10/10 PASS** and policy/journal **51/51 PASS**; separate Windows legacy Guardian/controller regression **26/26 PASS**; Ubuntu policy/journal **51/51 PASS**. Exact run: https://github.com/entoni441-prog/mcp-android/actions/runs/42195876495.
 5. Owner's Windows after testing: zero matching JobHost/integration fixture/hung controller/mock Codex processes; current Git worktree clean.
 
 ## Safety boundaries — NOT delivered yet
@@ -36,3 +36,10 @@ Windows native `GuardianJobHost.cs` (existing verified Win32 mutex and Job Objec
 ## Next gate
 
 Before activating a Scheduler task: (a) trusted persistent epoch and restart-budget machinery with 30-minute verified-stability reset; (b) native parent liveness/Job proof bound to next generation; (c) exact saved Codex CLI thread resume with durable operation fencing and owner STOP; (d) actual hung real Codex process acceptance; (e) real owner-logon/reboot acceptance. Current stage is an experimental integration and crash-containment acceptance only.
+
+## Final verification
+
+- CI source commit before report-only edits: `a865c245762fd5e8c4cfe5c817eab102c8827ccf`.
+- Native test chain includes an ACTUAL hung Node controller executing the actual `runManifest`, a live mock CLI, lost PID-scoped controller heartbeat, kernel Job termination, verified zero active Job processes, and no repeated test effect.
+- A separate Windows regression job passed all 26 original controller/Guardian tests, including the previously intermittent SIGKILL test. The prior regression timeout was not reproduced in the isolated job; no code change was made to conceal the failure.
+- Completion of this integration checkpoint does NOT authorize activation of a Scheduler task or actual Codex calls.
