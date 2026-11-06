@@ -7,7 +7,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import {spawn} from 'node:child_process';
+import {spawn,execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {inspectRecoveryAdmissionWithKernel} from '../recovery-admission.mjs';
 import {claimRecoveryAttempt,inspectRecoveryBudget} from '../recovery-budget.mjs';
@@ -19,6 +20,18 @@ const fixture=path.join(dirOfFile,'guardian-integration-fixture.mjs');
 const exe=process.env.NEXUS_JOBHOST_EXE;
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const op='local_effect_001';
+const exec=promisify(execFile);
+async function reserve(task,root){
+  try{
+    const r=await exec(exe,['reserve-shadow',task,root],{
+      cwd:dirOfFile,windowsHide:true,timeout:8000,maxBuffer:2048
+    });
+    return {exitCode:0,response:JSON.parse(r.stdout.trim())};
+  }catch(e){
+    return {exitCode:Number(e.code)||99,response:JSON.parse(String(e.stdout||'{}').trim())};
+  }
+}
+
 async function temp(t){
   const folder=await fs.mkdtemp(path.join(os.tmpdir(),'nexus-job-test-'));
   t.after(()=>fs.rm(folder,{recursive:true,force:true}));
@@ -72,6 +85,9 @@ test('OS Job death + exact session journal + single epoch-1 SHADOW claim, never 
   assert.equal(ready.noExternalEffect,true);
   assert.equal(ready.guardianStarted,false);
   assert.ok(live(status.ownerPid)&&live(status.childPid));
+  const whileOwnerAlive=await reserve(task,root);
+  assert.equal(whileOwnerAlive.exitCode,12);
+  assert.equal(whileOwnerAlive.response.reason,'DUPLICATE_OWNER');
 
   const sha=crypto.createHash('sha256').update(await fs.readFile(exe)).digest('hex');
   const args={root,taskId:task,threadId:ready.threadId,operationId:op,nativeExe:exe,expectedSha256:sha};
@@ -105,6 +121,19 @@ test('OS Job death + exact session journal + single epoch-1 SHADOW claim, never 
   // This does NOT create native-epoch-001 or launch a recovery process.
   const consumed=await claimRecoveryAttempt(root,task,1);
   assert.deepEqual(consumed,{decision:'CLAIMED',epoch:1,attempt:1,remaining:4});
+  const nativeShadow=await reserve(task,root);
+  assert.equal(nativeShadow.exitCode,0,JSON.stringify(nativeShadow));
+  assert.deepEqual(nativeShadow.response,{
+    status:'SHADOW_EPOCH_RESERVED',epoch:1,canResume:false
+  });
+  const receipt=JSON.parse(await fs.readFile(path.join(root,'native-epoch-001-shadow.json'),'utf8'));
+  assert.equal(receipt.shadowOnly,true);
+  assert.equal(receipt.oldKernelJobGone,true);
+  assert.equal(receipt.canResume,false);
+  assert.equal(receipt.budgetAttempt,1);
+  const duplicate=await reserve(task,root);
+  assert.equal(duplicate.exitCode,17);
+  assert.equal(duplicate.response.reason,'SHADOW_EPOCH_ALREADY_CLAIMED');
   assert.equal((await inspectRecoveryBudget(root,task)).used,1);
   assert.equal((await claimRecoveryAttempt(root,task,1)).decision,'STOP');
   assert.equal((await inspectRecoveryAdmissionWithKernel(args)).reason,'PRIOR_RECOVERY_ALREADY_CLAIMED');
@@ -129,6 +158,10 @@ test('IN_FLIGHT uncertainty stops at the journal before any budget claim',{timeo
     nativeExe:exe,expectedSha256:sha
   });
   assert.deepEqual(review,{decision:'STOP',reason:'RECONCILIATION_REQUIRED'});
+  const nativeReject=await reserve(task,root);
+  assert.notEqual(nativeReject.exitCode,0);
+  assert.equal(nativeReject.response.reason,'OPERATION_EFFECT_BOUNDARY_UNPROVEN');
+  assert.equal(await fs.access(path.join(root,'native-epoch-001-shadow.json')).then(()=>true,()=>false),false);
   assert.equal((await inspectRecoveryBudget(root,task)).used,0);
   assert.equal(await fs.access(path.join(root,'budget-attempt-001.json')).then(()=>true,()=>false),false);
 });
