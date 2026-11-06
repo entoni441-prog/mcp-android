@@ -93,10 +93,12 @@ export async function runGuardian(input,options={}) {
       : [script,'run',options.manifestPath];
     if(!options.testScript && (!options.manifestPath||!path.isAbsolute(options.manifestPath)))return await summary('STOP','MANIFEST_FILE_REQUIRED');
     control=spawn(process.execPath,args,{cwd:m.workingDirectory,stdio:['ignore','ignore','ignore'],windowsHide:true});
-    const death=await new Promise(resolve=>{
+    const controllerDeath=new Promise(resolve=>{
       control.once('error',()=>resolve({error:true}));
       control.once('close',(code,signal)=>resolve({code,signal}));
     });
+    await atomic(path.join(m.stateDirectory,'guardian-process.json'),{taskId:m.taskId,controllerPid:control.pid??null});
+    const death=await controllerDeath;
     // The live controller has finished: do not intervene if it produced a
     // terminal STOP. A valid marker, even across a lost ACK, is authoritative.
     let state;
