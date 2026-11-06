@@ -4,6 +4,7 @@ on:
     branches: [experiment/nexus-guardian-budget-20261106]
     paths:
       - 'windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget*'
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/stop-outbox*'
       - '.github/workflows/nexus-guardian-budget-ci.yml'
   workflow_dispatch:
 permissions:
@@ -19,7 +20,7 @@ jobs:
         with:
           node-version: '24'
       - name: Budget, isolated crash and exclusive receipt tests
-        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget.test.mjs
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/stop-outbox.test.mjs
   ubuntu-budget:
     name: Persistent recovery budget and existing journal (Ubuntu)
     runs-on: ubuntu-latest
@@ -30,4 +31,4 @@ jobs:
         with:
           node-version: '24'
       - name: Budget and exact-once operation journal regressions
-        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/stop-outbox.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs
