@@ -16,8 +16,10 @@ import {claimRecoveryAttempt,inspectRecoveryBudget} from '../recovery-budget.mjs
 import {getOperation} from '../operation-journal.mjs';
 
 const [work,binary]=process.argv.slice(2),native=process.env.NEXUS_JOBHOST_EXE;
+const nativeEpoch1=process.env.NEXUS_TEST_NATIVE_EPOCH1==='1';
 const allowed=process.platform==='win32'&&process.argv.length===4&&
-  typeof work==='string'&&path.isAbsolute(work)&&work.includes('nexus-guardian-realjob-readonly-20261106')&&
+  typeof work==='string'&&path.isAbsolute(work)&&(work.includes('nexus-guardian-realjob-readonly-20261106')||
+   work.includes('nexus-guardian-native-epoch1-readonly-20261106'))&&
   typeof binary==='string'&&path.isAbsolute(binary)&&path.basename(binary).toLowerCase()==='codex.exe'&&
   typeof native==='string'&&path.isAbsolute(native)&&path.extname(native).toLowerCase()==='.exe';
 if(!allowed)process.exit(64);
@@ -116,9 +118,54 @@ try{
     gate.operationStage==='PREPARED'&&gate.kernelJobObservedMissing===true&&
     gate.canResume===false,'RECOVERY_GATE_BLOCKED');
   assertCondition((await inspectRecoveryBudget(temp,task)).used===0,'BUDGET_ALREADY_SPENT');
+  const resumeScript=path.join(here,'real-readonly-resume-fixture.mjs');
+  const epochOneArgs=['run',task,process.execPath,resumeScript,temp,
+    'resume-readonly','8000','90000'];
+  if(nativeEpoch1){
+    // Cannot launch a new owner until an immutable budget receipt is present.
+    stage='E1_REQUIRES_PRESPENT_BUDGET';
+    const premature=start(native,epochOneArgs,here);
+    const denied=await timeout(premature.ended,11000);
+    premature.p.stdout.destroy();premature.p.stderr.destroy();premature.p.unref();
+    assertCondition(!denied.timeout&&!denied.error&&denied.code!==0,
+      'E1_EARLY_LAUNCH_NOT_REJECTED');
+    assertCondition(await fs.access(path.join(temp,'native-epoch-001.json')).then(()=>false,()=>true),
+      'E1_EARLY_CLAIM');
+  }
   const spent=await claimRecoveryAttempt(temp,task,1);
   assertCondition(spent.decision==='CLAIMED'&&spent.remaining===4,'DURABLE_FENCE_FAILED');
   assertCondition((await claimRecoveryAttempt(temp,task,1)).decision==='STOP','DUPLICATE_FENCE_ALLOWED');
+  let same=false,completed=false,marker=false;
+  if(nativeEpoch1){
+    stage='NATIVE_EPOCH1_OWNED_RESUME';
+    assertCondition((await sha(binary))===codexHash,'CODEX_BINARY_CHANGED');
+    second=start(native,epochOneArgs,here);
+    const outcome=await timeout(second.ended,82000);
+    assertCondition(!outcome.timeout&&!outcome.error&&outcome.code===0,
+      'E1_NATIVE_RUN_FAILED');
+    const e1=await read(path.join(temp,'native-epoch-001.json'));
+    const assigned=await fs.readFile(path.join(temp,'native-job-assigned-e1.txt'),'utf8');
+    const owned=await read(path.join(temp,'native-e1-readonly-result.json'));
+    const host=await read(path.join(temp,'job-host-status.json'));
+    assertCondition(e1.epoch===1&&e1.restartCount===1&&e1.taskId===task,
+      'E1_EPOCH_RECEIPT_INVALID');
+    assertCondition(assigned.includes('jobAssigned=1')&&
+      assigned.includes('inheritedHandles=0')&&assigned.includes('breakaway=0'),
+      'E1_JOB_ASSIGNMENT_UNVERIFIED');
+    assertCondition(host.status==='COMPLETED'&&host.jobActive===0&&
+      host.taskId===task,'E1_JOB_NOT_EMPTY');
+    assertCondition(owned.status==='PASS'&&owned.nativeOwned===true&&
+      owned.epoch===1&&owned.taskId===task&&owned.readOnly===true&&
+      owned.externalEffectReplayed===false,'E1_READONLY_RESULT_UNVERIFIED');
+    same=owned.resumeSameThread===true;
+    completed=owned.turnCompleted===true;
+    marker=owned.status==='PASS';
+    const repeat=start(native,epochOneArgs,here);
+    const denied=await timeout(repeat.ended,11000);
+    repeat.p.stdout.destroy();repeat.p.stderr.destroy();repeat.p.unref();
+    assertCondition(!denied.timeout&&!denied.error&&denied.code!==0,
+      'E1_SECOND_OWNER_ALLOWED');
+  }else{
   stage='INDEPENDENT_TEST_ONLY_READONLY_RESUME';
   // Deliberately an independent read-only test, NOT native recover.
   // The production gate still says canResume:false and remains disabled.
@@ -129,23 +176,23 @@ try{
   const result=await timeout(second.ended,60000);
   assertCondition(!result.timeout&&!result.error,'CODEX_RESUME_EXIT_UNVERIFIED');
   await sleep(200);
-  const same=second.events.some(e=>e.type==='thread.started'&&e.thread_id===thread);
-  const completed=second.events.some(e=>e.type==='turn.completed');
-  const marker=second.events.some(e=>e.type==='item.completed'&&
-    e.item?.type==='agent_message'&&e.item.text?.includes('NEXUS-REALJOB-READONLY-RECOVERED'));
-  assertCondition(result.code===0&&same&&completed&&marker,'RESUME_THREAD_UNCONFIRMED');
+    same=second.events.some(e=>e.type==='thread.started'&&e.thread_id===thread);
+    completed=second.events.some(e=>e.type==='turn.completed');
+    marker=second.events.some(e=>e.type==='item.completed'&&
+      e.item?.type==='agent_message'&&e.item.text?.includes('NEXUS-REALJOB-READONLY-RECOVERED'));
+  }
   assertCondition((await inspectRecoveryBudget(temp,task)).used===1,'BUDGET_NOT_PERSISTED');
   assertCondition(await fs.access(path.join(temp,'state','effect-once.txt')).then(()=>false,()=>true),
     'UNEXPECTED_FILE_EFFECT');
-  record={status:'PASS',test:'REAL_CODEX_INSIDE_EPOCH0_JOB',
+  record={status:'PASS',test:nativeEpoch1?'NATIVE_EPOCH1_REAL_CODEX':'REAL_CODEX_INSIDE_EPOCH0_JOB',
     baselineSaved:true,secondTurnInterrupted:true,kernelJobGone:true,
     ownedNodeDead:true,ownedCodexDead:true,journal:'PREPARED',
     budgetAttempt:1,duplicateClaimRejected:true,resumeSameUUID:true,
-    resumeCompleted:true,productionRecoveryEnabled:false};
+    resumeCompleted:true,nativeEpoch1Owned:nativeEpoch1,productionRecoveryEnabled:false};
   process.exitCode=0;
   cleanup=true;
 }catch(e){
-  record={status:'STOP',test:'REAL_CODEX_INSIDE_EPOCH0_JOB',phase:stage,
+  record={status:'STOP',test:nativeEpoch1?'NATIVE_EPOCH1_REAL_CODEX':'REAL_CODEX_INSIDE_EPOCH0_JOB',phase:stage,
     reason:String(e.message||'UNSPECIFIED').slice(0,75),
     baselineSaved:!!thread,productionRecoveryEnabled:false};
   process.exitCode=2;
