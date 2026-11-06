@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {getOperation,recoveryDisposition} from '../operation-journal.mjs';
+import {inspectRecoveryBudget} from '../recovery-budget.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url));
 const fixture=path.join(here,'guardian-integration-fixture.mjs');
 const native=process.env.NEXUS_JOBHOST_EXE||path.join(os.tmpdir(),'nexus-guardian-jobhost-20261106.exe');
@@ -59,11 +60,16 @@ function platform(t){
 test('native Job -> real Guardian -> real controller -> fake Codex completes without any rescue',{timeout:22000},async t=>{
   if(!platform(t))return;
   const dir=await folder(t);
-  const r=run('chain-normal-'+crypto.randomUUID().slice(0,8),dir,'normal');
+  const nativeTask='chain-normal-'+crypto.randomUUID().slice(0,8);
+  const r=run(nativeTask,dir,'normal');
   const ended=await finish(r);
   assert.equal(ended.code,0,JSON.stringify({out:ended.out,err:ended.err,diagnostic:await diagnostic(dir)}));
   const nativeState=await file(path.join(dir,'job-host-status.json'));
   const guardian=await file(path.join(dir,'integration-result.json'));
+  const initialBudget=await inspectRecoveryBudget(dir,nativeTask);
+  assert.equal(initialBudget.decision,'READY');
+  assert.equal(initialBudget.used,0);
+  assert.equal(initialBudget.remaining,5);
   const firstEpoch=await file(path.join(dir,'native-epoch-000.json'));
   assert.equal(firstEpoch.epoch,0);
   assert.equal(firstEpoch.restartCount,0);
@@ -88,7 +94,8 @@ test('native Job -> real Guardian -> real controller -> fake Codex completes wit
 test('genuine live Guardian/controller/CLI subtree is killed on guardian heartbeat loss',{timeout:22000},async t=>{
   if(!platform(t))return;
   const dir=await folder(t);
-  const r=run('chain-hang-'+crypto.randomUUID().slice(0,8),dir,'hang');
+  const nativeTask='chain-hang-'+crypto.randomUUID().slice(0,8);
+  const r=run(nativeTask,dir,'hang');
   const ended=await finish(r);
   assert.equal(ended.code,20,JSON.stringify({out:ended.out,err:ended.err,diagnostic:await diagnostic(dir)}));
   const nativeState=await file(path.join(dir,'job-host-status.json'));
@@ -97,6 +104,7 @@ test('genuine live Guardian/controller/CLI subtree is killed on guardian heartbe
   const checkpoint=await file(path.join(dir,'state','checkpoint.json'));
   const observed=await file(path.join(dir,'hang-observed.json'));
   assert.equal((await file(path.join(dir,'native-epoch-000.json'))).epoch,0);
+  assert.equal((await inspectRecoveryBudget(dir,nativeTask)).remaining,5);
   assert.equal(observed.controllerAndCliAlive,true);
   assert.equal(observed.controllerHeartbeatStale,true);
   assert.equal((await file(path.join(dir,'controller-hang-observed.json'))).eventLoopBlocked,true);
