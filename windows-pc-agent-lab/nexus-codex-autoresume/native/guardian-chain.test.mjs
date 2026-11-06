@@ -79,9 +79,10 @@ test('native Job -> real Guardian -> real controller -> fake Codex completes wit
   assert.equal(nativeState.status,'COMPLETED');
   assert.equal(nativeState.jobActive,0);
   assert.equal(guardian.status,'COMPLETED');
+  assert.equal(state.taskId,nativeTask);
   assert.equal(guardian.attempt,0);
   assert.equal(state.status,'COMPLETED');
-  const operation=await getOperation(path.join(dir,'state'),{taskId:'guardian-integration-task',operationId:'local_effect_001',epoch:0});
+  const operation=await getOperation(path.join(dir,'state'),{taskId:nativeTask,operationId:'local_effect_001',epoch:0});
   assert.equal(operation.stage,'COMMITTED','local test effect must have a verified durable journal receipt');
   assert.equal(checkpoint.pid,state.childPid);
   assert.notEqual(control.controllerPid,checkpoint.pid);
@@ -111,7 +112,7 @@ test('genuine live Guardian/controller/CLI subtree is killed on guardian heartbe
   assert.equal(nativeState.reason,'HEARTBEAT_STALE_JOB_EMPTY');
   assert.equal(nativeState.jobActive,0);
   assert.equal(state.status,'RUNNING');
-  const identity={taskId:'guardian-integration-task',operationId:'local_effect_001',epoch:0};
+  const identity={taskId:nativeTask,operationId:'local_effect_001',epoch:0};
   assert.equal((await getOperation(path.join(dir,'state'),identity)).stage,'IN_FLIGHT');
   assert.deepEqual(await recoveryDisposition(path.join(dir,'state'),identity,1),{decision:'STOP',reason:'RECONCILIATION_REQUIRED'});
   assert.equal(checkpoint.pid,state.childPid);
