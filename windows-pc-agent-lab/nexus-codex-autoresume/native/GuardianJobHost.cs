@@ -20,6 +20,10 @@ class GuardianJobHost {
   const uint WAIT_TIMEOUT = 0x102;
   const uint WAIT_FAILED = 0xFFFFFFFF;
   const int ERROR_ALREADY_EXISTS = 183;
+  const int ERROR_FILE_NOT_FOUND = 2;
+  const uint JOB_OBJECT_QUERY = 0x0004;
+  const uint JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800;
+  const uint JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK = 0x00001000;
 
   [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
   struct STARTUPINFO {
@@ -71,12 +75,19 @@ class GuardianJobHost {
   static extern bool CloseHandle(IntPtr h);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true, EntryPoint="CreateJobObjectW")]
   static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true, EntryPoint="OpenJobObjectW")]
+  static extern IntPtr OpenJobObject(uint access, bool inheritHandle, string name);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
   [DllImport("kernel32.dll", SetLastError=true)]
   static extern bool SetInformationJobObject(IntPtr job, int infoClass,
       ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION info, int length);
   [DllImport("kernel32.dll", SetLastError=true)]
   static extern bool QueryInformationJobObject(IntPtr job, int infoClass,
       out JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info, int length, IntPtr returnLength);
+  [DllImport("kernel32.dll", SetLastError=true, EntryPoint="QueryInformationJobObject")]
+  static extern bool QueryJobLimits(IntPtr job, int infoClass,
+      out JOBOBJECT_EXTENDED_LIMIT_INFORMATION info, int length, IntPtr returnLength);
   [DllImport("kernel32.dll", SetLastError=true)]
   static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true, EntryPoint="CreateProcessW")]
@@ -185,8 +196,81 @@ class GuardianJobHost {
     }catch{return false;}
   }
 
+  static bool LimitsSafe(IntPtr job) {
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION x;
+    if(!QueryJobLimits(job,JobObjectExtendedLimitInformation,out x,
+      Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION)),IntPtr.Zero))
+      return false;
+    uint flags=x.BasicLimitInformation.LimitFlags;
+    return (flags&JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)!=0 &&
+      (flags&(JOB_OBJECT_LIMIT_BREAKAWAY_OK|JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK))==0;
+  }
+  // Read-only, same-Windows-session OS lifecycle probe for an exact test job.
+  // NOT a recovery authorization; all outcomes remain observational.
+  static int Probe(string[] args) {
+    if(args.Length!=3||args[0]!="probe"||
+       !Regex.IsMatch(args[1],@"^[A-Za-z0-9_-]{1,48}$")||
+       !Path.IsPathRooted(args[2])||!IsTestPath(args[2]))return 64;
+    string task=args[1],dir=Path.GetFullPath(args[2]);
+    try {
+      string file=Path.Combine(dir,"native-job-identity-e0.txt");
+      if(!File.Exists(file)) {
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"JOB_IDENTITY_MISSING\"}");
+        return 30;
+      }
+      string[] v=File.ReadAllLines(file);
+      string prefix="Local\\NEXUS-Codex-Proof-"+task+"-";
+      int pid, session;long ticks;
+      if(v.Length!=7||v[0]!="taskId="+task||
+         !Int32.TryParse(v[1].Replace("ownerPid=",""),out pid)||v[1]!="ownerPid="+pid||
+         !Int64.TryParse(v[2].Replace("ownerStartTicks=",""),out ticks)||v[2]!="ownerStartTicks="+ticks||
+         !v[3].StartsWith("jobName="+prefix,StringComparison.Ordinal)||
+         !Regex.IsMatch(v[3].Substring(("jobName="+prefix).Length),@"^[a-f0-9]{32}$")||
+         v[4]!="killOnClose=1"||v[5]!="noBreakaway=1"||
+         !Int32.TryParse(v[6].Replace("sessionId=",""),out session)||
+         v[6]!="sessionId="+session||pid<1||ticks<1||session!=Process.GetCurrentProcess().SessionId) {
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"JOB_IDENTITY_INVALID\"}");
+        return 31;
+      }
+      string[] assignment=File.ReadAllLines(Path.Combine(dir,"native-job-assigned-e0.txt"));
+      if(assignment.Length!=8||assignment[0]!="taskId="+task||
+         assignment[1]!="ownerPid="+pid||
+         assignment[2]!="ownerStartTicks="+ticks||
+         assignment[5]!="jobAssigned=1"||
+         assignment[6]!="inheritedHandles=0"||assignment[7]!="breakaway=0"){
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"JOB_ASSIGNMENT_INVALID\"}");
+        return 32;
+      }
+      IntPtr h=OpenJobObject(JOB_OBJECT_QUERY,false,prefix+v[3].Substring(("jobName="+prefix).Length));
+      int err=Marshal.GetLastWin32Error();
+      if(h==IntPtr.Zero) {
+        if(err==ERROR_FILE_NOT_FOUND) {
+          // No OS object is observable in this session, but no authorization
+          // to execute or spend the recovery budget is ever issued here.
+          Console.WriteLine("{\"status\":\"NOT_FOUND\",\"authorization\":\"NONE\"}");
+          return 0;
+        }
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"JOB_QUERY_UNCERTAIN\"}");
+        return 33;
+      }
+      try {
+        if(!LimitsSafe(h)) {
+          Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"JOB_LIMITS_UNSAFE\"}");
+          return 34;
+        }
+        uint active=Active(h);
+        Console.WriteLine("{\"status\":\"PRESENT\",\"active\":"+active+",\"authorization\":\"NONE\"}");
+        return 0;
+      }finally{CloseHandle(h);}
+    }catch{
+      Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"JOB_EVIDENCE_UNREADABLE\"}");
+      return 35;
+    }
+  }
+
   static int Main(string[] args) {
     if (Environment.OSVersion.Platform != PlatformID.Win32NT) return 64;
+    if (args.Length>0 && args[0]=="probe") return Probe(args);
     // EXPLICITLY TEST-ONLY: no arbitrary executable, no production manifest.
     // run <taskId> <nodeExe> <testScript> <tempStateDir> <mode> <heartbeatTimeoutMs> <runtimeMs>
     if (args.Length != 8 || args[0] != "run" ||
@@ -215,6 +299,7 @@ class GuardianJobHost {
     IntPtr mutex=IntPtr.Zero, job=IntPtr.Zero;
     PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
     bool owned=false, childCreated=false, assigned=false;
+    string jobName=null;
     int ownerPid = Process.GetCurrentProcess().Id;
     long ownerStartTicks=ProcessStartTicks(ownerPid);
     try {
@@ -262,14 +347,27 @@ class GuardianJobHost {
           throw new InvalidOperationException("NATIVE_EPOCH_IO_ERROR");
         }
       }
-      job=CreateJobObject(IntPtr.Zero,null);
+      // An owner-generated, non-reused name allows another process to check
+      // real kernel existence rather than trusting PID or a mutable heartbeat.
+      jobName=integration?"Local\\NEXUS-Codex-Proof-"+task+"-"+Guid.NewGuid().ToString("N"):null;
+      job=CreateJobObject(IntPtr.Zero,jobName);
+      int jobErr=Marshal.GetLastWin32Error();
       if (job==IntPtr.Zero) throw new InvalidOperationException("JOB_CREATE_FAILED");
+      if (integration && jobErr==ERROR_ALREADY_EXISTS)
+        throw new InvalidOperationException("JOB_NAME_ALREADY_USED");
       JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
       limits.BasicLimitInformation.LimitFlags=JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
       if (!SetInformationJobObject(job,JobObjectExtendedLimitInformation,ref limits,
         Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION))))
         throw new InvalidOperationException("JOB_CONFIG_FAILED");
-
+      if(integration){
+        if(!LimitsSafe(job))throw new InvalidOperationException("JOB_LIMITS_UNVERIFIED");
+        string proof="taskId="+task+"\nownerPid="+ownerPid+
+          "\nownerStartTicks="+ownerStartTicks+"\njobName="+jobName+
+          "\nkillOnClose=1\nnoBreakaway=1\nsessionId="+
+          Process.GetCurrentProcess().SessionId+"\n";
+        CreateReceipt(Path.Combine(dir,"native-job-identity-e0.txt"),proof);
+      }
       STARTUPINFO si = new STARTUPINFO();
       si.cb=Marshal.SizeOf(typeof(STARTUPINFO));
       StringBuilder cmd = new StringBuilder(Quote(node)+" "+Quote(script)+" "+Quote(dir)+" "+Quote(mode));
@@ -284,6 +382,9 @@ class GuardianJobHost {
       }
       if (!AssignProcessToJobObject(job,pi.hProcess))
         throw new InvalidOperationException("JOB_ASSIGN_FAILED");
+      bool inExactJob=false;
+      if(!IsProcessInJob(pi.hProcess,job,out inExactJob)||!inExactJob)
+        throw new InvalidOperationException("JOB_MEMBERSHIP_UNVERIFIED");
       assigned=true;
       if(integration){
         // Assignment is acknowledged durably BEFORE the child can execute.
