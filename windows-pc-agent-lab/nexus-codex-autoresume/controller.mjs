@@ -115,8 +115,11 @@ export async function runManifest(input, options = {}) {
       const result = await Promise.race([death,boundary]);
       clearInterval(interval);
       if (!result) {
+        // Signal only our own ChildProcess handle; never target a discovered PID or owner app.
+        try { if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM'); } catch { /* Fail closed. */ }
+        const ended = await Promise.race([death.then(() => true),new Promise(resolve => setTimeout(() => resolve(false),1500))]);
         child.stdout.destroy(); child.stderr.destroy(); child.unref();
-        return await save('STOP',ownerStop ? 'OWNER_STOP':'TIMEOUT_CHILD_MAY_BE_ALIVE');
+        return await save('STOP',ownerStop ? (ended ? 'OWNER_STOP_CHILD_TERMINATED' : 'OWNER_STOP_CHILD_MAY_BE_ALIVE') : (ended ? 'TIMEOUT_CHILD_TERMINATED' : 'TIMEOUT_CHILD_MAY_BE_ALIVE'));
       }
       activeChild = null;
       buffer += decoder.end();

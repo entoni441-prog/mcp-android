@@ -1,0 +1,30 @@
+name: nexus-codex-autoresume-ci
+
+on:
+  push:
+    branches:
+      - experiment/nexus-codex-task-autoresume-20261106
+    paths:
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/**'
+      - '.github/workflows/nexus-codex-autoresume-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-recovery-tests:
+    name: Bounded recovery (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test controller crash recovery, STOP and sandbox pilot
+        run: node --test windows-pc-agent-lab/nexus-codex-autoresume/controller.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/pilot-worker.test.mjs

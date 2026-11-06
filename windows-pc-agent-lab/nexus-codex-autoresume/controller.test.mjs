@@ -74,27 +74,22 @@ for(const [name,change,reason] of [
 ]) test(name,async t=>{const f=await fixture(t); change(f.m); assert.equal((await f.run()).reason,reason);});
 test('owner stop before spawn',async t=>{const f=await fixture(t); await fs.writeFile(path.join(f.owner,'owner-stop.json'),'{}'); assert.equal((await f.run()).reason,'OWNER_STOP'); assert.equal(await fs.readdir(f.state).then(a=>a.includes('checkpoint.json')),false);});
 test('dirty repository stops',async t=>{const f=await fixture(t); await fs.writeFile(path.join(f.work,'unrelated'),'x'); assert.equal((await f.run()).reason,'DIRTY_WORKTREE');});
-test('timeout stops without killing live child',async t=>{
+test('timeout stops and terminates only its own child',async t=>{
   const f=await fixture(t,'hold'); f.opts.timeoutMs=200;
   const result=await f.run();
-  assert.equal(result.reason,'TIMEOUT_CHILD_MAY_BE_ALIVE');
+  assert.equal(result.reason,'TIMEOUT_CHILD_TERMINATED');
   const cp=await waitFile(path.join(f.state,'checkpoint.json'));
   assert.equal(cp.pid,result.childPid);
-  process.kill(cp.pid,0);
-  // Only this fixture's exact recorded child is cleaned up.
-  process.kill(cp.pid,'SIGKILL');
-  await new Promise(r=>setTimeout(r,100));
+  assert.throws(()=>process.kill(cp.pid,0));
 });
-test('owner pause during run stops without resume or killing child',async t=>{
+test('owner pause stops and terminates only its own child',async t=>{
   const f=await fixture(t,'hold');
   const running=f.run();
   const cp=await waitFile(path.join(f.state,'checkpoint.json'));
-  t.after(()=>{try{process.kill(cp.pid,'SIGKILL');}catch{}});
   await fs.writeFile(path.join(f.owner,'host-off'),'');
   const result=await running;
-  assert.equal(result.childPid,cp.pid); assert.equal(result.reason,'OWNER_STOP'); assert.equal(result.attempt,0);
-  process.kill(cp.pid,0); process.kill(cp.pid,'SIGKILL');
-  await new Promise(r=>setTimeout(r,100));
+  assert.equal(result.childPid,cp.pid); assert.equal(result.reason,'OWNER_STOP_CHILD_TERMINATED'); assert.equal(result.attempt,0);
+  assert.throws(()=>process.kill(cp.pid,0));
 });
 test('preexisting valid marker completes without spawning',async t=>{
   const f=await fixture(t);

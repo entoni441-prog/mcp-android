@@ -79,10 +79,14 @@ No `--last` guessing. PID is taken from Node's child object, never trusted from 
 
 Before each spawn and every 50 ms during execution, read-only checks look for
 `owner-stop.json` or `host-off` under the current user's `.nexus-host` directory.
-Either means STOP. Each child has a five-minute observation deadline. Timeout means
-STOP with `TIMEOUT_CHILD_MAY_BE_ALIVE`, no recovery. The supervisor detaches its
-pipes and never kills a child, GUI app, or unrelated process. A child may remain
-alive after STOP or supervisor failure; the operator must inspect it. These checks
+Either means STOP. Each child has a five-minute observation deadline. On owner
+STOP or timeout the controller signals **only its own captured ChildProcess handle**
+(SIGTERM) and waits up to 1.5 seconds for verified close. If confirmed it records
+OWNER_STOP_CHILD_TERMINATED or TIMEOUT_CHILD_TERMINATED; otherwise it records
+*_CHILD_MAY_BE_ALIVE and never retries blindly. It never kills a discovered PID,
+GUI app, Host or unrelated process. A tool-command descendant may remain after
+CLI termination; operator must inspect it. A supervisor crash is not automatically
+recovered by this prototype. These checks
 are polling boundaries, not an instantaneous stop or cancellation guarantee.
 
 ## Tests and independent mock trial
