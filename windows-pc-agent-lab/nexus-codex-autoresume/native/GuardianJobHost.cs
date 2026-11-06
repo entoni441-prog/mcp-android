@@ -245,12 +245,28 @@ class GuardianJobHost {
         Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"JOB_ASSIGNMENT_INVALID\"}");
         return 32;
       }
+      int childPid;long childTicks;
+      if(!Int32.TryParse(assignment[3].Replace("childPid=",""),out childPid) ||
+         assignment[3]!="childPid="+childPid||
+         !Int64.TryParse(assignment[4].Replace("childStartTicks=",""),out childTicks)||
+         assignment[4]!="childStartTicks="+childTicks||
+         childPid<1||childTicks<1){
+        Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"JOB_CHILD_IDENTITY_INVALID\"}");
+        return 36;
+      }
       IntPtr h=OpenJobObject(JOB_OBJECT_QUERY,false,prefix+v[3].Substring(("jobName="+prefix).Length));
       int err=Marshal.GetLastWin32Error();
       if(h==IntPtr.Zero) {
         if(err==ERROR_FILE_NOT_FOUND) {
-          // No OS object is observable in this session, but no authorization
-          // to execute or spend the recovery budget is ever issued here.
+          // An absent Job name alone is insufficient: the original owner or
+          // exact first child may still exist, or a reused PID may be present.
+          // Require BOTH identities to be gone, with original start ticks.
+          if(!PriorInstanceGone(pid,ticks)||!PriorInstanceGone(childPid,childTicks)){
+            Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"PRIOR_PROCESS_STILL_ALIVE\"}");
+            return 37;
+          }
+          // Named object absent in THIS session, and exact first processes
+          // gone. Observation only: external effects still need reconciliation.
           Console.WriteLine("{\"status\":\"NOT_FOUND\",\"authorization\":\"NONE\"}");
           return 0;
         }
