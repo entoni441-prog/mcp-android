@@ -36,7 +36,7 @@ test('NX-TM-01: the embedded fixed PowerShell UIA script parses without executin
   const file=path.join(dir,'fixed-uia.ps1');
   fs.writeFileSync(file,UIA_SCRIPT,'utf8');
   try{
-    const parser="$tokens=$null;$errors=$null; [System.Management.Automation.Language.Parser]::ParseFile($env:NEXUS_TEST_UIA_AST,[ref]$tokens,[ref]$errors) | Out-Null; if($errors.Count -gt 0){ $errors | Select-Object -First 3 | ForEach-Object { Write-Output $_.Message }; exit 1 }; Write-Output 'POWERSHELL_AST_PASS'";
+    const parser="$tokens=$null;$errors=$null; [System.Management.Automation.Language.Parser]::ParseFile($env:NEXUS_TEST_UIA_AST,[ref]$tokens,[ref]$errors) | Out-Null; if($errors.Count -gt 0){ $errors | Select-Object -First 6 | ForEach-Object { Write-Output ('ErrorId='+$_.ErrorId+';Line='+$_.Extent.StartLineNumber+';Column='+$_.Extent.StartColumnNumber+';Text='+$_.Extent.Text.Substring(0,[Math]::Min(60,$_.Extent.Text.Length))) }; exit 1 }; Write-Output 'POWERSHELL_AST_PASS'";
     const r=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',parser],
       {encoding:'utf8',timeout:12000,env:{...process.env,NEXUS_TEST_UIA_AST:file}});
     assert.equal(r.status,0,(r.stdout||'')+'\n'+(r.stderr||''));
