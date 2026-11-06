@@ -1,0 +1,31 @@
+name: nexus-guardian-recovery-admission-ci
+on:
+  push:
+    branches: [experiment/nexus-guardian-recovery-admission-20261106]
+    paths:
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/recovery-admission*'
+      - '.github/workflows/nexus-guardian-recovery-admission-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Admission/readiness plus durable accounting and journal
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/recovery-admission.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Cross-platform passive evidence inspection
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/recovery-admission.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/stop-outbox.test.mjs
