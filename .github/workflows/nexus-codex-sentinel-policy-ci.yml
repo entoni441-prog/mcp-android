@@ -27,6 +27,6 @@ jobs:
         with:
           node-version: '24'
       - name: Fail-closed recovery decision policy
-        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/sentinel-policy.test.mjs
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/sentinel-policy.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/sentinel-policy-cli.test.mjs
       - name: Guardian 0.3 and Auto-Resume 0.2 regression
         run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/controller.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/pilot-worker.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/guardian.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/guardian-status.test.mjs
