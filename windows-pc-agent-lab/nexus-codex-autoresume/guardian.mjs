@@ -88,9 +88,18 @@ export async function runGuardian(input,options={}) {
   let control;
   try {
     const script=fileURLToPath(new URL('./controller.mjs',import.meta.url));
-    const args=options.testScript
-      ? ['--input-type=module','-e','import {runManifest} from '+JSON.stringify(pathToFileURL(script).href)+'; await runManifest('+JSON.stringify(m)+','+JSON.stringify({testScript:options.testScript,ownerDirectory:ownerDir,timeoutMs:options.initialTimeoutMs??10000})+');']
-      : [script,'run',options.manifestPath];
+    // Optional test-only controller wrapper to simulate a blocked event loop.
+    // It must be the exact file bundled with this experiment, never a user
+    // supplied path; normal Guardian execution stays unchanged.
+    const testRunner=fileURLToPath(new URL('./native/hung-controller-test.mjs',import.meta.url));
+    if(options.testControllerRunner && (!options.testScript || options.testControllerRunner!==testRunner))
+      return await summary('STOP','TEST_RUNNER_UNVERIFIED');
+    const testing={testScript:options.testScript,ownerDirectory:ownerDir,timeoutMs:options.initialTimeoutMs??10000};
+    const args=options.testControllerRunner
+      ? [testRunner,JSON.stringify(m),JSON.stringify(testing)]
+      : options.testScript
+        ? ['--input-type=module','-e','import {runManifest} from '+JSON.stringify(pathToFileURL(script).href)+'; await runManifest('+JSON.stringify(m)+','+JSON.stringify(testing)+');']
+        : [script,'run',options.manifestPath];
     if(!options.testScript && (!options.manifestPath||!path.isAbsolute(options.manifestPath)))return await summary('STOP','MANIFEST_FILE_REQUIRED');
     control=spawn(process.execPath,args,{cwd:m.workingDirectory,stdio:['ignore','ignore','ignore'],windowsHide:true});
     const controllerDeath=new Promise(resolve=>{
