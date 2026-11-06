@@ -110,3 +110,23 @@ test('invalid identity does not even touch the filesystem',async()=>{
   const r=await inspectRecoveryAdmission({root:'relative',taskId:TASK,threadId:THREAD,operationId:OP});
   assert.equal(r.reason,'INVALID_IDENTITY');
 });
+
+test('nonstring IDs never pass identity checks',async t=>{
+  const e=await fixture(t);
+  assert.equal((await inspectRecoveryAdmission({...e,taskId:null})).reason,'INVALID_IDENTITY');
+  assert.equal((await inspectRecoveryAdmission({...e,operationId:0})).reason,'INVALID_IDENTITY');
+  assert.equal((await inspectRecoveryAdmission({...e,threadId:1})).reason,'INVALID_IDENTITY');
+});
+test('unsafe native assignment path is rejected without reading through a symlink',async t=>{
+  const e=await fixture(t);
+  const original=path.join(e.root,'native-job-assigned-e0.txt');
+  const replacement=path.join(e.root,'ordinary-evidence.txt');
+  await fs.rename(original,replacement);
+  try{await fs.symlink(replacement,original);}catch(err){
+    if(process.platform==='win32'&&['EPERM','EACCES','UNKNOWN'].includes(err.code)){
+      t.skip('Windows symlink privilege unavailable');return;
+    }
+    throw err;
+  }
+  assert.equal((await inspectRecoveryAdmission(e)).reason,'JOB_ASSIGNMENT_UNVERIFIED');
+});
