@@ -1,0 +1,29 @@
+name: nexus-selftest-ci
+
+on:
+  push:
+    branches:
+      - experiment/nexus-codex-selftest-20261106
+    paths:
+      - 'windows-pc-agent-lab/nexus-selftest/**'
+      - '.github/workflows/nexus-selftest-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    name: Self-test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify read-only snapshot evaluator
+        run: node --test windows-pc-agent-lab/nexus-selftest/selftest.test.mjs
