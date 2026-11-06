@@ -29,7 +29,7 @@ jobs:
         run: |
           $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
           $output = Join-Path $env:RUNNER_TEMP 'GuardianJobHost.exe'
-          $source = 'windows-pc-agent-lab/nexus-codex-autoresume/native/GuardianJobHost.cs'
+          $source = (Resolve-Path 'windows-pc-agent-lab/nexus-codex-autoresume/native/GuardianJobHost.cs').Path
           & $csc /nologo /target:exe /r:System.Core.dll ('/out:' + $output) $source
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Real Job Object, hung worker, detached tree, SIGKILL and mutex tests
