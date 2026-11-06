@@ -21,7 +21,8 @@ function fakes({at = {pid: 50, process: 'Notepad'}, focused = {ok: true, pid: 50
     if (a.mode === 'context') return {...base, focused, elem: {controlType: 'Document', name: '', id: ''}, window: {hwnd: 500, pid: focused.pid, process: focused.process, name: 'Untitled - Notepad', tabs: []}};
     if (a.mode === 'apps') return {...base, apps: []};
     if (a.mode === 'at') return {...base, at: {...at, controlType: 'ControlType.Document'}, focused};
-    if (a.mode === 'windows') return {...base, target: {pid: a.pid, process: a.pid === 50 ? 'Notepad' : a.pid === 66 ? 'powershell' : 'Other'}, windows: [{name: 'Untitled - Notepad', className: 'Notepad', hwnd: 500, rect: {x: 300, y: 150, w: 900, h: 600}}], focused};
+    if (a.mode === 'windows') return {...base, target: {pid: a.pid, process: a.pid === 50 ? 'Notepad' : a.pid === 66 ? 'powershell' : a.pid === 99 ? 'WindowsTerminal' : 'Other'}, windows: [{name: a.pid === 99 ? 'C:\\Program Files\\nodejs\\node.exe' : 'Untitled - Notepad', className: 'Notepad', pid: a.pid, hwnd: 500, rect: {x: 300, y: 150, w: 900, h: 600}}], focused};
+    if (a.mode === 'minimize') return {...base, verified: true, pid: a.pid, process: 'WindowsTerminal', hwnd: a.hwnd, wasMinimized: false, isMinimizedAfter: true};
     if (a.mode === 'activate') return {...base, target: {pid: a.pid, process: 'Notepad'}, appActivateByPid: true, windowFound: true, setFocus: true, focused: activateFocus ?? {ok: true, pid: a.pid, process: 'Notepad'}};
     if (a.mode === 'tree') return {...base, target: {pid: a.pid, process: a.pid === 50 ? 'Notepad' : 'cmd'}, nodes: 2, tree: [{type: 'Window', name: 'N', rect: {x: 300, y: 150, w: 900, h: 600}, children: [{type: 'Document', name: '', rect: {x: 330, y: 240, w: 840, h: 480}}]}]};
     throw Error('bad mode');
@@ -64,6 +65,54 @@ test('mouse refused over a terminal, UAC, shell UI or unknown target; Robot neve
     await assert.rejects(gui(f).mouse_action({action: 'click', x: 1, y: 1}), /target_not_allowed/, proc);
     assert.ok(!f.robotCmds.some(c => c.startsWith('click')), proc);
   }
+});
+
+test('NX-TM-01: explicit owner request minimizes only one exact WindowsTerminal HWND using UIA, never Robot', async () => {
+  const f = fakes();
+  const r = await gui(f).minimize_window({pid: 99, title: 'node.exe', ownerRequested: true});
+  assert.deepEqual({status:r.status,pid:r.pid,verified:r.verified,shellInputSent:r.shellInputSent},
+    {status:'minimized',pid:99,verified:true,shellInputSent:false});
+  const m = f.uiaCalls.filter(a=>a.mode==='minimize');
+  assert.equal(m.length,1);
+  assert.deepEqual({pid:m[0].pid,hwnd:m[0].hwnd},{pid:99,hwnd:500});
+  assert.equal(f.robotCmds.filter(c=>/^(?:click|paste|key|drag|move)/.test(c)).length,0);
+});
+test('NX-TM-01: owner intent is mandatory; all other shell actions remain denied', async () => {
+  const f=fakes(),g=gui(f);
+  await assert.rejects(g.minimize_window({pid:99}),/owner_request_required/);
+  await assert.rejects(g.minimize_window({pid:99,ownerRequested:false}),/owner_request_required/);
+  await assert.rejects(g.minimize_window({pid:66,ownerRequested:true}),/minimize_target_not_supported/);
+  await assert.rejects(g.minimize_window({pid:99,ownerRequested:true,command:'dir'}),/invalid_args/);
+  assert.equal(f.uiaCalls.some(a=>a.mode==='minimize'),false);
+  assert.equal(f.robotCmds.filter(c=>/^(?:click|paste|key|drag)/.test(c)).length,0);
+});
+test('NX-TM-01: ambiguous/window-recycled/missing confirmations are fail closed', async () => {
+  const f=fakes(),u=f.uia;
+  f.uia=async a=>{
+    if(a.mode==='windows'&&a.pid===99){
+      const r=await u(a);
+      return {...r,windows:[...r.windows,{...r.windows[0],hwnd:501,name:'another Terminal'}]};
+    }
+    return u(a);
+  };
+  const g=gui(f);
+  const multi=await g.minimize_window({pid:99,ownerRequested:true});
+  assert.equal(multi.status,'ambiguous');
+  assert.equal(f.uiaCalls.some(a=>a.mode==='minimize'),false);
+  const narrowed=await g.minimize_window({pid:99,title:'node.exe',ownerRequested:true});
+  assert.equal(narrowed.status,'minimized');
+  const f2=fakes(),u2=f2.uia;
+  f2.uia=async a=>a.mode==='minimize'
+    ? {...await u2(a),hwnd:a.hwnd+1,verified:true}
+    : u2(a);
+  await assert.rejects(gui(f2).minimize_window({pid:99,ownerRequested:true}),/minimize_not_verified/);
+  assert.equal(f2.robotCmds.filter(c=>c.startsWith('click')).length,0);
+});
+test('NX-TM-01: GUI capability or grantsFromChat disabled forbids protected-window management', async () => {
+  const f=fakes();
+  await assert.rejects(gui(f,{gui_input:false}).minimize_window({pid:99,ownerRequested:true}),/capability_disabled/);
+  await assert.rejects(gui(f,{grantsFromChat:false}).minimize_window({pid:99,ownerRequested:true}),/owner_request_required/);
+  assert.equal(f.uiaCalls.some(a=>a.mode==='minimize'),false);
 });
 
 test('0.5.2 allowlist mode (owner fallback) keeps the 0.5.1 behaviour: non-listed apps refused', async () => {
