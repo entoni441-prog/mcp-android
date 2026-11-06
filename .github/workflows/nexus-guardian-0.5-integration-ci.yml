@@ -1,0 +1,45 @@
+name: nexus-guardian-0.5-integration-ci
+on:
+  push:
+    branches: [experiment/nexus-guardian-0.5-integration-20261106]
+    paths:
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/**'
+      - '.github/workflows/nexus-guardian-0.5-integration-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  full-chain:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build native Windows owner from source
+        shell: pwsh
+        run: |
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $out = Join-Path $env:RUNNER_TEMP 'GuardianJobHost-05.exe'
+          $source = (Resolve-Path 'windows-pc-agent-lab/nexus-codex-autoresume/native/GuardianJobHost.cs').Path
+          & $csc /nologo /target:exe /r:System.Core.dll ('/out:' + $out) $source
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Existing native kernel tests + integrated Guardian controller mock Codex
+        env:
+          NEXUS_JOBHOST_EXE: ${{ runner.temp }}\GuardianJobHost-05.exe
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/native/jobhost.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/native/guardian-chain.test.mjs
+      - name: Guardian and controller regression
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/guardian.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/controller.test.mjs
+      - name: Immutable journal and restart eligibility
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs
+  portable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Immutable journal and restart eligibility
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs
