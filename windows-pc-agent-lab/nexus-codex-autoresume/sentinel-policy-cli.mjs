@@ -6,10 +6,13 @@ import {assessRecovery} from './sentinel-policy.mjs';
 export async function evaluateSnapshot(file) {
   if(typeof file!=='string'||!path.isAbsolute(file))return {decision:'STOP',reason:'ABSOLUTE_PATH_REQUIRED',execution:'NOT_PERFORMED'};
   try {
-    const real=await fs.realpath(file);
-    const expected=path.resolve(file);
-    const identical=process.platform==='win32'?real.toLowerCase()===expected.toLowerCase():real===expected;
-    if(!identical)return {decision:'STOP',reason:'SYMLINK_OR_ALIAS',execution:'NOT_PERFORMED'};
+    const resolved=path.resolve(file);
+    const root=path.parse(resolved).root;
+    let part=root;
+    for(const segment of resolved.slice(root.length).split(path.sep).filter(Boolean)){
+      part=path.join(part,segment);
+      if((await fs.lstat(part)).isSymbolicLink())return {decision:'STOP',reason:'SYMLINK_OR_ALIAS',execution:'NOT_PERFORMED'};
+    }
     const stat=await fs.lstat(file);
     if(!stat.isFile()||stat.isSymbolicLink()||stat.size>16384)return {decision:'STOP',reason:'INVALID_FILE',execution:'NOT_PERFORMED'};
     const evidence=JSON.parse(await fs.readFile(file,'utf8'));
