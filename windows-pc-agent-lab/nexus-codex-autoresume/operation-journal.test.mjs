@@ -74,3 +74,16 @@ test('hard-link publication is race-safe across concurrent writers',async t=>{
   assert.equal(result.filter(x=>x.status==='rejected').length,1);
   assert.equal((await getOperation(f.dir,f.id)).stage,'PREPARED');
 });
+
+test('an orphan committed receipt without PREPARED/IN_FLIGHT cannot certify completion',async t=>{
+  const f=await fixture(t);
+  const file=path.join(f.dir,'safe-task-op1-e1-COMMITTED.json');
+  await fs.writeFile(file,JSON.stringify({...f.id,stage:'COMMITTED',externalId:'fake-receipt'}));
+  await assert.rejects(getOperation(f.dir,f.id),/JOURNAL_MISMATCH/);
+});
+test('an orphan IN_FLIGHT without PREPARED is not a safe journal state',async t=>{
+  const f=await fixture(t);
+  const file=path.join(f.dir,'safe-task-op1-e1-IN_FLIGHT.json');
+  await fs.writeFile(file,JSON.stringify({...f.id,stage:'IN_FLIGHT'}));
+  await assert.rejects(getOperation(f.dir,f.id),/JOURNAL_MISMATCH/);
+});
