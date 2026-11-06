@@ -71,13 +71,17 @@ the 21 original Auto-Resume 0.2 tests.
 New guardian tests use fake Codex, not the actual model. The independent
 real-Codex CLI SIGKILL acceptance for controller 0.2 is documented in
 NEXUS-CODEX-TASK-AUTORESUME-REAL-ACCEPTANCE-20261106.md.
-A full controller SIGKILL real-Codex test in a fresh isolated OS-temp sandbox
-is still required before production; the guardian remains EXPERIMENTAL.
+The full real Codex CLI controller-SIGKILL trial **PASSED** in a fresh OS-temp
+sandbox on 2026-11-06. Verified original thread ID, attempt=1,
+COMPLETED / COMPLETION_MARKER, exit code 0, unchanged effect SHA-256, and
+no surviving test processes. See NEXUS-CODEX-GUARDIAN-REAL-ACCEPTANCE-20261106.md.
+This does not prove recovery of Guardian itself or exactly-once external effects.
+The module remains EXPERIMENTAL; production integration is not enabled.
 
 ## Production gate
 
-Independently review Guardian and its fail-closed behavior; prove real Codex
-controller crash with a test-only, idempotent effect; inspect descendants,
+Independently review Guardian and the recorded real crash result; verify
+its fail-closed behavior and inspect descendants,
 owner-stop semantics and completion postconditions; then design task-scoped
 consent and controlled invocation in NEXUS. Do not merge/deploy/enable startup
 or modify installed NEXUS without explicit owner authorization.
