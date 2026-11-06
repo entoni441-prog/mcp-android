@@ -1,0 +1,47 @@
+name: nexus-guardian-autonomous-supervisor-ci
+on:
+  push:
+    branches: [experiment/nexus-guardian-autonomous-supervisor-20261106]
+    paths:
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/native/experimental-auto-supervisor*'
+      - '.github/workflows/nexus-guardian-autonomous-supervisor-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-negative-acceptance:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Compile isolated native Guardian Owner, not production
+        shell: pwsh
+        run: |
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $src = (Resolve-Path 'windows-pc-agent-lab/nexus-codex-autoresume/native/GuardianJobHost.cs').Path
+          $out = Join-Path $env:RUNNER_TEMP 'GuardianAutonomousSupervisor.exe'
+          & $csc /nologo /target:exe /r:System.Core.dll ('/out:' + $out) $src
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Static syntax check of auto observer, no real Codex on CI
+        run: |
+          node --check windows-pc-agent-lab/nexus-codex-autoresume/native/experimental-auto-supervisor.mjs
+          node --check windows-pc-agent-lab/nexus-codex-autoresume/native/experimental-auto-supervisor.test.mjs
+      - name: Native Win32 crash observation, no replay, owner STOP, duplicate observer
+        env:
+          NEXUS_JOBHOST_EXE: ${{ runner.temp }}\GuardianAutonomousSupervisor.exe
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/native/experimental-auto-supervisor.test.mjs
+  linux-static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Parse supervisor and test; never launch an actual CLI
+        run: |
+          node --check windows-pc-agent-lab/nexus-codex-autoresume/native/experimental-auto-supervisor.mjs
+          node --check windows-pc-agent-lab/nexus-codex-autoresume/native/experimental-auto-supervisor.test.mjs
