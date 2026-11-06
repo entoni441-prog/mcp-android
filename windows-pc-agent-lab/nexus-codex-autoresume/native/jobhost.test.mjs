@@ -168,6 +168,7 @@ test('OS mutex is released after owner crash, without reusing a task state direc
   let oldPid;
   try{
     const st=await until(path.join(original,'job-host-status.json'),x=>x.status==='RUNNING');
+    await until(path.join(original,'fixture-status.json'),x=>x.ready===true&&x.pid===st.childPid);
     oldPid=st.childPid;
     assert.ok(alive(st.ownerPid));
     first.child.kill('SIGKILL');
