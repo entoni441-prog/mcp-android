@@ -134,6 +134,9 @@ test('automatic observer never consumes a budget for IN_FLIGHT and duplicate obs
   assert.equal(result.reason,'RECONCILIATION_REQUIRED');
   assert.equal(result.budgetConsumed,false);
   assert.equal(result.launchAttempted,false);
+  const notice=await file(path.join(c.root,'stop-notice-e0001.json'));
+  assert.equal(notice.reason,'RECONCILIATION_REQUIRED');
+  assert.equal(notice.status,'STOP');
   assert.equal((await inspectRecoveryBudget(c.root,c.taskId)).used,0);
   assert.equal(await available(path.join(c.root,'native-epoch-001.json')),false);
   assert.equal((await bounded(a.ended,5000)).code,24);
@@ -150,6 +153,9 @@ test('owner STOP blocks autonomous launch before any epoch-1 claim',{timeout:300
   assert.equal(result.status,'STOP');
   assert.equal(result.reason,'OWNER_STOP');
   assert.equal(result.budgetConsumed,false);
+  const notice=await file(path.join(c.root,'stop-notice-e0001.json'));
+  assert.equal(notice.reason,'OWNER_STOP');
+  assert.equal(notice.status,'STOP');
   assert.equal((await inspectRecoveryBudget(c.root,c.taskId)).used,0);
   assert.equal(await available(path.join(c.root,'native-epoch-001.json')),false);
 });
@@ -188,6 +194,7 @@ test('after e0 owner SIGKILL, unattended observer launches exactly one native ep
     oldJobGone:true,exactSessionResumed:true,newNativeJobCompleted:true
   });
   assert.equal(final.productionRecoveryEnabled,false);
+  assert.equal(await available(path.join(c.root,'stop-notice-e0001.json')),false);
   assert.equal((await bounded(auto.ended,6000)).code,0);
   assert.equal((await inspectRecoveryBudget(c.root,c.taskId)).used,1);
   const detail=await file(path.join(c.root,'native-e1-readonly-result.json'));
