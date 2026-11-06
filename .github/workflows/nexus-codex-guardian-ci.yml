@@ -27,4 +27,4 @@ jobs:
         with:
           node-version: '24'
       - name: Regression and guardian crash recovery
-        run: node --test windows-pc-agent-lab/nexus-codex-autoresume/controller.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/pilot-worker.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/guardian.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/guardian-status.test.mjs
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/controller.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/pilot-worker.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/guardian.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/guardian-status.test.mjs
