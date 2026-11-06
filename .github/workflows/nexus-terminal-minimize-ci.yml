@@ -1,0 +1,29 @@
+name: nexus-terminal-minimize-ci
+on:
+  push:
+    branches: [experiment/nexus-terminal-minimize-20261106]
+    paths:
+      - 'windows-pc-agent-lab/nexus-host/**'
+      - 'windows-pc-agent-lab/nexus-gateway/src/catalog.mjs'
+      - '.github/workflows/nexus-terminal-minimize-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  safe-terminal-window-action:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Pure GUI policy + MCP catalog + Windows UIA AST parse
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-host/gui.test.mjs windows-pc-agent-lab/nexus-host/policy.test.mjs windows-pc-agent-lab/nexus-host/server.test.mjs windows-pc-agent-lab/nexus-host/session.test.mjs windows-pc-agent-lab/nexus-host/terminal-minimize-contract.test.mjs
+      - name: Host/Gateway catalog byte-identical check
+        shell: bash
+        run: cmp windows-pc-agent-lab/nexus-host/catalog.mjs windows-pc-agent-lab/nexus-gateway/src/catalog.mjs
