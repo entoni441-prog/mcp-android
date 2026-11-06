@@ -1,0 +1,48 @@
+name: nexus-guardian-epoch1-shadow-ci
+on:
+  push:
+    branches: [experiment/nexus-guardian-epoch1-shadow-20261106]
+    paths:
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/native/**'
+      - '.github/workflows/nexus-guardian-epoch1-shadow-ci.yml'
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/recovery-*'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  os-journal-budget-shadow:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Compile isolated native Job owner
+        shell: pwsh
+        run: |
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $src = (Resolve-Path 'windows-pc-agent-lab/nexus-codex-autoresume/native/GuardianJobHost.cs').Path
+          $out = Join-Path $env:RUNNER_TEMP 'GuardianEpoch1Shadow.exe'
+          & $csc /nologo /target:exe /r:System.Core.dll ('/out:' + $out) $src
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Actual Win32 Job, journal, exclusive epoch-1 dry-run and IN_FLIGHT STOP
+        env:
+          NEXUS_JOBHOST_EXE: ${{ runner.temp }}\GuardianEpoch1Shadow.exe
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/native/epoch1-shadow-chain.test.mjs
+      - name: Previously accepted native containment and mock controller regression
+        env:
+          NEXUS_JOBHOST_EXE: ${{ runner.temp }}\GuardianEpoch1Shadow.exe
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/native/jobhost.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/native/guardian-chain.test.mjs
+      - name: Exact Codex crash test syntax only — DO NOT EXECUTE REAL CLI
+        run: node --check windows-pc-agent-lab/nexus-codex-autoresume/native/real-codex-saved-session-crash.test.mjs
+  portable-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Existing journal, budget, admission and one-shot fence
+        run: node --test --test-concurrency=1 windows-pc-agent-lab/nexus-codex-autoresume/recovery-admission.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/recovery-budget.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/operation-journal.test.mjs windows-pc-agent-lab/nexus-codex-autoresume/restart-gates.test.mjs
