@@ -180,6 +180,7 @@ try{
     completed=second.events.some(e=>e.type==='turn.completed');
     marker=second.events.some(e=>e.type==='item.completed'&&
       e.item?.type==='agent_message'&&e.item.text?.includes('NEXUS-REALJOB-READONLY-RECOVERED'));
+    assertCondition(result.code===0&&same&&completed&&marker,'RESUME_THREAD_UNCONFIRMED');
   }
   assertCondition((await inspectRecoveryBudget(temp,task)).used===1,'BUDGET_NOT_PERSISTED');
   assertCondition(await fs.access(path.join(temp,'state','effect-once.txt')).then(()=>false,()=>true),
