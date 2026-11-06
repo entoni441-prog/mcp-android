@@ -23,7 +23,7 @@ async function main(mode,dir){
     await writeOnce(cp,JSON.stringify({taskId:id,stage:'awaiting_controller_crash',pid:process.pid})+'\n');
     await writeOnce(effectPath,effect);
     console.log('CONTROLLER_PILOT_READY pid='+process.pid);
-    await new Promise(r=>setTimeout(r,30000));
+    await new Promise(r=>setTimeout(r,90000));
     throw Error('CRASH_NOT_OBSERVED');
   }
   if(existing.join(',')!=='checkpoint.json,effect-once.txt')throw Error('BAD_STATE');
