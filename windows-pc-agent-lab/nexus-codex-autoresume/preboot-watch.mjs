@@ -4,7 +4,7 @@
 // poll the sanitized health/alert summary; no delivery is claimed here.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
+import crypto from 'node:crypto';
 
 const args=process.argv.slice(2);
 const opts={};
@@ -32,7 +32,7 @@ const readSafe=async file=>{
   return JSON.parse(await fs.readFile(file,'utf8'));
 };
 async function atomically(file,value){
-  const tmp=file+'.'+process.pid+'.tmp';
+  const tmp=file+'.'+crypto.randomUUID()+'.tmp';
   const f=await fs.open(tmp,'wx',0o600);
   try{await f.writeFile(JSON.stringify(value)+'\n');await f.sync();}
   finally{await f.close();}
