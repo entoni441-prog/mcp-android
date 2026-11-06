@@ -105,3 +105,44 @@ test('probe refuses invalid task IDs and non-fixture directories',{timeout:2000}
     .catch(e=>({stdout:e.stdout,code:e.code}));
   assert.ok(!String(r.stdout).includes('NOT_FOUND'));
 });
+
+test('extra OS Job handle keeps the tree alive after owner death; probe must block restart',{timeout:23000},async t=>{
+  if(!supported(t))return;
+  const dir=await scratch(t),task='jobproof-held-'+crypto.randomUUID().slice(0,8);
+  const owner=start(task,dir,'hang');
+  t.after(()=>{if(owner.p.exitCode===null)owner.p.kill();});
+  const receipt=await awaitJson(path.join(dir,'job-host-status.json'),s=>s.status==='RUNNING');
+  const watcher=spawn(native,['probe-hold',task,dir,'5000'],{
+    cwd:here,windowsHide:true,stdio:['ignore','pipe','pipe']
+  });
+  t.after(()=>{if(watcher.exitCode===null)watcher.kill();});
+  let output='';
+  const observed=new Promise((resolve,reject)=>{
+    watcher.once('error',reject);
+    watcher.stdout.on('data',d=>{
+      output+=d.toString();
+      if(output.includes('\n'))resolve(JSON.parse(output.trim().split(/\r?\n/)[0]));
+    });
+    watcher.once('close',()=>reject(Error('HOLDER_EXITED_EARLY')));
+  });
+  const holding=await Promise.race([observed,
+    sleep(4500).then(()=>{throw Error('HOLDER_NOT_READY');})]);
+  assert.equal(holding.status,'PRESENT');
+  assert.equal(holding.authorization,'NONE');
+  owner.p.kill('SIGKILL');
+  const dead=await waitClosed(owner,5000);
+  assert.equal(dead.timeout,undefined);
+  const whileHeld=await observe(task,dir);
+  assert.equal(whileHeld.status,'PRESENT');
+  assert.ok(whileHeld.active>=1);
+  assert.equal(whileHeld.authorization,'NONE');
+  // While another handle exists the kernel MUST NOT be declared empty merely
+  // because the original owner PID has died.
+  assert.equal(await waitGone(receipt.childPid,150),false);
+  await new Promise(resolve=>watcher.once('close',resolve));
+  const end=Date.now()+4000;let gone;
+  do{gone=await observe(task,dir);if(gone.status==='NOT_FOUND')break;await sleep(40);}
+  while(Date.now()<end);
+  assert.deepEqual(gone,{status:'NOT_FOUND',authorization:'NONE'});
+  assert.equal(await waitGone(receipt.childPid),true);
+});
