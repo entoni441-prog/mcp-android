@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 import {queueStopNotice} from './stop-outbox.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url));
 const monitor=path.join(here,'preboot-watch.mjs');
-const launcher=path.join(here,'preboot-watch-launch.ps1');
+const launcher=process.env.NEXUS_PREBOOT_LAUNCHER_EXE;
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function testRoot(t){
   const dir=path.join(os.tmpdir(),'nexus-guardian-preboot-test-'+crypto.randomBytes(4).toString('hex'));
@@ -80,16 +80,16 @@ test('owner stop is visible and stops the resident loop',async t=>{
   assert.equal(h.canResume,false);
 });
 test('Windows launcher holds real kernel mutex and refuses parallel instance',{timeout:16000},async t=>{
-  if(process.platform!=='win32'){t.skip('Windows mutex');return;}
+  if(process.platform!=='win32'||!launcher){t.skip('Compiled native test launcher not provided');return;}
   const root=await testRoot(t);
-  const first=spawn('powershell.exe',['-NoProfile','-NonInteractive','-File',launcher,'-Root',root],
+  const digest=crypto.createHash('sha256').update(await fs.readFile(monitor)).digest('hex');
+  const first=spawn(launcher,[process.execPath,monitor,root,digest],
     {windowsHide:true,stdio:['ignore','pipe','pipe']});
   let err='';
   first.stderr.on('data',x=>err+=x.toString());
   t.after(()=>{try{first.kill();}catch{}});
   await observe(path.join(root,'watch-summary.json'),x=>x.polls>=1);
-  const competing=await run('powershell.exe',['-NoProfile','-NonInteractive','-File',launcher,
-    '-Root',root],5000);
+  const competing=await run(launcher,[process.execPath,monitor,root,digest],5000);
   assert.equal(competing.code,11,'second watcher must STOP');
   await fs.writeFile(path.join(root,'owner-stop.json'),'{}');
   const ended=await Promise.race([
