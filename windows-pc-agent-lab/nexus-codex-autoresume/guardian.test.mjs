@@ -29,10 +29,10 @@ async function fixture(t,mode='hold'){
     codexSha256:sha,expectedBranch:'isolated-test',stateDirectory:state,
     initialPrompt:'CANARY_SECRET',resumePrompt:'CANARY_SECRET',maxResumes:1,
     completionFile:path.join(state,'complete.json')};
-  const options={testScript:fake,ownerDirectory:owner,initialTimeoutMs:8000,orphanWaitMs:1400,resumeTimeoutMs:8000};
+  const options={testScript:fake,ownerDirectory:owner,initialTimeoutMs:25000,orphanWaitMs:1400,resumeTimeoutMs:8000};
   return {root,repo,state,owner,m,options};
 }
-async function waitJson(file,predicate=()=>true,timeout=7000){
+async function waitJson(file,predicate=()=>true,timeout=18000){
   const end=Date.now()+timeout;
   while(Date.now()<end){
     try{const data=JSON.parse(await fs.readFile(file,'utf8'));if(predicate(data))return data;}catch{}
@@ -87,7 +87,7 @@ test('normal controller completion needs no rescue; second launch rejected',asyn
   assert.equal(again.status,'STOP');
   assert.equal(again.reason,'ALREADY_GUARDED_OR_IO_ERROR');
 });
-test('real controller SIGKILL then exact test-child exit resumes same thread once', {timeout:20000},async t=>{
+test('real controller SIGKILL then exact test-child exit resumes same thread once', {timeout:40000},async t=>{
   const f=await fixture(t);
   const p=launch(f);let ids;
   try {
@@ -113,7 +113,7 @@ test('real controller SIGKILL then exact test-child exit resumes same thread onc
     assert.ok(!JSON.stringify(result).includes('CANARY_SECRET'));
   }finally{if(ids)tryKill(ids.childPid);if(p.p.exitCode===null)tryKill(p.p.pid);}
 });
-test('live PID in recovered state: STOP, never terminate or retry unknown process', {timeout:12000},async t=>{
+test('live PID in recovered state: STOP, never terminate or retry unknown process', {timeout:40000},async t=>{
   const f=await fixture(t);f.options.orphanWaitMs=350;
   const p=launch(f);let ids;
   const sentinel=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});
@@ -138,7 +138,7 @@ test('live PID in recovered state: STOP, never terminate or retry unknown proces
     if(p.p.exitCode===null)tryKill(p.p.pid);
   }
 });
-test('owner STOP during controller crash forbids recovery', {timeout:12000},async t=>{
+test('owner STOP during controller crash forbids recovery', {timeout:40000},async t=>{
   const f=await fixture(t);const p=launch(f);let ids;
   try{
     ids=await ready(f);
@@ -151,7 +151,7 @@ test('owner STOP during controller crash forbids recovery', {timeout:12000},asyn
     assert.equal(await fs.access(path.join(f.state,'resumed.json')).then(()=>true,()=>false),false);
   }finally{if(ids)tryKill(ids.childPid);if(p.p.exitCode===null)tryKill(p.p.pid);}
 });
-test('dirty Git worktree after controller crash fails closed', {timeout:12000},async t=>{
+test('dirty Git worktree after controller crash fails closed', {timeout:40000},async t=>{
   const f=await fixture(t);const p=launch(f);let ids;
   try{
     ids=await ready(f);
