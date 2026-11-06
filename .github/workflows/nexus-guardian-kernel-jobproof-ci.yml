@@ -4,6 +4,8 @@ on:
     branches: [experiment/nexus-guardian-kernel-jobproof-20261106]
     paths:
       - 'windows-pc-agent-lab/nexus-codex-autoresume/native/**'
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/kernel-job-observation*'
+      - 'windows-pc-agent-lab/nexus-codex-autoresume/recovery-admission*'
       - '.github/workflows/nexus-guardian-kernel-jobproof-ci.yml'
   workflow_dispatch:
 permissions:
