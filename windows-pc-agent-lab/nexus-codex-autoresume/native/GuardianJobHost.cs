@@ -307,7 +307,7 @@ class GuardianJobHost {
         !Path.IsPathRooted(args[4]) || !Directory.Exists(args[4]) ||
         !IsTestPath(args[4]) ||
         !(String.Equals(Path.GetFileName(args[3]),"guardian-integration-fixture.mjs",StringComparison.OrdinalIgnoreCase)
-            ? new [] {"normal","hang","recover","committed"}.Contains(args[5])
+            ? new [] {"normal","hang","prepared","recover","committed"}.Contains(args[5])
             : new [] {"normal", "hold", "hang", "tree"}.Contains(args[5]))) {
       Console.WriteLine("{\"status\":\"STOP\",\"reason\":\"INVALID_TEST_ARGS\"}");
       return 64;
