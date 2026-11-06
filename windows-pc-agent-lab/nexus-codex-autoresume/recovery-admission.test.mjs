@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {inspectRecoveryAdmission} from './recovery-admission.mjs';
+import {inspectRecoveryAdmission,inspectRecoveryAdmissionWithKernel} from './recovery-admission.mjs';
 import {initializeRecoveryBudget,claimRecoveryAttempt} from './recovery-budget.mjs';
 import {prepareOperation,beginExternalOperation,confirmOperation} from './operation-journal.mjs';
 
@@ -129,4 +129,27 @@ test('unsafe native assignment path is rejected without reading through a symlin
     throw err;
   }
   assert.equal((await inspectRecoveryAdmission(e)).reason,'JOB_ASSIGNMENT_UNVERIFIED');
+});
+
+test('kernel probe cannot override an uncertain external IN_FLIGHT operation',async t=>{
+  const e=await fixture(t,'IN_FLIGHT');
+  const result=await inspectRecoveryAdmissionWithKernel(e);
+  assert.deepEqual(result,{decision:'STOP',reason:'RECONCILIATION_REQUIRED'});
+});
+test('missing verified native executable means no combined admission',async t=>{
+  const e=await fixture(t,'PREPARED');
+  const result=await inspectRecoveryAdmissionWithKernel(e);
+  assert.equal(result.decision,'STOP');
+  assert.notEqual(result.reason,'RESUME_ALLOWED');
+});
+test('even a journal COMMITTED operation cannot bypass missing OS witness',async t=>{
+  const e=await fixture(t,'COMMITTED');
+  const result=await inspectRecoveryAdmissionWithKernel(e);
+  assert.equal(result.decision,'STOP');
+});
+test('consumed restart budget blocks observation-based continuation',async t=>{
+  const e=await fixture(t,'PREPARED');
+  await claimRecoveryAttempt(e.root,TASK,1);
+  const result=await inspectRecoveryAdmissionWithKernel(e);
+  assert.equal(result.reason,'PRIOR_RECOVERY_ALREADY_CLAIMED');
 });
