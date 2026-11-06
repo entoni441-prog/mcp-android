@@ -262,6 +262,42 @@ switch ($a.mode) {
     try { $res.at.dialog = NxDlg $top } catch { }
     $res.focused = NxFocused
   }
+  'minimize' {
+    # NX-TM-01: WindowPattern only. The terminal's edit surface, mouse,
+    # keyboard and process commands are NEVER used. HWND and process identity
+    # are revalidated in this separate fixed UIA operation.
+    $res.verified = $false
+    $res.pid = [int]$a.pid
+    $res.hwnd = [int64]$a.hwnd
+    $res.isMinimizedAfter = $false
+    $res.wasMinimized = $false
+    if ($res.pid -gt 0 -and $res.hwnd -gt 0) {
+      try {
+        $w = $AE::FromHandle([IntPtr]$res.hwnd)
+        if ($null -ne $w -and [int]$w.Current.ProcessId -eq $res.pid -and
+            [int64]$w.Current.NativeWindowHandle -eq $res.hwnd -and
+            (NxPName $res.pid) -ieq 'WindowsTerminal' -and
+            (NxTopOf $w).Current.NativeWindowHandle -eq $res.hwnd) {
+          $wp = $w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)
+          if ($null -ne $wp -and $wp.Current.CanMinimize) {
+            $res.wasMinimized = $wp.Current.WindowVisualState -eq [System.Windows.Automation.WindowVisualState]::Minimized
+            if (-not $res.wasMinimized) {
+              $wp.SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Minimized)
+              Start-Sleep -Milliseconds 150
+            }
+            $v = $AE::FromHandle([IntPtr]$res.hwnd)
+            if ($null -ne $v -and [int]$v.Current.ProcessId -eq $res.pid -and
+                [int64]$v.Current.NativeWindowHandle -eq $res.hwnd) {
+              $p2 = $v.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)
+              $res.isMinimizedAfter = $p2.Current.WindowVisualState -eq [System.Windows.Automation.WindowVisualState]::Minimized
+              $res.verified = [bool]$res.isMinimizedAfter
+              $res.process = NxPName $res.pid
+            }
+          }
+        }
+      } catch { $res.error = 'WINDOW_PATTERN_UNAVAILABLE' }
+    }
+  }
   'activate' {
     $res.foregroundBefore = NxFocused
     $w = $null
