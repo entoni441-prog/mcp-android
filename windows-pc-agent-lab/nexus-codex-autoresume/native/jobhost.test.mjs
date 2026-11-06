@@ -158,3 +158,45 @@ test('detached grandchild is removed when parent exits normally',{timeout:20000}
   assert.equal(state.jobActive,0);
   assert.equal(await waitGone(grandchild.pid),true);
 });
+
+test('OS mutex is released after owner crash, without reusing a task state directory',{timeout:25000},async t=>{
+  if(!supported(t))return;
+  const original=await sandbox(t),newState=await sandbox(t);
+  const taskId='release-'+crypto.randomUUID().slice(0,8);
+  const first=start(taskId,original,'hold',3000,20000);
+  let oldPid;
+  try{
+    const st=await until(path.join(original,'job-host-status.json'),x=>x.status==='RUNNING');
+    oldPid=st.childPid;
+    assert.ok(alive(st.ownerPid));
+    first.child.kill('SIGKILL');
+    await result(first,4000);
+    assert.equal(await waitGone(oldPid),true);
+    // Different test state directory deliberately: previous task receipts are
+    // immutable; this proves OS ownership release, not task replay.
+    const next=start(taskId,newState,'normal',3000,8000);
+    const resumed=await result(next,6000);
+    assert.equal(resumed.code,0);
+    const newStatus=await read(path.join(newState,'job-host-status.json'));
+    assert.equal(newStatus.status,'COMPLETED');
+    assert.equal(newStatus.jobActive,0);
+    assert.equal((await fs.readdir(original)).filter(x=>x==='effect-once.txt').length,1);
+    assert.equal((await fs.readdir(newState)).filter(x=>x==='effect-once.txt').length,1);
+  }finally{
+    if(first.child.exitCode===null)first.child.kill('SIGKILL');
+    if(oldPid)assert.equal(await waitGone(oldPid),true);
+  }
+});
+test('non-fixture executable arguments are rejected before any process is started',{timeout:10000},async t=>{
+  if(!supported(t))return;
+  const dir=await sandbox(t);
+  const args=['run','reject-'+crypto.randomUUID().slice(0,8),process.execPath,
+    path.join(here,'job-grandchild.mjs'),dir,'normal','2500','9000'];
+  const p=spawn(runner,args,{cwd:here,windowsHide:true,stdio:['ignore','pipe','pipe']});
+  let stdout='';
+  p.stdout.on('data',c=>stdout+=c.toString());
+  const close=await new Promise(resolve=>p.once('close',code=>resolve(code)));
+  assert.equal(close,64);
+  assert.match(stdout,/INVALID_TEST_ARGS/);
+  assert.deepEqual(await fs.readdir(dir),[]);
+});
