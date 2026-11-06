@@ -218,3 +218,17 @@ test('failed Job assignment kills the exact suspended child before it can act',{
   assert.equal(await waitGone(st.childPid),true);
   assert.equal((await fs.readdir(dir)).includes('effect-once.txt'),false);
 });
+
+test('recovery cannot start before exact-thread acceptance and cannot burn epoch 1',{timeout:8000},async t=>{
+  if(!supported(t))return;
+  const dir=await sandbox(t);
+  const fixture=path.join(here,'guardian-integration-fixture.mjs');
+  const args=['run','blocked-'+crypto.randomUUID().slice(0,8),process.execPath,
+    fixture,dir,'recover','2500','8000'];
+  const p=spawn(runner,args,{cwd:here,windowsHide:true,stdio:['ignore','pipe','pipe']});
+  let output='';p.stdout.on('data',b=>output+=b.toString());
+  const code=await new Promise(resolve=>p.once('close',resolve));
+  assert.equal(code,25);
+  assert.match(output,/RECOVERY_NOT_ENABLED/);
+  assert.equal((await fs.readdir(dir)).includes('native-epoch-001.json'),false);
+});
