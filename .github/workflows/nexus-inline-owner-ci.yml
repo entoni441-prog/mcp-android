@@ -1,0 +1,32 @@
+name: nexus-inline-owner-ci
+on:
+  push:
+    branches: [experiment/nexus-inline-owner-approvals-20261107]
+    paths:
+      - 'windows-pc-agent-lab/nexus-gateway/**'
+      - '.github/workflows/nexus-inline-owner-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  owner-widget-auth:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Inline owner auth + gateway regression
+        working-directory: windows-pc-agent-lab/nexus-gateway
+        run: node --test test/widget-owner.test.mjs test/widget-owner-route.test.mjs test/guard-core.test.mjs test/owner061.test.mjs test/handlers.test.mjs test/offline.test.mjs test/live050.test.mjs
+      - name: Check source syntax
+        working-directory: windows-pc-agent-lab/nexus-gateway
+        run: |
+          node --check src/widget-consent.mjs
+          node --check src/widget.mjs
+          node --check src/handlers.mjs
