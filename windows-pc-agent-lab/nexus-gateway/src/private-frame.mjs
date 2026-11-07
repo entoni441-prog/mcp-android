@@ -27,6 +27,10 @@ export async function verifyPrivateTicket(env,ticket,origin,now=Date.now()){
   if(!originAllowed(origin)||typeof ticket!=='string'||ticket.length>1024||
      !/^[A-Za-z0-9_-]{40,850}\.[A-Za-z0-9_-]{43}$/.test(ticket))return false;
   const [payload,mac]=ticket.split('.');
+  // Reject alternative noncanonical Base64URL strings for identical signature bytes.
+  // A changed trailing sextet must never be accepted as an unchanged ticket.
+  try{if(b64u(un64(mac))!==mac||b64u(un64(payload))!==payload)return false;}
+  catch{return false;}
   let valid=false;
   try{valid=await crypto.subtle.verify('HMAC',await key(env),un64(mac),encoder.encode(payload));}catch{return false;}
   if(!valid)return false;
