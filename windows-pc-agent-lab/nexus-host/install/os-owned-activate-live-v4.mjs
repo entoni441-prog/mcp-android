@@ -22,6 +22,9 @@ const LOCK=path.join(ROOT,'_activate-live-v4-os-owned-20261107.lock');
 const TASK='NEXUS-Live-v4-Activation';
 const MAINTENANCE=path.join(os.homedir(),'NEXUS-workspace','nexus-recovery-independent','maintenance.json');
 const SCRIPT=fileURLToPath(import.meta.url);
+const PROBE_REQUEST=path.join(ROOT,'_live_v4_os_owned_probe_request.json');
+const PROBE_RESULT=path.join(ROOT,'_live_v4_os_owned_probe_result.json');
+const ARM=path.join(ROOT,'_live_v4_os_owned_armed.json');
 const OLD={
   'server.mjs':'d7133271cffd112eae3fe4877800a1979730e3e5b309b9d760333f1e1dbe7737',
   'catalog.mjs':'eff2c49ab4b8078c43ed7b5ab9d706269bd054611d34a2e87f92799877ed26b8',
@@ -197,6 +200,22 @@ async function main(){
     console.log(JSON.stringify({status:'PREFLIGHT_PASS',files:FILES,hostPid:old.host,supervisorPid:old.supervisor,backup:BACKUP}));
     return;
   }
+  if(fs.existsSync(PROBE_REQUEST)){
+    if(fs.existsSync(PROBE_RESULT)||fs.existsSync(ARM))throw Error('probe_conflict');
+    const req=readJson(PROBE_REQUEST);
+    if(req?.version!==1||req.mode!=='probe'||Object.keys(req).sort().join(',')!=='mode,version')
+      throw Error('probe_request_invalid');
+    assertIndependent(old);
+    fs.writeFileSync(PROBE_RESULT,JSON.stringify({version:1,state:'INDEPENDENT_PASS',at:Date.now(),pid:process.pid}),{flag:'wx',mode:0o600});
+    console.log('INDEPENDENT_SCHEDULER_PROBE_PASS');
+    return;
+  }
+  const armed=readJson(ARM);
+  const result=readJson(PROBE_RESULT);
+  if(armed?.version!==1||armed.mode!=='deploy'||armed.probePid!==result?.pid||
+     result?.state!=='INDEPENDENT_PASS'||!Number.isSafeInteger(result?.at)||
+     Date.now()-result.at>15*60_000||Date.now()<result.at)
+    throw Error('deployment_not_armed_by_verified_probe');
   if(fs.existsSync(LOCK)||fs.existsSync(BACKUP)||fs.existsSync(MAINTENANCE))
     throw Error('existing_update_or_maintenance_marker');
   assertIndependent(old);
