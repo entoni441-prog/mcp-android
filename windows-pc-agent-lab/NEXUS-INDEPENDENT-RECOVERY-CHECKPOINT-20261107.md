@@ -47,3 +47,10 @@ Do not install the new watchdog until NEXUS has reconnected and the prior v4 upd
 ### Security note
 
 Interactive User task requires an already signed-in Windows session; while locked, it may continue working, but it does not provide pre-logon credential control. The user did not authorize disabling Smart App Control or setting Windows auto-login. Never set `logonChannelVerified` without actual independent remote-login acceptance.
+
+### Additional guarded revision / final CI
+
+- If the independent existing Supervisor PID is alive, the Watchdog records `SUPERVISOR_PRESENT_WAIT` and **does not** start a parallel Host; it does not kill or bypass the Supervisor.
+- Malformed persisted restart budgets or PID metadata cause `CORRUPT_STATE_STOP`, not silent counter reset or uncontrolled restart.
+- Latest source safety commit `5ae1518cd4aa9fabad667289edc4b2aa132cd166`; GitHub Actions [run 42367001503](https://github.com/entoni441-prog/mcp-android/actions/runs/42367001503) **PASS on Windows and Ubuntu**.
+- Still no local activation on owner PC: cloud-only CI cannot reach the actual offline Windows Session.
