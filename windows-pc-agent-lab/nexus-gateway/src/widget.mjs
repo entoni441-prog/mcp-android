@@ -29,7 +29,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
 .msg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;text-align:center;color:var(--mut);background:rgba(0,0,0,.72)}
 .msg[hidden]{display:none}.msg b{color:var(--fg)}
 .foot{color:var(--mut);font-size:11px;padding:4px 8px}
-.owner{border-top:1px solid var(--line);padding:8px;display:grid;gap:8px}.owner-head{display:flex;align-items:center;gap:8px;justify-content:space-between}.owner form{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.owner input{min-width:120px;flex:1;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--fg);padding:8px;font:inherit}.owner-entry{border:1px solid var(--line);padding:7px;border-radius:6px;overflow-wrap:anywhere}.owner-entry p{margin:2px 0 8px}.owner-actions{display:flex;gap:6px;flex-wrap:wrap}.owner-status{font-size:12px;color:var(--mut)}.owner button:disabled{opacity:.55;cursor:wait}.owner button.allow{border-color:var(--green);color:var(--green)}
+.owner{border-top:1px solid var(--line);padding:8px;display:grid;gap:8px}.owner-head{display:flex;align-items:center;gap:8px;justify-content:space-between}.owner form{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.owner input{min-width:120px;flex:1;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--fg);padding:8px;font:inherit}.owner-entry{border:1px solid var(--line);padding:7px;border-radius:6px;overflow-wrap:anywhere}.owner-entry p{margin:2px 0 8px}.owner-actions{display:flex;gap:6px;flex-wrap:wrap}.owner-status{font-size:12px;color:var(--mut)}.owner button:disabled{opacity:.55;cursor:wait}.owner button.allow{border-color:var(--green);color:var(--green)}.boot{border-top:1px solid var(--line);padding:8px;display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}.boot b{white-space:nowrap}.boot span{color:var(--mut)}
 </style></head>
 <body class="offline">
 <div class="bar">
@@ -41,6 +41,10 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   <span class="meta" id="meta"></span>
 </div>
 <div class="view"><img id="img" alt="Экран Windows владельца"><div class="msg" id="msg"><b id="mt">Подключение…</b><span id="md"></span><button id="ask" hidden>Попросить включить Live View</button></div></div>
+<div class="boot" aria-label="Статус запуска и входа Windows">
+  <b>Доступ после запуска:</b><span id="boot-state" role="status">Проверяю подключение NEXUS…</span>
+  <span id="boot-hint">Защищённый дистанционный вход до Windows пока не настроен. Пароль Windows сюда не вводи.</span>
+</div>
 <div class="owner" aria-label="Подтверждения владельца NEXUS">
   <div class="owner-head"><b>Подтверждения владельца</b><button id="owner-toggle" type="button" aria-expanded="false">Показать</button></div>
   <div id="owner-panel" hidden>
@@ -107,7 +111,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (s.state === 'off') { stopped = true; halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
   }
   let readySince = 0;
-  function halt() { clearTimeout(timer); timer = null; }
+  function halt() { clearTimeout(timer); timer = null; if (typeof bootTimer !== 'undefined') clearTimeout(bootTimer); }
   function schedule(ms) { halt(); if (!paused && !stopped) timer = setTimeout(tick, ms); }
   const interval = () => Math.round(1000 / Number($('fps').value || 2));
 
@@ -144,6 +148,37 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     } finally { busy = false; }
   }
 
+
+
+  // ── PRELOGON-STATUS-01: honest read-only status, NOT a credential channel ──
+  // Gateway connection_status works even if the Windows user's Host is offline.
+  // Never assume 'host offline' means 'login required': tunnel and power outages
+  // are also possible. No PIN/password fields until an independently secured
+  // pre-logon login service is built and independently tested.
+  let bootTimer = null, bootBusy = false;
+  async function checkBootStatus() {
+    if (bootBusy || document.visibilityState === 'hidden' || stopped) return;
+    bootBusy = true;
+    try {
+      const r = await callTool('connection_status', {});
+      const sc = r && r.structuredContent;
+      if (!sc || r.isError) throw new Error('connection_status_unavailable');
+      const verdict = String(sc.verdict || 'unknown');
+      $('boot-state').textContent = verdict === 'online' ? 'HOST_ONLINE · NEXUS подключён'
+        : 'HOST_OFFLINE · нет подтверждённого подключения (' + verdict.slice(0,30) + ')';
+      $('boot-hint').textContent = verdict === 'online'
+        ? 'NEXUS доступен. Этот статус сам по себе не доказывает возможность входа после перезагрузки.'
+        : 'Ожидаю Host. Наличие экрана входа Windows до запуска Host пока не подтверждено; дистанционный вход не активирован.';
+      // Do not infer LOGIN_REQUIRED from offline or silently lift logonChannelVerified.
+    } catch {
+      $('boot-state').textContent = 'Статус Windows недоступен';
+      $('boot-hint').textContent = 'Проверь соединение. Пароль Windows здесь не запрашивается.';
+    } finally {bootBusy = false;size();}
+  }
+  function bootSchedule() {
+    clearTimeout(bootTimer);
+    if (!stopped) bootTimer = setTimeout(async()=>{await checkBootStatus();bootSchedule();},15000);
+  }
 
   // ── NX-CHAT-OWNER-01: privileged owner approvals, out-of-band from MCP ──
   // The model and MCP Apps host NEVER receive the password, nonce or decision.
@@ -259,6 +294,8 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
       else { setState('offline', 'NEXUS · нет моста'); show('Клиент не поддерживает встроенный виджет', 'Используй внешний Live View: ссылка /live на шлюзе NEXUS.'); return; }
     }
     tick();
+    checkBootStatus();
+    bootSchedule();
   })();
 })();
 </script></body></html>`;
