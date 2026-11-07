@@ -172,7 +172,10 @@ function NxDlg($w) {
   return @{ modal = $modal; className = $cls; title = (NxStr $w.Current.Name 200); text = @($txt) }
 }
 function NxElem($e) {
-  return @{ controlType = (NxType $e); name = (NxStr $e.Current.Name 120); id = (NxStr $e.Current.AutomationId 80); className = (NxStr $e.Current.ClassName 80) }
+  # IsPassword is a UIA property; unknown is conservatively treated as sensitive.
+  $secret = $true
+  try { $secret = [bool]$e.Current.IsPassword } catch { }
+  return @{ controlType = (NxType $e); name = (NxStr $e.Current.Name 120); id = (NxStr $e.Current.AutomationId 80); className = (NxStr $e.Current.ClassName 80); isPassword = $secret }
 }
 # NX-13: bounded UIA ancestry + Win32 owner/PID verification for Edge translation popup.
 function NxEdgeTranslateBubble($e, $top, $epid) {
