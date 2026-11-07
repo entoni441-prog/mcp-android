@@ -56,24 +56,36 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
 .touch-tools form{display:flex;gap:6px}.touch-tools input{flex:1;min-width:0;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;font:16px system-ui}
 .touch-tools .keys{display:flex;flex-wrap:wrap;gap:6px}.touch-tools .notice{font-size:11px;color:var(--amber)}
 #img.touchable{cursor:crosshair;touch-action:manipulation}
+.touch-tools{position:fixed;inset:0;z-index:105;background:rgba(0,0,0,.70);display:flex;align-items:flex-end;justify-content:center;padding:12px}
+.touch-tools[hidden]{display:none!important}
+.touch-card{width:min(460px,100%);background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px;max-height:65vh;overflow:auto;box-shadow:0 12px 40px #0009}
+.touch-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.touch-tools input{min-height:44px}
+#touch-mini[hidden]{display:none!important}
+#touch-mini{font-size:11px;color:var(--mut);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
 </style></head>
 <body class="offline">
 <div class="bar">
   <span class="dot" aria-hidden="true"></span><span class="st" id="st">NEXUS · подключение…</span>
   <button id="pp" title="Пауза / продолжить">⏸</button>
   <button id="touch-toggle" type="button" aria-pressed="false" title="Прямое управление экраном, только по команде владельца">Управление: выкл.</button>
+  <button id="touch-open" type="button" hidden aria-label="Открыть клавиатуру Samsung для ввода текста">⌨</button>
   <select id="fps" title="Кадров в секунду" aria-label="Кадров в секунду"><option value="0.5">0.5 к/с</option><option value="1">1 к/с</option><option value="2" selected>2 к/с</option><option value="4">4 к/с</option></select>
   <button id="pip" hidden title="Картинка в картинке">⧉</button><button id="full" hidden title="Во весь экран">⛶</button>
   <button id="stop" class="stop" title="Остановить трансляцию на ПК">■ STOP</button>
   <span class="meta" id="meta"></span>
 </div>
 <div class="view"><img id="img" alt="Экран Windows владельца"><div class="msg" id="msg"><b id="mt">Подключение…</b><span id="md"></span><button id="ask" hidden>Попросить включить Live View</button></div></div>
-<div class="touch-tools" id="touch-tools" hidden>
-  <span class="notice">Касайся изображения для одиночного клика в разрешённом приложении. Не вводи PIN, пароли, коды, токены и платёжные данные: это НЕ защищённый Windows-вход.</span>
-  <form id="touch-form" autocomplete="off"><input id="touch-text" type="text" maxlength="500" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Обычный текст для активного приложения" placeholder="Обычный текст (не пароль)"><button type="submit">Ввести</button></form>
-  <div class="keys"><button data-touch-key="enter" type="button">Enter</button><button data-touch-key="tab" type="button">Tab</button><button data-touch-key="backspace" type="button">⌫</button><button data-touch-key="esc" type="button">Esc</button></div>
-  <span id="touch-status" class="owner-status" role="status">Для ввода необходима активная трансляция и разрешение NEXUS Host.</span>
+<div class="touch-tools" id="touch-tools" hidden role="dialog" aria-label="Ввод текста в Windows">
+  <div class="touch-card">
+    <div class="touch-head"><b>Текст в Windows</b><button id="touch-close" type="button" aria-label="Скрыть клавиатуру">Скрыть</button></div>
+    <span class="notice">Только обычный текст. Не вводи PIN, пароль, код, токен или платёжные данные.</span>
+    <form id="touch-form" autocomplete="off"><input id="touch-text" type="text" inputmode="text" enterkeyhint="send" maxlength="500" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Ввод через клавиатуру Samsung" placeholder="Нажми сюда для клавиатуры Samsung"><button type="submit">Отправить</button></form>
+    <div class="keys"><button data-touch-key="enter" type="button">Enter</button><button data-touch-key="tab" type="button">Tab</button><button data-touch-key="backspace" type="button">⌫</button><button data-touch-key="esc" type="button">Esc</button></div>
+  </div>
 </div>
+<div id="touch-mini" role="status" hidden>Управление готово</div>
 <div class="boot" aria-label="Статус запуска и входа Windows">
   <div class="boot-head"><b>Доступ после запуска</b><span id="boot-state" role="status">Проверка…</span><button id="boot-toggle" type="button" aria-expanded="false">Подробнее</button></div>
   <span id="boot-hint" hidden>Защищённый дистанционный вход до Windows пока не настроен. Пароль Windows сюда не вводи.</span>
@@ -96,6 +108,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   let seq = 0, pending = new Map(), host = null, modes = [], mode = 'inline';
   let paused = false, stopped = false, busy = false, timer = null, fails = 0, lastSeq = -1, lastAt = 0;
   let frameGeometry=null, touchEnabled=false, touchBusy=false, pointerStart=null, touchConsent=null;
+  let lastTap=null, tapTimer=null, lastStatusTimer=null;
   const legacy = () => typeof window.openai === 'object' && window.openai && typeof window.openai.callTool === 'function';
 
   // ── MCP Apps bridge (JSON-RPC 2.0 over postMessage) ──
@@ -469,7 +482,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   (async () => {
     try {
       const init = await Promise.race([
-        rpc('ui/initialize', {appInfo: {name: 'nexus-live-view', version: '2.1.0-interactive'}, appCapabilities: {availableDisplayModes: ['inline', 'pip', 'fullscreen']}, protocolVersion: '2026-01-26'}),
+        rpc('ui/initialize', {appInfo: {name: 'nexus-live-view', version: '4.0.0-touch'}, appCapabilities: {availableDisplayModes: ['inline', 'pip', 'fullscreen']}, protocolVersion: '2026-01-26'}),
         new Promise((_, rej) => setTimeout(() => rej(new Error('no_mcp_apps_host')), 4000)),
       ]);
       host = init || {}; notify('ui/notifications/initialized', {});
