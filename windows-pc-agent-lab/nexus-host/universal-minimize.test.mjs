@@ -15,6 +15,7 @@ test('normal app and frame hosts can be minimized, secure desktop cannot',()=>{
 test('only a verified caption minimize button is converted to a window operation',()=>{
  const a=sample();
  assert.equal(isTitlebarMinimizeTouch(a,'click'),true);
+ assert.equal(isTitlebarMinimizeTouch({...a,elem:{...a.elem,name:'Свернуть Калькулятор',id:'Minimize'}},'click'),true);
  assert.equal(isTitlebarMinimizeTouch({...a,elem:{...a.elem,name:'Minimize',id:''}},'click'),true);
  assert.equal(isTitlebarMinimizeTouch({...a,elem:{...a.elem,name:'Riduci a icona',id:''}},'click'),true);
  assert.equal(isTitlebarMinimizeTouch(a,'move'),false);
