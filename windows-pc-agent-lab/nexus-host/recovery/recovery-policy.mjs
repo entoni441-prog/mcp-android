@@ -11,7 +11,7 @@ export function decideRecovery({now,healthy,ownerOff,existingHostAlive,taskVerif
   if(!Number.isSafeInteger(now)||now<0||typeof healthy!=='boolean'||typeof ownerOff!=='boolean'||
      typeof existingHostAlive!=='boolean'||typeof taskVerified!=='boolean')throw Error('bad_observation');
   const attempts=Array.isArray(state.attempts)?state.attempts:[];
-  if(attempts.some(t=>!Number.isSafeInteger(t)||t<0||t>now))throw Error('bad_journal');
+  if(attempts.some((t,i)=>!Number.isSafeInteger(t)||t<0||t>now||(i>0&&t<=attempts[i-1])))throw Error('bad_journal');
   const recent=attempts.filter(t=>now-t<WINDOW_MS);
   const healthySince=Number.isSafeInteger(state.healthySince)&&state.healthySince<=now?state.healthySince:null;
   if(ownerOff)return {action:'OWNER_OFF',next:{attempts:recent,healthySince:null}};
