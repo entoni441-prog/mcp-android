@@ -161,7 +161,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (m.id != null && pending.has(m.id) && !m.method) { const p = pending.get(m.id); pending.delete(m.id); m.error ? p.rej(new Error(m.error.message || 'error')) : p.res(m.result); return; }
     if (m.method === 'ui/notifications/host-context-changed' && m.params) ctx(m.params);
     if (m.method === 'ui/notifications/tool-result' && m.params) onStatus(m.params.structuredContent);
-    if (m.method === 'ui/resource-teardown' && m.id != null) { stopped = true; stopPrivate(); clearTap(); clearTimeout(leaseTimer); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); window.parent.postMessage({jsonrpc: '2.0', id: m.id, result: {}}, '*'); }
+    if (m.method === 'ui/resource-teardown' && m.id != null) { stopped = true; closeWindowManager(); stopPrivate(); clearTap(); clearTimeout(leaseTimer); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); window.parent.postMessage({jsonrpc: '2.0', id: m.id, result: {}}, '*'); }
   });
   function ctx(c) {
     if (Array.isArray(c.availableDisplayModes)) modes = c.availableDisplayModes;
@@ -191,7 +191,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   const hide = () => { $('msg').hidden = true; };
   function onStatus(s) {
     if (!s || typeof s !== 'object') return;
-    if (s.state === 'off') { stopped = true; stopPrivate(); frameGeometry=null; touchConsent=null; resetTouch(); if (ownerPopup) dismissOwnerPopup(); halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
+    if (s.state === 'off') { stopped = true; closeWindowManager(); stopPrivate(); frameGeometry=null; touchConsent=null; resetTouch(); if (ownerPopup) dismissOwnerPopup(); halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
   }
   let readySince = 0;
   function halt() { clearTimeout(timer); timer = null; }
@@ -316,6 +316,97 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   }
 
 
+
+  // ── OWNER WINDOW MANAGEMENT: verified, non-input WindowPattern only ──
+  // This intentionally does NOT click the taskbar/titlebar, send shell keys,
+  // close Windows Terminal, or create an owner_handoff for a console click.
+  let windowCandidates=[],windowListBusy=false,windowMinBusy=false;
+  function closeWindowManager(){
+    $('window-panel').hidden=true;
+    $('window-open').setAttribute('aria-expanded','false');
+    windowCandidates=[];$('window-select').replaceChildren();
+    $('window-status').textContent='';
+    size();
+  }
+  const windowStatus=message=>{$('window-status').textContent=message;size();};
+  async function refreshWindowManager(){
+    if(windowListBusy||stopped||$('window-panel').hidden)return;
+    windowListBusy=true;
+    $('window-refresh').disabled=true;
+    windowStatus('Получаю актуальный список окон…');
+    try{
+      const r=await callTool('list_windows',{includeTitles:true});
+      const fail=toolFailure(r);
+      if(fail)throw Error(fail);
+      const windows=r?.structuredContent?.windows;
+      if(!Array.isArray(windows))throw Error('Ответ NEXUS не содержит списка окон');
+      const candidates=windows.filter(w=>
+        w&&Number.isSafeInteger(w.pid)&&w.pid>0&&
+        typeof w.process==='string'&&w.process.length>0&&w.process.length<=80&&
+        typeof w.title==='string'&&w.title.trim().length>0&&w.title.length<=250);
+      if($('window-panel').hidden)return;
+      windowCandidates=candidates.slice(0,100).map(w=>({
+        pid:w.pid,process:w.process,title:w.title
+      }));
+      const sel=$('window-select');sel.replaceChildren();
+      const first=document.createElement('option');
+      first.value='';first.textContent='Выбери окно';sel.appendChild(first);
+      for(let i=0;i<windowCandidates.length;i++){
+        const w=windowCandidates[i],opt=document.createElement('option');
+        opt.value=String(i);
+        opt.textContent=w.process+' · '+w.title.slice(0,100);
+        sel.appendChild(opt);
+      }
+      sel.value='';
+      windowStatus(windowCandidates.length?'Выбери окно из списка.':'Обычных окон не найдено.');
+    }catch(e){windowCandidates=[];$('window-select').replaceChildren();
+      windowStatus('Не удалось прочитать окна: '+String(e.message||e).slice(0,100));}
+    finally{windowListBusy=false;$('window-refresh').disabled=false;size();}
+  }
+  $('window-open').onclick=()=>{
+    if(stopped){touchMessage('Трансляция остановлена; окна недоступны.');return;}
+    if(!$('window-panel').hidden){closeWindowManager();return;}
+    $('window-panel').hidden=false;
+    $('window-open').setAttribute('aria-expanded','true');
+    $('window-status').textContent=touchEnabled?'':'Включи «Управление», прежде чем сворачивать.';
+    refreshWindowManager();size();
+  };
+  $('window-close').onclick=closeWindowManager;
+  $('window-refresh').onclick=refreshWindowManager;
+  $('window-minimize').onclick=async()=>{
+    if(windowMinBusy||windowListBusy||stopped)return;
+    if(!touchEnabled){windowStatus('Сначала включи «Управление» в Live.');return;}
+    const raw=$('window-select').value,index=Number(raw);
+    if(!/^\\d+$/.test(raw)||!Number.isSafeInteger(index)||index<0||index>=windowCandidates.length){
+      windowStatus('Сначала выбери окно.');return;
+    }
+    const target=windowCandidates[index];
+    windowMinBusy=true;$('window-minimize').disabled=true;
+    windowStatus('Проверяю окно перед сворачиванием…');
+    try{
+      // Re-list before any change to prevent selecting a recycled PID or a new
+      // window after the menu was opened. NEVER retry uncertain minimize results.
+      const current=await callTool('list_windows',{includeTitles:true});
+      const fail=toolFailure(current);
+      if(fail)throw Error(fail);
+      const matching=(current?.structuredContent?.windows||[]).filter(w=>
+        w?.pid===target.pid&&w?.process===target.process&&w?.title===target.title);
+      if(matching.length!==1)throw Error('Список изменился: обнови окна и выбери заново.');
+      if(stopped||!touchEnabled||$('window-panel').hidden)return;
+      const r=await callTool('minimize_window',{pid:target.pid,title:target.title,ownerRequested:true});
+      const err=toolFailure(r);
+      if(err)throw Error(err);
+      const sc=r?.structuredContent||{};
+      if(!['minimized','already_minimized'].includes(sc.status)||sc.verified!==true||
+         sc.pid!==target.pid||sc.shellInputSent!==false)
+        throw Error(sc.status==='ambiguous'?'Несколько одинаковых окон: точный выбор недоступен.':
+          'Не удалось подтвердить сворачивание. Не повторяй без проверки.');
+      windowStatus('Свернуто: '+target.process+' · '+target.title.slice(0,55));
+      // No global window action and no command execution: the rest of Windows is unchanged.
+      await refreshWindowManager();
+    }catch(e){windowStatus('Действие отменено: '+String(e.message||e).slice(0,125));}
+    finally{windowMinBusy=false;$('window-minimize').disabled=false;size();}
+  };
 
   // ── PRELOGON-STATUS-01: honest read-only status, NOT a credential channel ──
   // Gateway connection_status works even if the Windows user's Host is offline.
@@ -715,7 +806,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   $('pip').onclick = () => displayMode('pip');
   $('full').onclick = () => displayMode(mode === 'fullscreen' ? 'inline' : 'fullscreen');
   $('stop').onclick = async () => {
-    stopped = true;stopPrivate(); frameGeometry=null; touchConsent=null; resetTouch(); clearTimeout(leaseTimer); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); dismissOwnerPopup(); $('img').removeAttribute('src');
+    stopped = true;closeWindowManager();stopPrivate(); frameGeometry=null; touchConsent=null; resetTouch(); clearTimeout(leaseTimer); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); dismissOwnerPopup(); $('img').removeAttribute('src');
     setState('offline', 'STOP…');
     try { await callTool('live_control', {action: 'stop'}); setState('offline', 'NEXUS · остановлено'); show('Трансляция остановлена на ПК', 'live_view выключен. Включить снова можно только просьбой в чате.', true); }
     catch (e) { show('STOP не дошёл до ПК', String(e.message || e) + ' — закрой окно NEXUS Host на ПК, это выключает всё.'); }
