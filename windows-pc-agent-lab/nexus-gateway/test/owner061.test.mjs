@@ -26,8 +26,9 @@ function hostFake() {
 }
 const withCookie = (path, c, init = {}) => new Request(BASE + path, {...init, headers: {...(init.headers || {}), cookie: `${COOKIE}=${c}`}});
 
-test('0.6.1 catalog: version, 43 tools, owner tools are NOT offered to the model', () => {
-  assert.equal(VERSION, '0.6.1-next'); assert.equal(TOOLS.length, 43);
+test('0.6.1 catalog: version, 44 tools, owner tools are NOT offered to the model', () => {
+  assert.equal(VERSION, '0.6.1-next'); assert.equal(TOOLS.length, 44);
+  assert.equal(TOOLS.some(t => t.name === 'minimize_window'), true);
   for (const n of ['owner_consents', 'owner_decide']) assert.ok(!TOOLS.some(t => t.name === n), n);
   assert.deepEqual(TOOLS.find(t => t.name === 'set_capability').inputSchema.properties.capability.enum,
     ['screen_capture', 'ui_read', 'gui_input', 'process_control', 'run_task', 'browser', 'live_view', 'diagnostics', 'commands', 'power', 'lockAfterTask']);
