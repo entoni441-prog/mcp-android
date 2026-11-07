@@ -127,7 +127,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (m.id != null && pending.has(m.id) && !m.method) { const p = pending.get(m.id); pending.delete(m.id); m.error ? p.rej(new Error(m.error.message || 'error')) : p.res(m.result); return; }
     if (m.method === 'ui/notifications/host-context-changed' && m.params) ctx(m.params);
     if (m.method === 'ui/notifications/tool-result' && m.params) onStatus(m.params.structuredContent);
-    if (m.method === 'ui/resource-teardown' && m.id != null) { stopped = true; halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); window.parent.postMessage({jsonrpc: '2.0', id: m.id, result: {}}, '*'); }
+    if (m.method === 'ui/resource-teardown' && m.id != null) { stopped = true; clearTap(); clearTimeout(leaseTimer); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); window.parent.postMessage({jsonrpc: '2.0', id: m.id, result: {}}, '*'); }
   });
   function ctx(c) {
     if (Array.isArray(c.availableDisplayModes)) modes = c.availableDisplayModes;
@@ -175,7 +175,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
       if (!sc || sc.state === 'off') { onStatus({state: 'off'}); return; }
       // 0.5.1: grant on, but no task runs → the PC produces no frames; poll slowly, give up after 10 min idle.
       if (sc.state === 'ready') {
-        frameGeometry=null; if (touchEnabled) resetTouch();
+        frameGeometry=null; clearTap(); hideComposer();
         readySince = readySince || Date.now();
         setState('offline', 'NEXUS · задача завершена');
         show('Нет активной задачи', 'Трансляция идёт только во время работы NEXUS на рабочем столе. Кадры появятся сами при следующей задаче.', false);
@@ -259,7 +259,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (ownerPopup || !ownerPanel.hidden || stopped) return;
     ownerPopup=true;
     $('owner-mini').textContent='Запросов: '+count;
-    resetTouch();
+    clearTap(); hideComposer();
     ownerContainer.classList.add('is-popup');
     ownerPanel.hidden=false;
     $('owner-toggle').textContent='Скрыть';
@@ -599,12 +599,12 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     },20000);
   }
 
-  $('pp').onclick = () => { paused = !paused; $('pp').textContent = paused ? '▶' : '⏸'; if (paused) { halt(); setState('paused', 'ПАУЗА · кадры не запрашиваются'); } else { stopped = false; tick(); } };
+  $('pp').onclick = () => { paused = !paused; $('pp').textContent = paused ? '▶' : '⏸'; if (paused) { clearTap();hideComposer();halt(); setState('paused', 'ПАУЗА · кадры не запрашиваются'); } else { stopped = false; tick(); } };
   $('fps').onchange = () => schedule(0);
   $('pip').onclick = () => displayMode('pip');
   $('full').onclick = () => displayMode(mode === 'fullscreen' ? 'inline' : 'fullscreen');
   $('stop').onclick = async () => {
-    stopped = true; frameGeometry=null; touchConsent=null; resetTouch(); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); dismissOwnerPopup(); $('img').removeAttribute('src');
+    stopped = true; frameGeometry=null; touchConsent=null; resetTouch(); clearTimeout(leaseTimer); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); dismissOwnerPopup(); $('img').removeAttribute('src');
     setState('offline', 'STOP…');
     try { await callTool('live_control', {action: 'stop'}); setState('offline', 'NEXUS · остановлено'); show('Трансляция остановлена на ПК', 'live_view выключен. Включить снова можно только просьбой в чате.', true); }
     catch (e) { show('STOP не дошёл до ПК', String(e.message || e) + ' — закрой окно NEXUS Host на ПК, это выключает всё.'); }
@@ -629,6 +629,8 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
       if (legacy()) { const g = window.openai; ctx({displayMode: g.displayMode || 'inline', availableDisplayModes: ['inline', 'pip', 'fullscreen']}); onStatus(g.toolOutput); }
       else { setState('offline', 'NEXUS · нет моста'); show('Клиент не поддерживает встроенный виджет', 'Используй внешний Live View: ссылка /live на шлюзе NEXUS.'); return; }
     }
+    loadOwnerPreference();
+    ownerLeaseLoop();
     tick();
     checkBootStatus();
     bootSchedule();
