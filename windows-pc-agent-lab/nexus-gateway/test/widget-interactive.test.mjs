@@ -49,3 +49,9 @@ test('Live v3: failed embedded owner fetch does not approve or hide recovery URL
   assert.match(WIDGET_HTML,/\$\('owner-fallback'\)\.hidden=!transport/);
   assert.doesNotMatch(WIDGET_HTML,/callTool\('owner_decide'/);
 });
+
+test('Live v3: STOP stays clickable above the approval overlay',()=>{
+  assert.match(WIDGET_HTML,/\.bar\{position:relative;z-index:110\}/);
+  assert.match(WIDGET_HTML,/\.owner\.is-popup\{position:fixed;inset:0;z-index:100/);
+  assert.match(WIDGET_HTML,/id="stop" class="stop"/);
+});
