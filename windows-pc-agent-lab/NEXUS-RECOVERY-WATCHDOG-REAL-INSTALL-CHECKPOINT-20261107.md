@@ -30,3 +30,7 @@
 - The Watchdog never executes arbitrary commands; it only requests the existing fixed Scheduler task, at most 3 times in rolling 30 minutes, at least 2 minutes apart, only when Host and old Supervisor PIDs are not running; respects `host-off`. Independent monitor is not a credential-bearing RDP service.
 - Potential follow-up improvements: keep previous health summary when duplicate invocation occurs within one minute; manage historical per-minute once files to avoid unbounded growth; test actual Scheduler recurrence and genuine failover under a separately established recovery boundary.
 - **Live v4 deployment remains deferred.** The failed in-Host self-terminating updater must not be rerun; build a truly OS-independent update orchestrator before coordinated Host+Gateway release.
+
+## Independent scheduled recurrence confirmed
+
+At 2026-11-07T12:11:44Z the Scheduler **automatically** launched `NEXUS-Recovery-Independent` again; `lastResult=0`. Its local summary was `action:HEALTHY`, `healthy:true`, `hostAlive:true`, `supervisorAlive:true`, `ownerOff:false`. NEXUS MCP remained `online`, Cloudflare tunnel HTTP 200. **PASS: periodic trigger and healthy-state behavior on the real owner's Windows**, independent of manual kick-off. A real outage recovery drill remains unverified and is not attempted while it would risk losing the only working channel.
