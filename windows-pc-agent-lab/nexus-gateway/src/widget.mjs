@@ -68,6 +68,10 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
 .private-card input{width:100%;min-height:44px;font:16px system-ui;padding:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:6px}
 .private-card button{min-height:38px}.private-card .warn{color:var(--amber);font-size:12px}
 #private-view.is-on{color:var(--green);border-color:var(--green)}
+.window-panel{position:fixed;inset:0;z-index:106;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.8);padding:12px}
+.window-panel[hidden]{display:none!important}.window-card{width:min(440px,100%);display:grid;gap:10px;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:14px}
+.window-card select{width:100%;min-height:44px;padding:8px;font-size:14px}.window-card button{min-height:38px}
+.window-card .actions{display:flex;gap:8px;flex-wrap:wrap}.window-card .status{color:var(--amber);font-size:12px}
 
 </style></head>
 <body class="offline">
@@ -77,6 +81,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   <button id="touch-toggle" type="button" aria-pressed="false" title="Прямое управление экраном, только по команде владельца">Управление: выкл.</button>
   <button id="touch-open" type="button" hidden aria-label="Открыть клавиатуру Samsung для ввода текста">⌨</button>
   <button id="private-view" type="button" aria-pressed="false" title="Показать свои документы только тебе после пароля владельца">Личные окна 🔒</button>
+  <button id="window-open" type="button" aria-expanded="false" title="Безопасно свернуть выбранное окно Windows, включая NEXUS Host">Окна ▾</button>
   <select id="fps" title="Кадров в секунду" aria-label="Кадров в секунду"><option value="0.5">0.5 к/с</option><option value="1">1 к/с</option><option value="2" selected>2 к/с</option><option value="4">4 к/с</option></select>
   <button id="pip" hidden title="Картинка в картинке">⧉</button><button id="full" hidden title="Во весь экран">⛶</button>
   <button id="stop" class="stop" title="Остановить трансляцию на ПК">■ STOP</button>
@@ -90,6 +95,18 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
  <span id="private-status" role="status" class="warn"></span>
  <button type="button" id="private-close">Отмена</button>
  <a href="https://nexus-gateway.entoni441.workers.dev/live" target="_blank" rel="noopener noreferrer">Открыть приватный просмотр в браузере</a>
+ </div>
+</div>
+<div class="window-panel" id="window-panel" hidden role="dialog" aria-label="Управление окнами Windows">
+ <div class="window-card"><b>Свернуть окно Windows</b>
+ <span class="status">Выбери любое обычное окно. Свернуть — не закрыть. Для NEXUS Host не вводятся команды в терминал.</span>
+ <select id="window-select" aria-label="Открытые окна Windows"></select>
+ <div class="actions">
+  <button id="window-minimize" type="button">Свернуть выбранное</button>
+  <button id="window-refresh" type="button">Обновить список</button>
+  <button id="window-close" type="button">Назад</button>
+ </div>
+ <span id="window-status" class="status" role="status"></span>
  </div>
 </div>
 <div class="touch-tools" id="touch-tools" hidden role="dialog" aria-label="Ввод текста в Windows">
