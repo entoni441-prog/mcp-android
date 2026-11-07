@@ -25,6 +25,7 @@ import {fileURLToPath} from 'node:url';
 import {UIA_SCRIPT} from './uia-script.mjs';
 import {requireCap} from './capabilities.mjs';
 import {appGate, classifyApp, classifyIdeInput, classifyIdeClick, redactSecrets, handoffSpec, classifyDestructiveClick, classifyDestructiveKeys} from './policy.mjs';
+import {allowedWindowProcess, isTitlebarMinimizeTouch} from './minimize-policy.mjs';
 import {classifyKeys, classifyClick, createConsent} from './consent.mjs';
 import {createLifecycle} from './lifecycle.mjs';
 
@@ -472,37 +473,34 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     },
 
     /**
-     * Isolated window-management exception for Windows Terminal (NX-TM-01).
-     * Never sends a mouse click/key to the shell, never reads terminal content.
-     * Owner must explicitly request this exact window (ownerRequested=true).
-     * UIA checks the top-level HWND and PID again immediately before changing
-     * ONLY WindowVisualState to Minimized. All other shell input stays denied.
+     * Universal owner-requested minimization of one top-level HWND using only
+     * WindowPattern, never text input, mouse emulation, process stop or elevation.
+     * Fail-closed on ambiguous target, secure desktop process, or verification.
      */
     async minimize_window(args) {
       requireCap(caps, 'gui_input'); winOnly();
-      if (!onlyKeys(args, ['pid', 'title', 'ownerRequested']) || !int(args.pid, 1, 2 ** 31)) bad();
-      if (args.title !== undefined && (typeof args.title !== 'string' || !args.title || args.title.length > 200)) bad();
-      if (args.ownerRequested !== true || caps.grantsFromChat === false)
-        throw Error('owner_request_required: minimize a protected shell window only when owner explicitly requested it');
-      const found = await uia({mode: 'windows', pid: args.pid});
-      if (String(found.target?.process || '').replace(/\.exe$/i, '').toLowerCase() !== 'windowsterminal')
-        throw Error('minimize_target_not_supported: terminal-only window-management exception');
-      let wins = (found.windows || []).filter(w => Number.isSafeInteger(Number(w.hwnd)) && Number(w.hwnd) > 0 &&
-        Number(w.pid) === args.pid);
-      if (args.title) wins = wins.filter(w => String(w.name || '').toLowerCase().includes(args.title.toLowerCase()));
-      if (wins.length !== 1)
-        return {status: wins.length > 1 ? 'ambiguous' : 'not_found',
-          candidates: wins.slice(0, 10).map(w => String(w.name || '').slice(0, 100)),
-          instruction: 'Specify a unique title and current PID from list_windows; no window was changed.'};
+      if(!onlyKeys(args,['pid','title','hwnd','ownerRequested'])||!int(args.pid,1,2**31))bad();
+      if(args.title!==undefined&&(typeof args.title!=='string'||!args.title||args.title.length>200))bad();
+      if(args.hwnd!==undefined&&!int(args.hwnd,1,Number.MAX_SAFE_INTEGER))bad();
+      if(args.ownerRequested!==true||caps.grantsFromChat===false)
+        throw Error('owner_request_required: explicit owner instruction to minimize this window');
+      const found=await uia({mode:'windows',pid:args.pid});
+      const proc=String(found.target?.process||'');
+      if(!allowedWindowProcess(proc))throw Error('minimize_protected_process_refused');
+      let wins=(found.windows||[]).filter(w=>Number.isSafeInteger(Number(w.hwnd))&&Number(w.hwnd)>0&&Number(w.pid)===args.pid);
+      if(args.hwnd!==undefined)wins=wins.filter(w=>Number(w.hwnd)===args.hwnd);
+      if(args.title)wins=wins.filter(w=>String(w.name||'').toLowerCase().includes(args.title.toLowerCase()));
+      if(wins.length!==1)return {status:wins.length>1?'ambiguous':'not_found',
+        candidates:wins.slice(0,15).map(w=>({hwnd:Number(w.hwnd),title:String(w.name||'').slice(0,100)})),
+        instruction:'Provide a unique title or exact HWND. No window was changed.'};
       await ownerGuard();
-      const w = wins[0];
-      const effect = await uia({mode: 'minimize', pid: args.pid, hwnd: Number(w.hwnd)});
-      if (effect?.verified !== true || Number(effect.pid) !== args.pid ||
-          String(effect.process || '').replace(/\.exe$/i, '').toLowerCase() !== 'windowsterminal' ||
-          String(effect.hwnd) !== String(w.hwnd) || effect.isMinimizedAfter !== true)
+      const w=wins[0],effect=await uia({mode:'minimize',pid:args.pid,hwnd:Number(w.hwnd)});
+      if(effect?.verified!==true||effect.isMinimizedAfter!==true||Number(effect.pid)!==args.pid||
+         String(effect.hwnd)!==String(w.hwnd)||
+         String(effect.process||'').replace(/\.exe$/i,'').toLowerCase()!==proc.replace(/\.exe$/i,'').toLowerCase())
         throw Error('minimize_not_verified: no other input was attempted');
-      return {status: effect.wasMinimized ? 'already_minimized' : 'minimized',
-        process: 'WindowsTerminal', pid: args.pid, verified: true, shellInputSent: false};
+      return {status:effect.wasMinimized?'already_minimized':'minimized',
+        process:proc,pid:args.pid,hwnd:Number(w.hwnd),verified:true,shellInputSent:false};
     },
 
     /**
@@ -753,6 +751,21 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         const u = m.toUia(x, y);
         const at = await uia({mode: 'at', x: u.x, y: u.y});
         if (JSON.stringify(at.root) !== JSON.stringify(rootCache)) { rootCache = at.root; infoCache = null; throw Error('screen_changed_retry'); }
+        // A precisely identified caption MINIMIZE button is not application input.
+        // Route by verified top-level HWND directly to WindowPattern and retain the
+        // strict application policy for all other clicks, including terminal text.
+        if(isTitlebarMinimizeTouch(at.at,args.action)){
+          await ownerGuard();
+          const win=at.at.window;
+          const effect=await uia({mode:'minimize',pid:Number(win.pid),hwnd:Number(win.hwnd)});
+          if(effect?.verified!==true||effect.isMinimizedAfter!==true||
+             Number(effect.pid)!==Number(win.pid)||String(effect.hwnd)!==String(win.hwnd)||
+             String(effect.process||'').replace(/\.exe$/i,'').toLowerCase()!==
+               String(win.process||'').replace(/\.exe$/i,'').toLowerCase())
+             throw Error('minimize_not_verified: no mouse input was sent');
+          return {done:true,action:'minimize',pid:Number(win.pid),hwnd:Number(win.hwnd),
+            verified:true,shellInputSent:false};
+        }
         const ide = appGate(caps, at.at?.process, {title: at.at?.window?.name, mode: 'input'}).cls === 'ide' ? classifyIdeClick(at.at?.elem) : null;
         // 0.5.2 R-01: deleting/erasing data inside any app needs consent; an unrecognised button in an «Are you sure» dialog is refused.
         const dz = x === pts[0][0] && y === pts[0][1] ? classifyDestructiveClick(at.at, args.action) : null;
