@@ -43,13 +43,22 @@ const rpc = (method, params) => new Request(BASE + '/mcp', {method: 'POST', body
 
 test('widget resource: MCP Apps mime, gateway-only direct owner auth domain, no secrets, no tunnel URL', async () => {
   const e = await env();
-  const r = (await (await handleMcp(rpc('resources/read', {uri: 'ui://nexus/live-view-v1.html'}), e, ctx)).json()).result.contents[0];
+  const r = (await (await handleMcp(rpc('resources/read', {uri: 'ui://nexus/live-view-v2.html'}), e, ctx)).json()).result.contents[0];
+  assert.equal(r.uri, 'ui://nexus/live-view-v2.html');
   assert.equal(r.mimeType, 'text/html;profile=mcp-app');
   assert.deepEqual(r._meta.ui.csp.connectDomains, ['https://nexus-gateway.entoni441.workers.dev']); assert.deepEqual(r._meta.ui.csp.resourceDomains, []);
   assert.ok(!/trycloudflare|Bearer|NEXUS_TOKEN|localStorage|sessionStorage/.test(r.text));
   assert.match(r.text,/https:\/\/nexus-gateway\.entoni441\.workers\.dev/);;
   assert.match(r.text, /ui\/initialize/); assert.match(r.text, /live_frame/); assert.match(r.text, /live_control/);
   assert.ok(!/mouse_action|keyboard_action|set_capability/.test(WIDGET_HTML), 'widget has no control/raise-privilege path');
+  const legacy = (await (await handleMcp(rpc('resources/read', {uri: 'ui://nexus/live-view-v1.html'}), e, ctx)).json()).result.contents[0];
+  assert.equal(legacy.uri, 'ui://nexus/live-view-v1.html');
+  assert.match(legacy.text, /Подтверждения владельца/);
+  const list = (await (await handleMcp(rpc('resources/list', {}), e, ctx)).json()).result.resources;
+  assert.deepEqual(list.map(x=>x.uri), ['ui://nexus/live-view-v2.html','ui://nexus/live-view-v1.html']);
+  const registered = (await (await handleMcp(rpc('tools/list', {}), e, ctx)).json()).result.tools.find(x=>x.name==='watch_nexus');
+  assert.equal(registered._meta.ui.resourceUri, 'ui://nexus/live-view-v2.html');
+  assert.equal(registered._meta['openai/outputTemplate'], 'ui://nexus/live-view-v2.html');
   assert.equal((await (await handleMcp(rpc('resources/read', {uri: 'ui://other'}), e, ctx)).json()).error.code, -32002);
   const init = (await (await handleMcp(rpc('initialize', {protocolVersion: '2025-06-18'}), e, ctx)).json()).result;
   assert.ok(init.capabilities.resources);
