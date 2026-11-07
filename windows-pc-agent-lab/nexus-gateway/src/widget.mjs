@@ -217,9 +217,16 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
         throw Error('Некорректный размер приватного кадра');
       const blob=await r.blob();
       if(blob.type!=='image/jpeg'||blob.size===0||blob.size>4000000)throw Error('Некорректный приватный кадр');
-      const url=URL.createObjectURL(blob);
+      // data: works with the same image CSP as ordinary MCP Live frames.
+      // No cross-origin image URL or persistent browser cache is created.
+      const url=await new Promise((resolve,reject)=>{
+        const reader=new FileReader();
+        reader.onload=()=>typeof reader.result==='string'?resolve(reader.result):reject(Error('private_image_failed'));
+        reader.onerror=()=>reject(Error('private_image_failed'));
+        reader.readAsDataURL(blob);
+      });
       return {sc:{state:'live',seq:++privateSeq,imageW:vals[0],imageH:vals[1],
-        screenW:vals[2],screenH:vals[3],cursor:vals[4]>=0?{x:vals[4],y:vals[5]}:null},url,isBlob:true};
+        screenW:vals[2],screenH:vals[3],cursor:vals[4]>=0?{x:vals[4],y:vals[5]}:null},url,isBlob:false};
     }
     const r=await callTool('live_frame',{maxWidth,quality:60});
     if(r?.isError)throw Error(String(r.content?.[0]?.text||'Ошибка Live'));
