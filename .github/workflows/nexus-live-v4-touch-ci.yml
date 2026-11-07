@@ -28,7 +28,7 @@ jobs:
         run: node --test test/widget-owner.test.mjs test/widget-owner-route.test.mjs test/guard-core.test.mjs test/owner061.test.mjs test/handlers.test.mjs test/offline.test.mjs test/live050.test.mjs test/widget-input.test.mjs test/widget-interactive.test.mjs test/widget-recovery.test.mjs
       - name: Host regression (STOP, session and UI preference)
         working-directory: windows-pc-agent-lab/nexus-host
-        run: node --test next-b1.test.mjs next-b2.test.mjs session.test.mjs owner-touch-pref.test.mjs
+        run: node --test next-b1.test.mjs next-b2.test.mjs session.test.mjs gui.test.mjs owner-touch-pref.test.mjs
       - name: Host/Gateway catalog parity
         shell: bash
         run: cmp windows-pc-agent-lab/nexus-host/catalog.mjs windows-pc-agent-lab/nexus-gateway/src/catalog.mjs
