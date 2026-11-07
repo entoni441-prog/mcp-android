@@ -83,7 +83,7 @@ test('NX-TM-01: owner intent is mandatory; all other shell actions remain denied
   await assert.rejects(g.minimize_window({pid:99,ownerRequested:false}),/owner_request_required/);
   assert.equal((await g.minimize_window({pid:66,ownerRequested:true})).status,'minimized');
   await assert.rejects(g.minimize_window({pid:99,ownerRequested:true,command:'dir'}),/invalid_args/);
-  assert.equal(f.uiaCalls.some(a=>a.mode==='minimize'),false);
+  assert.equal(f.uiaCalls.filter(a=>a.mode==='minimize').length,1);
   assert.equal(f.robotCmds.filter(c=>/^(?:click|paste|key|drag)/.test(c)).length,0);
 });
 test('NX-TM-01: ambiguous/window-recycled/missing confirmations are fail closed', async () => {
