@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {allowedWindowProcess,isTitlebarMinimizeTouch} from './minimize-policy.mjs';
+import {allowedWindowProcess,isTitlebarMinimizeTouch} from './policy.mjs';
 const sample=(process='ApplicationFrameHost',name='Свернуть')=>({
  pid:123,process,controlType:'ControlType.Button',
  window:{pid:123,hwnd:5678,process,rect:{x:20,y:30,w:800,h:600}},
