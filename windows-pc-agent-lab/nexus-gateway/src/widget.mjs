@@ -8,7 +8,7 @@
  * which switches live_view off at the source. Owner touch/text are opt-in and remain subject to Host policy.
  */
 import {LIVE_UI} from './catalog.mjs';
-import {framePointToScreen} from './widget-input.mjs';
+import {framePointToScreen,isPreExecutionStale,callOnceAfterStale} from './widget-input.mjs';
 
 export const WIDGET_MIME = 'text/html;profile=mcp-app';
 
@@ -105,6 +105,8 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
 (() => {
   const $ = id => document.getElementById(id);
   const framePointToScreen = ${framePointToScreen.toString()};
+  const isPreExecutionStale = ${isPreExecutionStale.toString()};
+  const callOnceAfterStale = ${callOnceAfterStale.toString()};
   let seq = 0, pending = new Map(), host = null, modes = [], mode = 'inline';
   let paused = false, stopped = false, busy = false, timer = null, fails = 0, lastSeq = -1, lastAt = 0;
   let frameGeometry=null, touchEnabled=false, touchBusy=false, pointerStart=null, touchConsent=null;
@@ -455,11 +457,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
       lastAt>0 && Date.now()-lastAt<5000 && !!$('img').getAttribute('src');
   }
   const toolFailure = r => r?.isError ? String(r.content?.[0]?.text||'Host отклонил действие') : '';
-  function staleRefusal(msg) {
-    // A stale_args Host rejection occurs BEFORE the desktop action.
-    // No other errors, including timeouts and screen_changed_retry, are retried.
-    return /(?:^|\\b)stale_args:\\s*(?:task_resumed|owner_stop_resumed|owner_pause_resumed)/i.test(String(msg));
-  }
+  const staleRefusal = msg => isPreExecutionStale(msg);
   async function reobserveFreshFrame(geometry, gestureAt) {
     if (!touchEnabled || stopped || paused || ownerPopup || Date.now()-gestureAt>8000) throw Error('Касание устарело. Ничего не отправлено.');
     const w=await callTool('list_windows',{includeTitles:false});
@@ -489,16 +487,11 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
         if (fail)throw Error(fail);
         return r;
       };
-      let r;
-      try {r=await send();}
-      catch(e) {
-        if (!staleRefusal(e?.message)) throw e;
+      const r=await callOnceAfterStale(send,async()=>{
         touchMessage('NEXUS обновляет экран…');
         await reobserveFreshFrame(geometry,gestureAt);
-        // Exactly ONE repeat after a proven pre-execution stale refusal.
-        // No retries for an unknown outcome or any other error.
-        r=await send();
-      }
+      });
+      // No retries for an unknown outcome or any other error.
       const sc=r?.structuredContent||{};
       const status=String(sc.status||'');
       if (status==='consent_required' || status==='owner_approval_pending') {
