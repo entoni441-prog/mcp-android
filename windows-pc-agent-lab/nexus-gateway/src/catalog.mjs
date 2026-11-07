@@ -13,7 +13,8 @@ const PID = int('Process id (from list_windows or list_processes)', 1, 214748364
 const SP = 'Screen points (same space as capture_screen when imageToScreen=1)';
 // 0.5.0 Live View widget (MCP Apps; legacy OpenAI keys kept for older ChatGPT builds).
 export const LEGACY_LIVE_UI = 'ui://nexus/live-view-v1.html';
-export const LIVE_UI = 'ui://nexus/live-view-v2.html';
+export const PREVIOUS_LIVE_UI = 'ui://nexus/live-view-v2.html';
+export const LIVE_UI = 'ui://nexus/live-view-v3.html';
 const UI = (visibility) => ({ui: {resourceUri: LIVE_UI, visibility}, 'openai/outputTemplate': LIVE_UI, 'openai/widgetAccessible': true, ...(visibility.includes('model') ? {} : {'openai/visibility': 'private'})});
 
 export const TOOLS = [
