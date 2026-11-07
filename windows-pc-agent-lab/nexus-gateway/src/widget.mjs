@@ -80,7 +80,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   const framePointToScreen = ${framePointToScreen.toString()};
   let seq = 0, pending = new Map(), host = null, modes = [], mode = 'inline';
   let paused = false, stopped = false, busy = false, timer = null, fails = 0, lastSeq = -1, lastAt = 0;
-  let frameGeometry=null, touchEnabled=false, touchBusy=false, pointerStart=null;
+  let frameGeometry=null, touchEnabled=false, touchBusy=false, pointerStart=null, touchConsent=null;
   const legacy = () => typeof window.openai === 'object' && window.openai && typeof window.openai.callTool === 'function';
 
   // ── MCP Apps bridge (JSON-RPC 2.0 over postMessage) ──
@@ -129,7 +129,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   const hide = () => { $('msg').hidden = true; };
   function onStatus(s) {
     if (!s || typeof s !== 'object') return;
-    if (s.state === 'off') { stopped = true; frameGeometry=null; touchEnabled=false; halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
+    if (s.state === 'off') { stopped = true; frameGeometry=null; resetTouch(); halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
   }
   let readySince = 0;
   function halt() { clearTimeout(timer); timer = null; }
@@ -147,7 +147,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
       if (!sc || sc.state === 'off') { onStatus({state: 'off'}); return; }
       // 0.5.1: grant on, but no task runs → the PC produces no frames; poll slowly, give up after 10 min idle.
       if (sc.state === 'ready') {
-        frameGeometry=null;
+        frameGeometry=null; if (touchEnabled) resetTouch();
         readySince = readySince || Date.now();
         setState('offline', 'NEXUS · задача завершена');
         show('Нет активной задачи', 'Трансляция идёт только во время работы NEXUS на рабочем столе. Кадры появятся сами при следующей задаче.', false);
@@ -222,6 +222,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   function showOwnerPopup(count) {
     if (ownerPopup || !ownerPanel.hidden || stopped) return;
     ownerPopup=true;
+    resetTouch();
     ownerContainer.classList.add('is-popup');
     ownerPanel.hidden=false;
     $('owner-toggle').textContent='Скрыть';
@@ -315,6 +316,16 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
           if (!r?.ok) return;
           div.remove();ownerEntries=ownerEntries.filter(x=>x.consentId!==c.consentId);
           ownerMessage('Решение принято: ' + labels[decision] + '. Запрос одноразовый.');
+          // Only resume a GUI action directly initiated in THIS widget; never
+          // consume unrelated ChatGPT-agent or historical pending approvals.
+          if (touchConsent && c.consentId===touchConsent.consentId && c.target===touchConsent.target) {
+            const pendingTouch=touchConsent; touchConsent=null;
+            try {
+              const done=await callTool('confirm_action',{consentId:pendingTouch.consentId,decision,target:pendingTouch.target});
+              if (done?.isError) throw Error('Host не принял завершение действия');
+              touchMessage('Решение передано Host. Проверь экран Windows.');
+            } catch(e) {touchMessage('Подтверждение принято, но исполнение не подтверждено: '+String(e.message||e));}
+          }
           if (ownerPopup) dismissOwnerPopup();
         };
         actions.appendChild(b);
@@ -332,8 +343,17 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   // Owner touch is opt-in. Coordinates travel through the existing Host GUI policy;
   // never attempt Winlogon or send secrets over model-visible keyboard_action.
   function touchMessage(s) { $('touch-status').textContent=s; }
+  function resetTouch() {
+    touchEnabled=false; pointerStart=null;
+    $('touch-tools').hidden=true;
+    $('touch-text').value='';
+    $('img').classList.remove('touchable');
+    $('touch-toggle').textContent='Управление: выкл.';
+    $('touch-toggle').setAttribute('aria-pressed','false');
+    size();
+  }
   function touchReady() {
-    return touchEnabled && !paused && !stopped && !touchBusy && !busy &&
+    return touchEnabled && !paused && !stopped && !touchBusy &&
       document.visibilityState !== 'hidden' && frameGeometry &&
       lastAt>0 && Date.now()-lastAt<5000 && $('img').getAttribute('src');
   }
@@ -345,7 +365,10 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
       if (r?.isError) throw Error(String(r.content?.[0]?.text||'Host отказал').slice(0,160));
       const status=String(r?.structuredContent?.status||'');
       if (status==='consent_required' || status==='owner_approval_pending') {
-        touchMessage('Host требует разрешение владельца. Открой подтверждение NEXUS.');
+        const sc=r.structuredContent||{};
+        touchConsent=/^[a-f0-9]{12}$/.test(String(sc.consentId||'')) && typeof sc.target==='string'
+          ? {consentId:sc.consentId,target:sc.target} : null;
+        touchMessage('Host требует разрешение владельца. После решения действие завершится по одноразовому consentId.');
         showOwnerPopup(Math.max(1,pendingCount));
       } else if (r?.structuredContent?.done === true) touchMessage('Выполнено на ПК.');
       else touchMessage('Ответ Host: ' + (status || 'проверь результат на экране'));
@@ -389,7 +412,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   $('pip').onclick = () => displayMode('pip');
   $('full').onclick = () => displayMode(mode === 'fullscreen' ? 'inline' : 'fullscreen');
   $('stop').onclick = async () => {
-    stopped = true; touchEnabled=false; frameGeometry=null; halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); dismissOwnerPopup(); $('img').removeAttribute('src');
+    stopped = true; frameGeometry=null; touchConsent=null; resetTouch(); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); dismissOwnerPopup(); $('img').removeAttribute('src');
     setState('offline', 'STOP…');
     try { await callTool('live_control', {action: 'stop'}); setState('offline', 'NEXUS · остановлено'); show('Трансляция остановлена на ПК', 'live_view выключен. Включить снова можно только просьбой в чате.', true); }
     catch (e) { show('STOP не дошёл до ПК', String(e.message || e) + ' — закрой окно NEXUS Host на ПК, это выключает всё.'); }
