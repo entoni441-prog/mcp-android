@@ -3,9 +3,9 @@
  *
  * Talks to the ChatGPT host ONLY over the MCP Apps postMessage JSON-RPC bridge (fallback: legacy window.openai).
  * Frames come from the app-only tool `live_frame` through the SAME OAuth-protected MCP connection the chat uses —
- * so the widget holds no token, no cookie, no URL of the PC, and needs no connectDomains (CSP: nothing external).
+ * so the widget holds no PC token or cookie. Owner approval uses direct HTTPS to the owned Gateway only.
  * Pull model: a frame is requested only while the widget is visible and not paused. STOP calls live_control stop,
- * which switches live_view off at the source. The widget has no input/control function at all.
+ * which switches live_view off at the source. Owner touch/text are opt-in and remain subject to Host policy.
  */
 import {LIVE_UI} from './catalog.mjs';
 import {framePointToScreen} from './widget-input.mjs';
