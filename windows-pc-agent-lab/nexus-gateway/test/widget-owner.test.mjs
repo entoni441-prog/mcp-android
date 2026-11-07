@@ -117,6 +117,10 @@ test('NX-CHAT-OWNER: widget talks direct HTTPS to Gateway and not via tools/call
   assert.match(WIDGET_HTML,/ownerPost\('\/live\/widget\/perform'/);
   assert.doesNotMatch(WIDGET_HTML,/callTool\('owner_decide'/);
   assert.doesNotMatch(WIDGET_HTML,/localStorage|sessionStorage/);
+  assert.match(WIDGET_HTML,/connection_status/);
+  assert.match(WIDGET_HTML,/HOST_OFFLINE/);
+  assert.doesNotMatch(WIDGET_HTML,/<input[^>]+(?:PIN Windows|Пароль Windows)/i);
+  assert.match(WIDGET_HTML,/Наличие экрана входа Windows до запуска Host пока не подтверждено/);
   const contents=widgetContents();
   assert.ok(contents[0]._meta.ui.csp.connectDomains.includes('https://nexus-gateway.entoni441.workers.dev'));
   const src=WIDGET_HTML.match(/<script>([\s\S]*?)<\/script>/)[1];
