@@ -1,0 +1,36 @@
+name: nexus-live-interactive-ci
+on:
+  push:
+    branches: [experiment/nexus-live-interactive-20261107]
+    paths:
+      - 'windows-pc-agent-lab/nexus-gateway/**'
+      - 'windows-pc-agent-lab/nexus-host/catalog.mjs'
+      - '.github/workflows/nexus-live-interactive-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gateway-interactive:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Existing owner authorization and new Live interaction regression
+        working-directory: windows-pc-agent-lab/nexus-gateway
+        run: node --test test/widget-owner.test.mjs test/widget-owner-route.test.mjs test/guard-core.test.mjs test/owner061.test.mjs test/handlers.test.mjs test/offline.test.mjs test/live050.test.mjs test/widget-input.test.mjs test/widget-interactive.test.mjs
+      - name: Host/Gateway catalog parity
+        shell: bash
+        run: cmp windows-pc-agent-lab/nexus-host/catalog.mjs windows-pc-agent-lab/nexus-gateway/src/catalog.mjs
+      - name: Install dependencies on CI runner
+        working-directory: windows-pc-agent-lab/nexus-gateway
+        run: npm install --no-audit --no-fund
+      - name: Worker bundle dry run only
+        working-directory: windows-pc-agent-lab/nexus-gateway
+        run: npx wrangler deploy --dry-run --outdir dist
