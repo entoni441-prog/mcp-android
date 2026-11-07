@@ -365,6 +365,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   }
   $('window-open').onclick=()=>{
     if(stopped){touchMessage('Трансляция остановлена; окна недоступны.');return;}
+    if(ownerPopup){touchMessage('Сначала закрой запрос подтверждения владельца.');return;}
     if(!$('window-panel').hidden){closeWindowManager();return;}
     $('window-panel').hidden=false;
     $('window-open').setAttribute('aria-expanded','true');
@@ -374,7 +375,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   $('window-close').onclick=closeWindowManager;
   $('window-refresh').onclick=refreshWindowManager;
   $('window-minimize').onclick=async()=>{
-    if(windowMinBusy||windowListBusy||stopped)return;
+    if(windowMinBusy||windowListBusy||stopped||ownerPopup)return;
     if(!touchEnabled){windowStatus('Сначала включи «Управление» в Live.');return;}
     const raw=$('window-select').value,index=Number(raw);
     if(!/^\\d+$/.test(raw)||!Number.isSafeInteger(index)||index<0||index>=windowCandidates.length){
@@ -401,9 +402,9 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
          sc.pid!==target.pid||sc.shellInputSent!==false)
         throw Error(sc.status==='ambiguous'?'Несколько одинаковых окон: точный выбор недоступен.':
           'Не удалось подтвердить сворачивание. Не повторяй без проверки.');
-      windowStatus('Свернуто: '+target.process+' · '+target.title.slice(0,55));
       // No global window action and no command execution: the rest of Windows is unchanged.
       await refreshWindowManager();
+      windowStatus('Свернуто: '+target.process+' · '+target.title.slice(0,55));
     }catch(e){windowStatus('Действие отменено: '+String(e.message||e).slice(0,125));}
     finally{windowMinBusy=false;$('window-minimize').disabled=false;size();}
   };
