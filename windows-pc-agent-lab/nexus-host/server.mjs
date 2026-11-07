@@ -302,6 +302,8 @@ export function createRuntime(cfg, deps = {}) {
         setTimeout(() => (cfg.onHostOff ? cfg.onHostOff() : null), 300).unref?.();
         return {hostOff: true, note: 'NEXUS stops now and stays off (no automatic restart). To start it again run the NEXUS-Host-Run task on the PC.'};
       }
+      // Owner STOP must disarm touch even if no work session currently exists.
+      if (a?.action === 'stop') ownerTouchSet(false);
       const out = live.live_control(a); if (out?.resumed) rtRef.reobserve = {why: out.stopCleared ? 'owner_stop_resumed' : 'owner_pause_resumed', at: new Date().toISOString()}; return out; },
     manage_app_access: a => apps.manage_app_access(a), browser_tabs: a => browser.browser_tabs(a),
     browser_open: a => browser.browser_open(a), browser_snapshot: a => browser.browser_snapshot(a), browser_action: a => browser.browser_action(a),
