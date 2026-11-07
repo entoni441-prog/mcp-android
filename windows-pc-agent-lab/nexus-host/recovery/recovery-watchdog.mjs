@@ -14,6 +14,7 @@ import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {decideRecovery} from './recovery-policy.mjs';
+import {maintenanceDecision} from './maintenance-policy.mjs';
 
 const TASK='NEXUS-Host-Run';
 const INSTALLED=path.win32.join(os.homedir(),'Documents','NEXUS','nexus-host','nexus.mjs');
@@ -23,6 +24,7 @@ const PIDFILE=path.join(os.homedir(),'.nexus-host','host.pid');
 const SUPERVISOR_PIDFILE=path.join(os.homedir(),'.nexus-host','supervisor.pid');
 const STATE=path.join(ROOT,'state.json');
 const SUMMARY=path.join(ROOT,'summary.json');
+const MAINTENANCE=path.join(ROOT,'maintenance.json');
 const schtasks=path.win32.join(process.env.SystemRoot||'C:\\Windows','System32','schtasks.exe');
 function readJson(file){try{return JSON.parse(fs.readFileSync(file,'utf8'));}catch{return null;}}
 function atomicJson(file,obj){
@@ -77,6 +79,14 @@ export async function runOnce(){
   catch(e){if(e.code==='EEXIST'){persistStatus('ALREADY_EVALUATED_THIS_MINUTE');return;}throw e;}
   finally{if(fd!==undefined)fs.closeSync(fd);}
   const hostOff=fs.existsSync(STOP);
+  // Owner STOP is authoritative, even while an update is in progress.
+  if(hostOff){persistStatus('OWNER_OFF',{ownerOff:true});return;}
+  const maintenance=fs.existsSync(MAINTENANCE)
+    ?maintenanceDecision(readJson(MAINTENANCE)??{},now)
+    :maintenanceDecision(null,now);
+  if(maintenance.action==='MAINTENANCE_ACTIVE'||maintenance.action==='INVALID_STOP'){
+    persistStatus(maintenance.action,{ownerOff:false});return;
+  }
   const isHealthy=await healthy();
   const rawPid=readJson(PIDFILE);
   // Corrupt durability state is never interpreted as "zero prior starts".
