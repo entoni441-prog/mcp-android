@@ -86,6 +86,18 @@ test('A-02 Live View frame: any window holding an owner tab is hidden even if th
   assert.equal(f.robotCmds.find(c => c.startsWith('frame')).split(' ')[4], '0,0,50,60');
 });
 
+test('NX-PR-01 private owner frame has no masks, standard frame and model capture stay masked',async()=>{
+  const f=fake({apps:[W(1,['owner-document'],0,{x:20,y:30,w:170,h:120})]});
+  const {g}=mk(f);
+  await g.frameJpeg(960,60);
+  assert.equal(f.robotCmds.at(-1).split(' ')[4],'20,30,170,120','ordinary Live always masked');
+  await g.frameJpeg(960,60,null,{ownerOnly:true});
+  assert.equal(f.robotCmds.at(-1).split(' ')[4],'-','private owner frame unmasked');
+  await g.capture_screen({});
+  assert.equal(f.robotCmds.at(-1).split(' ')[3],'20,30,170,120','model screenshot masked even after owner preview');
+  await assert.rejects(g.frameJpeg(960,60,null,{ownerOnly:false}),/invalid_capture_scope/);
+});
+
 test('A-02 inspect_ui includeText: owner Notepad document text is never returned; NEXUS scratch text is', async () => {
   const f = fake({apps: [W(1, ['pass', 'nx'], 0)]});
   const {consent, g} = mk(f); consent.owned.tabs.add('nx');
