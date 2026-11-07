@@ -24,6 +24,12 @@ jobs:
       - name: Inline owner auth + gateway regression
         working-directory: windows-pc-agent-lab/nexus-gateway
         run: node --test test/widget-owner.test.mjs test/widget-owner-route.test.mjs test/guard-core.test.mjs test/owner061.test.mjs test/handlers.test.mjs test/offline.test.mjs test/live050.test.mjs
+      - name: Install build dependencies in CI only
+        working-directory: windows-pc-agent-lab/nexus-gateway
+        run: npm install --no-audit --no-fund
+      - name: Wrangler production-shaped bundle, dry-run ONLY
+        working-directory: windows-pc-agent-lab/nexus-gateway
+        run: npx wrangler deploy --dry-run --outdir dist
       - name: Check source syntax
         working-directory: windows-pc-agent-lab/nexus-gateway
         run: |
