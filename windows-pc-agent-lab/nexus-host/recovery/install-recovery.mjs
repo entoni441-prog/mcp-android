@@ -13,13 +13,15 @@ const DEST=path.join(os.homedir(),'Documents','NEXUS','recovery-watchdog');
 const NAME='NEXUS-Recovery-Independent';
 const TASK_EXE=path.win32.join(process.env.SystemRoot||'C:\\Windows','System32','schtasks.exe');
 const WHOAMI=path.win32.join(process.env.SystemRoot||'C:\\Windows','System32','whoami.exe');
+const HEADLESS_CONHOST=path.win32.join(process.env.SystemRoot||'C:\\Windows','System32','conhost.exe');
 const NAMES=['recovery-policy.mjs','recovery-watchdog.mjs'];
 function esc(s){return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');}
-export function makeTaskXml({sid,node,script,start}){
+export function makeTaskXml({sid,node,script,start,conhost='C:\\Windows\\System32\\conhost.exe'}){
   if(!/^S-1-5-21-(?:\d+-){3}\d+$/.test(sid))throw Error('bad_user_sid');
   if(!path.win32.isAbsolute(node)||!node.toLowerCase().endsWith('\\node.exe'))throw Error('bad_node');
   if(!path.win32.isAbsolute(script)||!script.toLowerCase().endsWith('\\recovery-watchdog.mjs'))throw Error('bad_script');
   if(!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$/.test(start))throw Error('bad_date');
+  if(!path.win32.isAbsolute(conhost)||!conhost.toLowerCase().endsWith('\\system32\\conhost.exe'))throw Error('bad_headless_host');
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
  <RegistrationInfo><Description>NEXUS independent recovery. Start only verified existing Host scheduled task. No remote commands.</Description></RegistrationInfo>
@@ -32,8 +34,8 @@ export function makeTaskXml({sid,node,script,start}){
  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><StartWhenAvailable>true</StartWhenAvailable>
   <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
   <ExecutionTimeLimit>PT45S</ExecutionTimeLimit><Enabled>true</Enabled></Settings>
- <Actions Context="Owner"><Exec><Command>${esc(node)}</Command>
-  <Arguments>&quot;${esc(script)}&quot; --once</Arguments>
+ <Actions Context="Owner"><Exec><Command>${esc(conhost)}</Command>
+  <Arguments>--headless &quot;${esc(node)}&quot; &quot;${esc(script)}&quot; --once</Arguments>
   <WorkingDirectory>${esc(path.win32.dirname(script))}</WorkingDirectory></Exec></Actions>
 </Task>`;
 }
@@ -70,8 +72,9 @@ function run(){
  if(arg==='--resume'&&!exists)throw Error('missing_partial_install');
  const owner=sid();
  if(!fs.existsSync(process.execPath)||!process.execPath.toLowerCase().endsWith('node.exe'))throw Error('node_not_signed_runtime');
+ if(!fs.existsSync(HEADLESS_CONHOST))throw Error('trusted_conhost_missing');
  const script=path.win32.join(DEST,'recovery-watchdog.mjs');
- const xml=makeTaskXml({sid:owner,node:process.execPath,script,start:localTime()});
+ const xml=makeTaskXml({sid:owner,node:process.execPath,script,start:localTime(),conhost:HEADLESS_CONHOST});
  if(arg==='--check'){console.log(JSON.stringify({state:'RECOVERY_PREFLIGHT_PASS',task:NAME,ownerSidVerified:true,limited:true}));return;}
  const file=path.join(DEST,'recovery-task.xml');
  let taskXml=xml;
@@ -85,7 +88,7 @@ function run(){
    const oldXml=fs.readFileSync(file,'utf8');
    const time=oldXml.match(/<StartBoundary>([^<]+)<\/StartBoundary>/)?.[1];
    if(!time)throw Error('unverified_partial_xml');
-   const expected=makeTaskXml({sid:owner,node:process.execPath,script,start:time});
+   const expected=makeTaskXml({sid:owner,node:process.execPath,script,start:time,conhost:HEADLESS_CONHOST});
    if(oldXml!==expected.replace('encoding="UTF-16"','encoding="UTF-8"'))
      throw Error('partial_xml_changed');
    taskXml=expected;
@@ -99,7 +102,7 @@ function run(){
  if(reg.status!==0)throw Error('schedule_registration_failed:'+String(reg.stderr||'').slice(0,350));
  const verify=execFileSync(TASK_EXE,['/Query','/TN',NAME,'/XML'],
    {windowsHide:true,encoding:'utf8',timeout:10000});
- if(!String(verify).includes('recovery-watchdog.mjs')||!String(verify).includes('InteractiveToken'))
+ if(!String(verify).includes('recovery-watchdog.mjs')||!String(verify).includes('InteractiveToken')||!String(verify).includes('--headless')||!String(verify).toLowerCase().includes('conhost.exe'))
    throw Error('scheduler_identity_unverified');
  console.log(JSON.stringify({state:'TASK_REGISTERED_VERIFIED',task:NAME,taskRunsUnderOwner:true,limited:true,notes:'Host is not modified'}));
 }
