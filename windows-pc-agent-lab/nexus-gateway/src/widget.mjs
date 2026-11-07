@@ -8,6 +8,7 @@
  * which switches live_view off at the source. The widget has no input/control function at all.
  */
 import {LIVE_UI} from './catalog.mjs';
+import {framePointToScreen} from './widget-input.mjs';
 
 export const WIDGET_MIME = 'text/html;profile=mcp-app';
 
@@ -30,22 +31,40 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
 .msg[hidden]{display:none}.msg b{color:var(--fg)}
 .foot{color:var(--mut);font-size:11px;padding:4px 8px}
 .owner{border-top:1px solid var(--line);padding:8px;display:grid;gap:8px}.owner-head{display:flex;align-items:center;gap:8px;justify-content:space-between}.owner form{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.owner input{min-width:120px;flex:1;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--fg);padding:8px;font:inherit}.owner-entry{border:1px solid var(--line);padding:7px;border-radius:6px;overflow-wrap:anywhere}.owner-entry p{margin:2px 0 8px}.owner-actions{display:flex;gap:6px;flex-wrap:wrap}.owner-status{font-size:12px;color:var(--mut)}.owner button:disabled{opacity:.55;cursor:wait}.owner button.allow{border-color:var(--green);color:var(--green)}.boot{border-top:1px solid var(--line);padding:8px;display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}.boot b{white-space:nowrap}.boot span{color:var(--mut)}
+
+/* The approval surface appears above Live itself; the existing inline panel is the fallback. */
+.owner.is-popup{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.88);padding:12px;display:flex;flex-direction:column;justify-content:center;align-items:stretch;max-width:100vw}
+.owner.is-popup .owner-head,.owner.is-popup #owner-panel{width:min(440px,100%);margin:0 auto;background:var(--bg);padding:10px;border:1px solid var(--line)}
+.owner.is-popup .owner-head{border-radius:10px 10px 0 0}.owner.is-popup #owner-panel{max-height:75vh;overflow-y:auto;border-top:none;border-radius:0 0 10px 10px}
+.owner.is-popup #owner-panel[hidden],.touch-tools[hidden]{display:none}
+.owner.is-popup #owner-secret{font-size:16px;min-height:42px}
+.touch-tools{border-top:1px solid var(--line);padding:8px;display:grid;gap:7px}
+.touch-tools form{display:flex;gap:6px}.touch-tools input{flex:1;min-width:0;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;font:16px system-ui}
+.touch-tools .keys{display:flex;flex-wrap:wrap;gap:6px}.touch-tools .notice{font-size:11px;color:var(--amber)}
+#img.touchable{cursor:crosshair;touch-action:manipulation}
 </style></head>
 <body class="offline">
 <div class="bar">
   <span class="dot" aria-hidden="true"></span><span class="st" id="st">NEXUS · подключение…</span>
   <button id="pp" title="Пауза / продолжить">⏸</button>
+  <button id="touch-toggle" type="button" aria-pressed="false" title="Прямое управление экраном, только по команде владельца">Управление: выкл.</button>
   <select id="fps" title="Кадров в секунду" aria-label="Кадров в секунду"><option value="0.5">0.5 к/с</option><option value="1">1 к/с</option><option value="2" selected>2 к/с</option><option value="4">4 к/с</option></select>
   <button id="pip" hidden title="Картинка в картинке">⧉</button><button id="full" hidden title="Во весь экран">⛶</button>
   <button id="stop" class="stop" title="Остановить трансляцию на ПК">■ STOP</button>
   <span class="meta" id="meta"></span>
 </div>
 <div class="view"><img id="img" alt="Экран Windows владельца"><div class="msg" id="msg"><b id="mt">Подключение…</b><span id="md"></span><button id="ask" hidden>Попросить включить Live View</button></div></div>
+<div class="touch-tools" id="touch-tools" hidden>
+  <span class="notice">Касайся изображения для одиночного клика в разрешённом приложении. Не вводи PIN, пароли, коды, токены и платёжные данные: это НЕ защищённый Windows-вход.</span>
+  <form id="touch-form" autocomplete="off"><input id="touch-text" type="text" maxlength="500" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Обычный текст для активного приложения" placeholder="Обычный текст (не пароль)"><button type="submit">Ввести</button></form>
+  <div class="keys"><button data-touch-key="enter" type="button">Enter</button><button data-touch-key="tab" type="button">Tab</button><button data-touch-key="backspace" type="button">⌫</button><button data-touch-key="esc" type="button">Esc</button></div>
+  <span id="touch-status" class="owner-status" role="status">Для ввода необходима активная трансляция и разрешение NEXUS Host.</span>
+</div>
 <div class="boot" aria-label="Статус запуска и входа Windows">
   <b>Доступ после запуска:</b><span id="boot-state" role="status">Проверяю подключение NEXUS…</span>
   <span id="boot-hint">Защищённый дистанционный вход до Windows пока не настроен. Пароль Windows сюда не вводи.</span>
 </div>
-<div class="owner" aria-label="Подтверждения владельца NEXUS">
+<div class="owner" id="owner-container" aria-label="Подтверждения владельца NEXUS">
   <div class="owner-head"><b>Подтверждения владельца</b><button id="owner-toggle" type="button" aria-expanded="false">Показать</button></div>
   <div id="owner-panel" hidden>
     <p class="owner-status">Пароль <b>владельца NEXUS</b> нужен отдельно для каждой операции. Это не PIN и не пароль Windows. Данные передаются напрямую в NEXUS Gateway, не через инструменты модели.</p>
@@ -54,12 +73,14 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     <div id="owner-list"></div>
   </div>
 </div>
-<div class="foot">Только просмотр. Кадры не сохраняются. На экране могут быть личные данные — STOP выключает трансляцию на самом ПК.</div>
+<div class="foot">Просмотр по умолчанию; прямое управление включается вручную и проверяется Host. Кадры не сохраняются. STOP выключает трансляцию на ПК.</div>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
+  const framePointToScreen = ${framePointToScreen.toString()};
   let seq = 0, pending = new Map(), host = null, modes = [], mode = 'inline';
   let paused = false, stopped = false, busy = false, timer = null, fails = 0, lastSeq = -1, lastAt = 0;
+  let frameGeometry=null, touchEnabled=false, touchBusy=false, pointerStart=null;
   const legacy = () => typeof window.openai === 'object' && window.openai && typeof window.openai.callTool === 'function';
 
   // ── MCP Apps bridge (JSON-RPC 2.0 over postMessage) ──
@@ -78,7 +99,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (m.id != null && pending.has(m.id) && !m.method) { const p = pending.get(m.id); pending.delete(m.id); m.error ? p.rej(new Error(m.error.message || 'error')) : p.res(m.result); return; }
     if (m.method === 'ui/notifications/host-context-changed' && m.params) ctx(m.params);
     if (m.method === 'ui/notifications/tool-result' && m.params) onStatus(m.params.structuredContent);
-    if (m.method === 'ui/resource-teardown' && m.id != null) { stopped = true; halt(); clearTimeout(bootTimer); window.parent.postMessage({jsonrpc: '2.0', id: m.id, result: {}}, '*'); }
+    if (m.method === 'ui/resource-teardown' && m.id != null) { stopped = true; halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); window.parent.postMessage({jsonrpc: '2.0', id: m.id, result: {}}, '*'); }
   });
   function ctx(c) {
     if (Array.isArray(c.availableDisplayModes)) modes = c.availableDisplayModes;
@@ -108,7 +129,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   const hide = () => { $('msg').hidden = true; };
   function onStatus(s) {
     if (!s || typeof s !== 'object') return;
-    if (s.state === 'off') { stopped = true; halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
+    if (s.state === 'off') { stopped = true; frameGeometry=null; touchEnabled=false; halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
   }
   let readySince = 0;
   function halt() { clearTimeout(timer); timer = null; }
@@ -126,6 +147,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
       if (!sc || sc.state === 'off') { onStatus({state: 'off'}); return; }
       // 0.5.1: grant on, but no task runs → the PC produces no frames; poll slowly, give up after 10 min idle.
       if (sc.state === 'ready') {
+        frameGeometry=null;
         readySince = readySince || Date.now();
         setState('offline', 'NEXUS · задача завершена');
         show('Нет активной задачи', 'Трансляция идёт только во время работы NEXUS на рабочем столе. Кадры появятся сами при следующей задаче.', false);
@@ -134,7 +156,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
       }
       readySince = 0;
       const im = (r.content || []).find(c => c.type === 'image');
-      if (im && sc.seq !== lastSeq) { $('img').src = 'data:' + im.mimeType + ';base64,' + im.data; lastSeq = sc.seq; lastAt = Date.now(); }
+      if (im && sc.seq !== lastSeq) { $('img').src = 'data:' + im.mimeType + ';base64,' + im.data; lastSeq = sc.seq; lastAt = Date.now(); frameGeometry={screenW:sc.screenW,screenH:sc.screenH,imageW:sc.imageW,imageH:sc.imageH}; }
       fails = 0; hide();
       setState('live', 'LIVE · Windows');
       $('meta').textContent = (sc.imageW || '?') + '×' + (sc.imageH || '?') + (sc.cursor ? ' · курсор ' + sc.cursor.x + ',' + sc.cursor.y : '');
@@ -185,8 +207,51 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   // TLS POST goes directly to our owned Cloudflare gateway from this iframe.
   const OWNER_ORIGIN = 'https://nexus-gateway.entoni441.workers.dev';
   let ownerEntries = [], ownerBusy = false;
-  const ownerPanel = $('owner-panel'), ownerSecret = $('owner-secret');
+  let ownerAlertTimer=null, ownerAlertBusy=false, seenPending=0, pendingCount=0, snoozeOwnerUntil=0, ownerPopup=false;
+  const ownerPanel = $('owner-panel'), ownerSecret = $('owner-secret'), ownerContainer = $('owner-container');
+  function dismissOwnerPopup() {
+    ownerPopup=false;
+    ownerContainer.classList.remove('is-popup');
+    ownerPanel.hidden=true;
+    ownerSecret.value='';
+    $('owner-toggle').textContent='Показать';
+    $('owner-toggle').setAttribute('aria-expanded','false');
+    snoozeOwnerUntil=Date.now()+120000;
+    size();
+  }
+  function showOwnerPopup(count) {
+    if (ownerPopup || !ownerPanel.hidden || stopped) return;
+    ownerPopup=true;
+    ownerContainer.classList.add('is-popup');
+    ownerPanel.hidden=false;
+    $('owner-toggle').textContent='Скрыть';
+    $('owner-toggle').setAttribute('aria-expanded','true');
+    ownerMessage('Новых запросов: ' + count + '. Введи пароль владельца NEXUS для просмотра. Windows PIN не подходит.');
+    size();
+  }
+  async function checkOwnerAlerts() {
+    if (ownerAlertBusy || document.visibilityState === 'hidden' || stopped) return;
+    ownerAlertBusy=true;
+    try {
+      // Read only the COUNT through the existing OAuth MCP connection.
+      // Targets and decisions still require direct reauthentication at Gateway.
+      const r=await callTool('host_diagnostics',{});
+      const count=Number(r?.structuredContent?.pendingConsents);
+      if (r?.isError || !Number.isSafeInteger(count) || count<0) return;
+      pendingCount=count;
+      if (count===0) snoozeOwnerUntil=0;
+      if (count>0 && (seenPending===0 || count>seenPending || Date.now()>snoozeOwnerUntil) &&
+          !ownerPopup && ownerPanel.hidden && (Date.now()>snoozeOwnerUntil || count>seenPending)) showOwnerPopup(count);
+      seenPending=count;
+    } catch { /* no change: manual approval panel remains available */ }
+    finally { ownerAlertBusy=false; }
+  }
+  function scheduleOwnerAlerts() {
+    clearTimeout(ownerAlertTimer);
+    if (!stopped) ownerAlertTimer=setTimeout(async()=>{await checkOwnerAlerts();scheduleOwnerAlerts();},8000);
+  }
   $('owner-toggle').onclick = () => {
+    if (ownerPopup) return dismissOwnerPopup();
     ownerPanel.hidden = !ownerPanel.hidden;
     $('owner-toggle').textContent = ownerPanel.hidden ? 'Показать' : 'Скрыть';
     $('owner-toggle').setAttribute('aria-expanded', String(!ownerPanel.hidden));
@@ -250,6 +315,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
           if (!r?.ok) return;
           div.remove();ownerEntries=ownerEntries.filter(x=>x.consentId!==c.consentId);
           ownerMessage('Решение принято: ' + labels[decision] + '. Запрос одноразовый.');
+          if (ownerPopup) dismissOwnerPopup();
         };
         actions.appendChild(b);
       }
@@ -263,12 +329,67 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (r && Array.isArray(r.pending)) {ownerEntries=r.pending;renderOwnerEntries();}
   };
 
+  // Owner touch is opt-in. Coordinates travel through the existing Host GUI policy;
+  // never attempt Winlogon or send secrets over model-visible keyboard_action.
+  function touchMessage(s) { $('touch-status').textContent=s; }
+  function touchReady() {
+    return touchEnabled && !paused && !stopped && !touchBusy && !busy &&
+      document.visibilityState !== 'hidden' && frameGeometry &&
+      lastAt>0 && Date.now()-lastAt<5000 && $('img').getAttribute('src');
+  }
+  async function touchCall(name,args) {
+    if (!touchReady()) { touchMessage('Нет свежего кадра или управление не включено. Действие не отправлено.');return; }
+    touchBusy=true;
+    try {
+      const r=await callTool(name,args);
+      if (r?.isError) throw Error(String(r.content?.[0]?.text||'Host отказал').slice(0,160));
+      const status=String(r?.structuredContent?.status||'');
+      if (status==='consent_required' || status==='owner_approval_pending') {
+        touchMessage('Host требует разрешение владельца. Открой подтверждение NEXUS.');
+        showOwnerPopup(Math.max(1,pendingCount));
+      } else if (r?.structuredContent?.done === true) touchMessage('Выполнено на ПК.');
+      else touchMessage('Ответ Host: ' + (status || 'проверь результат на экране'));
+    } catch(e) {touchMessage('Действие не выполнено: '+String(e.message||e).slice(0,140));}
+    finally {touchBusy=false;}
+  }
+  $('touch-toggle').onclick=()=>{
+    touchEnabled=!touchEnabled;
+    $('touch-tools').hidden=!touchEnabled;
+    $('img').classList.toggle('touchable',touchEnabled);
+    $('touch-toggle').textContent=touchEnabled?'Управление: вкл.':'Управление: выкл.';
+    $('touch-toggle').setAttribute('aria-pressed',String(touchEnabled));
+    touchMessage(touchEnabled?'Касание по свежему кадру = одиночный клик. Только обычный текст.':'Управление отключено.');
+    size();
+  };
+  $('img').addEventListener('pointerdown',e=>{
+    pointerStart=touchEnabled && e.isTrusted && e.button===0 ?
+      {id:e.pointerId,x:e.clientX,y:e.clientY,at:Date.now()} : null;
+  });
+  $('img').addEventListener('pointerup',e=>{
+    const start=pointerStart;pointerStart=null;
+    if (!start || start.id!==e.pointerId || Math.abs(e.clientX-start.x)>12 ||
+        Math.abs(e.clientY-start.y)>12 || Date.now()-start.at>900) return;
+    const point=framePointToScreen(e.clientX,e.clientY,$('img').getBoundingClientRect(),frameGeometry);
+    if (!point) {touchMessage('Касание вне изображения: действие отменено.');return;}
+    touchCall('mouse_action',{action:'click',x:point.x,y:point.y});
+  });
+  $('touch-form').onsubmit=e=>{
+    e.preventDefault();
+    const el=$('touch-text'), value=el.value;
+    if (!value || value.length>500) return;
+    el.value=''; // no secret persistence, no retries
+    touchCall('keyboard_action',{text:value});
+  };
+  for (const b of document.querySelectorAll('[data-touch-key]')) b.onclick=()=>{
+    touchCall('keyboard_action',{keys:b.getAttribute('data-touch-key')});
+  };
+
   $('pp').onclick = () => { paused = !paused; $('pp').textContent = paused ? '▶' : '⏸'; if (paused) { halt(); setState('paused', 'ПАУЗА · кадры не запрашиваются'); } else { stopped = false; tick(); } };
   $('fps').onchange = () => schedule(0);
   $('pip').onclick = () => displayMode('pip');
   $('full').onclick = () => displayMode(mode === 'fullscreen' ? 'inline' : 'fullscreen');
   $('stop').onclick = async () => {
-    stopped = true; halt(); clearTimeout(bootTimer); $('img').removeAttribute('src');
+    stopped = true; touchEnabled=false; frameGeometry=null; halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); dismissOwnerPopup(); $('img').removeAttribute('src');
     setState('offline', 'STOP…');
     try { await callTool('live_control', {action: 'stop'}); setState('offline', 'NEXUS · остановлено'); show('Трансляция остановлена на ПК', 'live_view выключен. Включить снова можно только просьбой в чате.', true); }
     catch (e) { show('STOP не дошёл до ПК', String(e.message || e) + ' — закрой окно NEXUS Host на ПК, это выключает всё.'); }
@@ -283,7 +404,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   (async () => {
     try {
       const init = await Promise.race([
-        rpc('ui/initialize', {appInfo: {name: 'nexus-live-view', version: '0.5.2'}, appCapabilities: {availableDisplayModes: ['inline', 'pip', 'fullscreen']}, protocolVersion: '2026-01-26'}),
+        rpc('ui/initialize', {appInfo: {name: 'nexus-live-view', version: '2.1.0-interactive'}, appCapabilities: {availableDisplayModes: ['inline', 'pip', 'fullscreen']}, protocolVersion: '2026-01-26'}),
         new Promise((_, rej) => setTimeout(() => rej(new Error('no_mcp_apps_host')), 4000)),
       ]);
       host = init || {}; notify('ui/notifications/initialized', {});
@@ -296,6 +417,8 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     tick();
     checkBootStatus();
     bootSchedule();
+    checkOwnerAlerts();
+    scheduleOwnerAlerts();
   })();
 })();
 </script></body></html>`;
