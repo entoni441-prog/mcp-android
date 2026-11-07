@@ -46,7 +46,8 @@ test('widget resource: MCP Apps mime, gateway-only direct owner auth domain, no 
   const r = (await (await handleMcp(rpc('resources/read', {uri: 'ui://nexus/live-view-v1.html'}), e, ctx)).json()).result.contents[0];
   assert.equal(r.mimeType, 'text/html;profile=mcp-app');
   assert.deepEqual(r._meta.ui.csp.connectDomains, ['https://nexus-gateway.entoni441.workers.dev']); assert.deepEqual(r._meta.ui.csp.resourceDomains, []);
-  assert.ok(!/trycloudflare|workers\.dev|Bearer|NEXUS_TOKEN|localStorage|fetch\(/.test(r.text));
+  assert.ok(!/trycloudflare|Bearer|NEXUS_TOKEN|localStorage|sessionStorage/.test(r.text));
+  assert.match(r.text,/https:\/\/nexus-gateway\.entoni441\.workers\.dev/);;
   assert.match(r.text, /ui\/initialize/); assert.match(r.text, /live_frame/); assert.match(r.text, /live_control/);
   assert.ok(!/mouse_action|keyboard_action|set_capability/.test(WIDGET_HTML), 'widget has no control/raise-privilege path');
   assert.equal((await (await handleMcp(rpc('resources/read', {uri: 'ui://other'}), e, ctx)).json()).error.code, -32002);
