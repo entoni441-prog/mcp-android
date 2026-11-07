@@ -31,3 +31,21 @@ test('Live 2.0: text is manual, explicitly nonsecret, and no credentials recorde
   assert.doesNotThrow(()=>new Function(src));
   assert.equal(widgetContents()[0]._meta.ui.csp.connectDomains.length,1);
 });
+
+test('Live v3: mobile status and owner confirmations collapse by default',()=>{
+  assert.match(WIDGET_HTML,/id="boot-hint" hidden/);
+  assert.match(WIDGET_HTML,/id="boot-toggle"[^>]*aria-expanded="false"/);
+  assert.match(WIDGET_HTML,/id="owner-panel" hidden/);
+  assert.match(WIDGET_HTML,/id="owner-toggle"[^>]*aria-expanded="false"/);
+  assert.match(WIDGET_HTML,/function dismissOwnerPopup\(\)/);
+  assert.match(WIDGET_HTML,/if \(count===0\) \{/);
+  assert.match(WIDGET_HTML,/ownerPanel\.hidden=true/);
+  assert.match(WIDGET_HTML,/#owner-panel\[hidden\]/);
+});
+test('Live v3: failed embedded owner fetch does not approve or hide recovery URL',()=>{
+  assert.match(WIDGET_HTML,/id="owner-fallback"[^>]*href="https:\/\/nexus-gateway\.entoni441\.workers\.dev\/live"/);
+  assert.match(WIDGET_HTML,/Failed to fetch\|NetworkError\|Load failed/);
+  assert.match(WIDGET_HTML,/Действие не подтверждено/);
+  assert.match(WIDGET_HTML,/\$\('owner-fallback'\)\.hidden=!transport/);
+  assert.doesNotMatch(WIDGET_HTML,/callTool\('owner_decide'/);
+});
