@@ -10,7 +10,7 @@ export function allowedWindowProcess(name){
   return !!n && !SECURE_WINDOW_PROCESSES.has(n);
 }
 const MINIMIZE_NAME=/^(?:minimi[sz]e|minimizar|minimizza|minimieren|riduci a icona|свернуть|згорнути|最小化)(?:\s+(?:window|окно|finestra))?$/iu;
-const MINIMIZE_ID=/^(?:minbutton|minimizebutton|btnminimize|windowminimizebutton)$/i;
+const MINIMIZE_ID=/^(?:minimize|minbutton|minimizebutton|btnminimize|windowminimizebutton)$/i;
 const validRect=r=>r&&Number.isFinite(Number(r.x))&&Number.isFinite(Number(r.y))&&
   Number.isFinite(Number(r.w))&&Number.isFinite(Number(r.h))&&
   r.w>0&&r.h>0;
