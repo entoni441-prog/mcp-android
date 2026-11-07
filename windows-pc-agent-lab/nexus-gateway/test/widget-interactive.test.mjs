@@ -59,7 +59,7 @@ test('Live v3: STOP stays clickable above the approval overlay',()=>{
 test('Live v4: one Host-side preference, STOP disarms, no browser storage',()=>{
   assert.match(WIDGET_HTML,/callTool\('owner_ui_pref',\{action:'get'\}\)/);
   assert.match(WIDGET_HTML,/callTool\('owner_ui_pref',\{action:'set',enabled\}\)/);
-  assert.match(WIDGET_HTML,/if\(touchEnabled\) leaseUntil=Date\.now\(\)\+10\*60\*1000/);
+  assert.match(WIDGET_HTML,/if\s*\(touchEnabled\)\s*leaseUntil=Date\.now\(\)\+10\*60\*1000/);
   assert.match(WIDGET_HTML,/function resetTouch\(\)/);
   assert.match(WIDGET_HTML,/clearTimeout\(leaseTimer\)/);
   assert.doesNotMatch(WIDGET_HTML,/localStorage|sessionStorage/);
