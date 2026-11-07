@@ -18,7 +18,7 @@ const int = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
 export const MIN_INTERVAL_MS = 200;
 export const IDLE_MS = 6000;
 
-export function createLive({caps, store, capture, session = null, onResume = () => {}, onStopResume = () => {}, audit = () => {}, now = () => Date.now(), indicator = defaultIndicator, setIntervalFn = setInterval}) {
+export function createLive({caps, store, capture, ownerCapture = null, session = null, onResume = () => {}, onStopResume = () => {}, audit = () => {}, now = () => Date.now(), indicator = defaultIndicator, setIntervalFn = setInterval}) {
   let seq = 0, last = null, inflight = null, viewing = false, lastServed = 0, served = 0, since = 0;
   let lastFrameAt = 0, droppedAfterStop = 0; // 0.5.2 N-07: Stop timing marks
   const setViewing = (on, why) => {
@@ -66,6 +66,26 @@ export function createLive({caps, store, capture, session = null, onResume = () 
         screenW: f.meta.screenW, screenH: f.meta.screenH, cursor: f.meta.cursorX >= 0 ? {x: f.meta.cursorX, y: f.meta.cursorY} : null,
         bytes: f.jpeg.length, ms: f.meta.ms};
       return {content: [{type: 'image', data: f.jpeg.toString('base64'), mimeType: 'image/jpeg'}, {type: 'text', text: JSON.stringify(structured)}], structured};
+    },
+    /**
+     * Owner-only signed Gateway channel; never listed among ChatGPT MCP tools.
+     * Separate capture/no shared cache: private frames must NEVER leak into
+     * standard live_frame, capture_screen, or another viewer's 200ms cache.
+     */
+    async owner_frame(args = {}) {
+      if (!onlyKeys(args, ['maxWidth','quality'])) bad();
+      const maxW=args.maxWidth??960, quality=args.quality??60;
+      if(!int(maxW,320,1600)||!int(quality,30,90)||typeof ownerCapture!=='function')bad();
+      if(!granted())return {state:'off'};
+      if(!allowed())return {state:'ready'};
+      const {jpeg,meta}=await ownerCapture(maxW,quality);
+      if(!allowed()){droppedAfterStop++;return {state:state(),hint:'ended_during_capture'};}
+      lastServed=now();lastFrameAt=lastServed;served++;
+      setViewing(true,'owner_private_frame');
+      const sc={state:'live',imageW:meta.imageW,imageH:meta.imageH,
+        screenW:meta.screenW,screenH:meta.screenH,
+        cursor:meta.cursorX>=0?{x:meta.cursorX,y:meta.cursorY}:null};
+      return {content:[{type:'image',data:jpeg.toString('base64'),mimeType:'image/jpeg'}],structured:sc};
     },
     /** Raw frame for the gateway /live page proxy (same gating). */
     async frameBytes(maxW = 960, quality = 60) {
