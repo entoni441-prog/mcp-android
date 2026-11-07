@@ -503,7 +503,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
       }
       if (sc.done===true) {
         touchMessage('Выполнено на ПК.');
-        if (name==='mouse_action' && sc.action==='click' && touchEnabled &&
+        if (name==='mouse_action' && sc.action==='click' && touchEnabled && sc.target?.isPassword===false &&
             /(?:Edit|Document|ComboBox)/i.test(String(sc.target?.control||'')) &&
             !/(?:password|пароль|pin|код безопасности|otp|cvv)/i.test(String(sc.target?.name||'')))
           showComposer();
