@@ -42,16 +42,22 @@ async function healthy(){
     return j?.ok===true;
   }catch{return false;}
 }
+/** Exact Task Scheduler action identity; reject extra Node flags and unknown scripts. */
+export function verifyTaskXml(xml,expectedScript=INSTALLED){
+  if(typeof xml!=='string')return false;
+  const cmd=xml.match(/<Command>([^<]+)<\/Command>/i)?.[1]?.trim();
+  const raw=xml.match(/<Arguments>([^<]+)<\/Arguments>/i)?.[1]?.trim();
+  if(!cmd||!raw)return false;
+  const exe=cmd.replace(/&quot;/gi,'"').replace(/^"|"$/g,'');
+  const args=raw.replace(/&quot;/gi,'"').trim().replace(/^"|"$/g,'');
+  return /(?:^|[\\/])node\.exe$/i.test(exe) &&
+    args.replace(/\//g,'\\').toLowerCase()===expectedScript.replace(/\//g,'\\').toLowerCase();
+}
 function taskIdentity(){
   try{
     const xml=execFileSync(schtasks,['/Query','/TN',TASK,'/XML'],
       {windowsHide:true,timeout:9000,encoding:'utf8',maxBuffer:120_000});
-    // Task identity is a fixed source, not inferred from an online response.
-    // Require the exact installed source path and Node; reject unknown task edits.
-    const lower=String(xml).toLowerCase().replace(/\//g,'\\');
-    const expected=INSTALLED.toLowerCase().replace(/\//g,'\\');
-    return lower.includes(expected)&&/<command>[^<]*node\.exe<\/command>/i.test(xml)&&
-      /<arguments>[^<]*nexus\.mjs[^<]*<\/arguments>/i.test(xml);
+    return verifyTaskXml(String(xml));
   }catch{return false;}
 }
 function persistStatus(action,details={}){
