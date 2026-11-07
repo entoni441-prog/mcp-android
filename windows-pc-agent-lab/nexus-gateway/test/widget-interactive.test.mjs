@@ -76,7 +76,7 @@ test('Live v4: stale recovery is read-only and limited to proven nonexecution',(
   assert.match(WIDGET_HTML,/reobserveFreshFrame\(geometry,gestureAt\)/);
   assert.match(WIDGET_HTML,/callTool\('list_windows',\{includeTitles:false\}\)/);
   assert.match(WIDGET_HTML,/callTool\('live_frame',/);
-  assert.match(WIDGET_HTML,/r=await send\(\)/);
+  assert.match(WIDGET_HTML,/callOnceAfterStale\(send,async\(\)=>/);
   assert.match(WIDGET_HTML,/No retries for an unknown outcome/);
   assert.match(WIDGET_HTML,/sc\.screenW!==geometry\.screenW/);
 });
