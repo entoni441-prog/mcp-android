@@ -23,7 +23,7 @@ jobs:
           node-version: '22'
       - name: Verify isolation, recovery budget and existing Scheduler identity
         working-directory: windows-pc-agent-lab/nexus-host/recovery
-        run: node --test recovery-watchdog.test.mjs
+        run: node --test recovery-watchdog.test.mjs install-recovery.test.mjs
       - name: Parse main task with no execution
         working-directory: windows-pc-agent-lab/nexus-host/recovery
-        run: node --check recovery-watchdog.mjs
+        run: node --check recovery-watchdog.mjs && node --check install-recovery.mjs
