@@ -54,3 +54,8 @@ test('only exact preexisting Node task script is trusted',()=>{
   assert.equal(verifyTaskXml(xml.replace('nexus.mjs&quot;','nexus.mjs&quot; --extra'),installed),false);
   assert.equal(verifyTaskXml(xml.replace(installed,'C:\\Users\\other\\nexus.mjs'),installed),false);
 });
+
+test('do not race a running NEXUS Supervisor',()=>{
+  assert.equal(run({supervisorAlive:true}).action,'SUPERVISOR_PRESENT_WAIT');
+  assert.deepEqual(run({supervisorAlive:true}).next.attempts,[]);
+});
