@@ -14,6 +14,8 @@ test('limited owner interactive task, scheduler authority independent of Host',(
   assert.match(xml,/<StartWhenAvailable>true<\/StartWhenAvailable>/);
   assert.match(xml,/<ExecutionTimeLimit>PT45S<\/ExecutionTimeLimit>/);
   assert.match(xml,/recovery-watchdog.mjs/);
+  assert.match(xml,/<Command>C:\\Windows\\System32\\conhost\.exe<\/Command>/i);
+  assert.match(xml,/<Arguments>--headless &quot;C:\\Program Files\\nodejs\\node\.exe&quot; &quot;.*recovery-watchdog\.mjs&quot; --once<\/Arguments>/i);
   assert.doesNotMatch(xml,/S-1-5-18|HighestAvailable|Password|AutoAdminLogon|powershell\.exe|cloudflared\.exe/);
 });
 test('installer XML refuses invalid identity and arbitrary node/executable paths',()=>{
@@ -21,4 +23,5 @@ test('installer XML refuses invalid identity and arbitrary node/executable paths
   assert.throws(()=>makeTaskXml({sid,node:'C:\\Windows\\System32\\cmd.exe',script,start}),/bad_node/);
   assert.throws(()=>makeTaskXml({sid,node,script:'C:\\other\\script.ps1',start}),/bad_script/);
   assert.throws(()=>makeTaskXml({sid,node,script,start:'not a time'}),/bad_date/);
+  assert.throws(()=>makeTaskXml({sid,node,script,start,conhost:'C:\\Windows\\System32\\cmd.exe'}),/bad_headless_host/);
 });
