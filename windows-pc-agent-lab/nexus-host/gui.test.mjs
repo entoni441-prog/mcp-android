@@ -22,7 +22,7 @@ function fakes({at = {pid: 50, process: 'Notepad'}, focused = {ok: true, pid: 50
     if (a.mode === 'apps') return {...base, apps: []};
     if (a.mode === 'at') return {...base, at: {...at, controlType: 'ControlType.Document'}, focused};
     if (a.mode === 'windows') return {...base, target: {pid: a.pid, process: a.pid === 50 ? 'Notepad' : a.pid === 66 ? 'powershell' : a.pid === 99 ? 'WindowsTerminal' : 'Other'}, windows: [{name: a.pid === 99 ? 'C:\\Program Files\\nodejs\\node.exe' : 'Untitled - Notepad', className: 'Notepad', pid: a.pid, hwnd: 500, rect: {x: 300, y: 150, w: 900, h: 600}}], focused};
-    if (a.mode === 'minimize') return {...base, verified: true, pid: a.pid, process: 'WindowsTerminal', hwnd: a.hwnd, wasMinimized: false, isMinimizedAfter: true};
+    if (a.mode === 'minimize') return {...base, verified: true, pid: a.pid, process: a.pid === 99 ? 'WindowsTerminal' : a.pid === 66 ? 'powershell' : 'Notepad', hwnd: a.hwnd, wasMinimized: false, isMinimizedAfter: true};
     if (a.mode === 'activate') return {...base, target: {pid: a.pid, process: 'Notepad'}, appActivateByPid: true, windowFound: true, setFocus: true, focused: activateFocus ?? {ok: true, pid: a.pid, process: 'Notepad'}};
     if (a.mode === 'tree') return {...base, target: {pid: a.pid, process: a.pid === 50 ? 'Notepad' : 'cmd'}, nodes: 2, tree: [{type: 'Window', name: 'N', rect: {x: 300, y: 150, w: 900, h: 600}, children: [{type: 'Document', name: '', rect: {x: 330, y: 240, w: 840, h: 480}}]}]};
     throw Error('bad mode');
@@ -81,7 +81,7 @@ test('NX-TM-01: owner intent is mandatory; all other shell actions remain denied
   const f=fakes(),g=gui(f);
   await assert.rejects(g.minimize_window({pid:99}),/owner_request_required/);
   await assert.rejects(g.minimize_window({pid:99,ownerRequested:false}),/owner_request_required/);
-  await assert.rejects(g.minimize_window({pid:66,ownerRequested:true}),/minimize_target_not_supported/);
+  assert.equal((await g.minimize_window({pid:66,ownerRequested:true})).status,'minimized');
   await assert.rejects(g.minimize_window({pid:99,ownerRequested:true,command:'dir'}),/invalid_args/);
   assert.equal(f.uiaCalls.some(a=>a.mode==='minimize'),false);
   assert.equal(f.robotCmds.filter(c=>/^(?:click|paste|key|drag)/.test(c)).length,0);
