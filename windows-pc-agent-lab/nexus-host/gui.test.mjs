@@ -18,7 +18,7 @@ function fakes({at = {pid: 50, process: 'Notepad'}, focused = {ok: true, pid: 50
     uiaCalls.push(a);
     const base = {root};
     if (a.mode === 'focused') return {...base, focused};
-    if (a.mode === 'context') return {...base, focused, elem: {controlType: 'Document', name: '', id: ''}, window: {hwnd: 500, pid: focused.pid, process: focused.process, name: 'Untitled - Notepad', tabs: []}};
+    if (a.mode === 'context') return {...base, focused, elem: {controlType: 'Document', name: '', id: '', isPassword: false}, window: {hwnd: 500, pid: focused.pid, process: focused.process, name: 'Untitled - Notepad', tabs: []}};
     if (a.mode === 'apps') return {...base, apps: []};
     if (a.mode === 'at') return {...base, at: {...at, controlType: 'ControlType.Document'}, focused};
     if (a.mode === 'windows') return {...base, target: {pid: a.pid, process: a.pid === 50 ? 'Notepad' : a.pid === 66 ? 'powershell' : a.pid === 99 ? 'WindowsTerminal' : 'Other'}, windows: [{name: a.pid === 99 ? 'C:\\Program Files\\nodejs\\node.exe' : 'Untitled - Notepad', className: 'Notepad', pid: a.pid, hwnd: 500, rect: {x: 300, y: 150, w: 900, h: 600}}], focused};
@@ -359,4 +359,24 @@ test('0.5.2 N-03: input into a shell / credential prompt → Owner Handoff (no k
   // without a handoff dependency → the 0.5.1 refusal is unchanged
   const f2 = fakes({focused: {ok: true, pid: 77, process: 'cmd'}});
   await assert.rejects(gui(f2).keyboard_action({text: 'dir'}), /focus_not_allowed/);
+});
+
+test('Live v4 protected focused fields: password or unknown Edit never receives text',async()=>{
+  const f=fakes(),original=f.uia;
+  f.uia=async args=>{
+    const v=await original(args);
+    if(args.mode==='context')return {...v,elem:{controlType:'Edit',name:'Password',isPassword:true}};
+    return v;
+  };
+  await assert.rejects(gui(f).keyboard_action({text:'NOT_A_SECRET'}),/protected_input_refused/);
+  assert.equal(f.robotCmds.some(x=>x.startsWith('paste')||x.startsWith('key')),false);
+
+  const g=fakes(),orig2=g.uia;
+  g.uia=async args=>{
+    const v=await orig2(args);
+    if(args.mode==='context')return {...v,elem:{controlType:'Edit',name:'',id:''}};
+    return v;
+  };
+  await assert.rejects(gui(g).keyboard_action({text:'demo'}),/protected_input_unverified/);
+  assert.equal(g.robotCmds.some(x=>x.startsWith('paste')||x.startsWith('key')),false);
 });
