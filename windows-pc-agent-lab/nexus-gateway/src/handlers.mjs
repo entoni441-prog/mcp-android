@@ -8,7 +8,8 @@
  */
 import {TOOLS, PROTOCOL_VERSIONS, SERVER_INFO, LIVE_UI, LIVE_V3_UI, PREVIOUS_LIVE_UI, LEGACY_LIVE_UI} from './catalog.mjs';
 import {WIDGET_RESOURCE, widgetContents} from './widget.mjs';
-import {handleLive, ownerKey, signDecision} from './live-page.mjs';
+import {handleLive, ownerKey, signDecision, signOwnerFrame} from './live-page.mjs';
+import {handlePrivateFrame} from './private-frame.mjs';
 import {handleWidgetConsent} from './widget-consent.mjs';
 
 const enc = new TextEncoder();
@@ -58,6 +59,8 @@ export async function handleDefault(request, env, {fetcher = fetch} = {}) {
     const {x} = await ownerKey(env);
     return new Response(JSON.stringify({alg: 'Ed25519', x}), {status: 200, headers: {'content-type': 'application/json', 'cache-control': 'no-store'}});
   }
+  if (url.pathname==='/live/widget/private-frame')
+    return handlePrivateFrame(request,env,{signOwnerFrame,callHost:(name,args)=>callHost(env,name,args,{fetcher})});
   if (url.pathname.startsWith('/live/widget/')) return handleWidgetConsent(request, env, {sha256hex, signDecision, callHost: (name, args) => callHost(env, name, args, {fetcher})});
   if (url.pathname === '/live' || url.pathname.startsWith('/live/')) return handleLive(request, env, {sha256hex, callHost: (name, args) => callHost(env, name, args, {fetcher})});
   if (url.pathname !== '/authorize') return new Response('Not found', {status: 404});
