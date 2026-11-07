@@ -400,6 +400,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     e.preventDefault();
     const el=$('touch-text'), value=el.value;
     if (!value || value.length>500) return;
+    if (!touchReady()) { touchMessage('Нет активного безопасного кадра. Текст оставлен в поле, отправки не было.');return; }
     el.value=''; // no secret persistence, no retries
     touchCall('keyboard_action',{text:value});
   };
