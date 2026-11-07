@@ -175,7 +175,7 @@ function NxElem($e) {
   # IsPassword is a UIA property; unknown is conservatively treated as sensitive.
   $secret = $true
   try { $secret = [bool]$e.Current.IsPassword } catch { }
-  return @{ controlType = (NxType $e); name = (NxStr $e.Current.Name 120); id = (NxStr $e.Current.AutomationId 80); className = (NxStr $e.Current.ClassName 80); isPassword = $secret }
+  return @{ controlType = (NxType $e); name = (NxStr $e.Current.Name 120); id = (NxStr $e.Current.AutomationId 80); className = (NxStr $e.Current.ClassName 80); isPassword = $secret; rect = (NxRect $e) }
 }
 # NX-13: bounded UIA ancestry + Win32 owner/PID verification for Edge translation popup.
 function NxEdgeTranslateBubble($e, $top, $epid) {
@@ -267,9 +267,8 @@ switch ($a.mode) {
     $res.focused = NxFocused
   }
   'minimize' {
-    # NX-TM-01: WindowPattern only. The terminal's edit surface, mouse,
-    # keyboard and process commands are NEVER used. HWND and process identity
-    # are revalidated in this separate fixed UIA operation.
+    # Universal top-level WindowPattern minimization ONLY. No shell/application text,
+    # no click, no keystroke, no process stop. Revalidate exact HWND and PID.
     $res.verified = $false
     $res.pid = [int]$a.pid
     $res.hwnd = [int64]$a.hwnd
@@ -280,7 +279,7 @@ switch ($a.mode) {
         $w = $AE::FromHandle([IntPtr]$res.hwnd)
         if ($null -ne $w -and [int]$w.Current.ProcessId -eq $res.pid -and
             [int64]$w.Current.NativeWindowHandle -eq $res.hwnd -and
-            (NxPName $res.pid) -ieq 'WindowsTerminal' -and
+            (NxPName $res.pid) -notin @('consent','LogonUI','winlogon','CredentialUIBroker','lsass','System','dwm') -and
             (NxTopOf $w).Current.NativeWindowHandle -eq $res.hwnd) {
           $wp = $w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)
           if ($null -ne $wp -and $wp.Current.CanMinimize) {
