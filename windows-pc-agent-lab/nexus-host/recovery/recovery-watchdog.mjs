@@ -77,7 +77,14 @@ export async function runOnce(){
   finally{if(fd!==undefined)fs.closeSync(fd);}
   const hostOff=fs.existsSync(STOP);
   const isHealthy=await healthy();
-  const hostPid=readJson(PIDFILE)?.pid;
+  const rawPid=readJson(PIDFILE);
+  // Corrupt durability state is never interpreted as "zero prior starts".
+  if((fs.existsSync(PIDFILE)&&(!rawPid||!Number.isSafeInteger(rawPid.pid)))||
+     (fs.existsSync(STATE)&&readJson(STATE)===null)){
+    persistStatus('CORRUPT_STATE_STOP');
+    return;
+  }
+  const hostPid=rawPid?.pid;
   const hostAlive=alive(hostPid);
   const verified=hostOff||isHealthy||hostAlive?false:taskIdentity();
   const state=readJson(STATE)||{};
