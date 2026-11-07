@@ -1,0 +1,28 @@
+name: nexus-live-window-manager
+on:
+  push:
+    branches: [experiment/nexus-live-window-manager-20261107]
+    paths:
+      - 'windows-pc-agent-lab/nexus-gateway/src/widget.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/test/widget-window-manager.test.mjs'
+      - '.github/workflows/nexus-live-window-manager-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  window-manager-regression:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: {os: [windows-latest, ubuntu-latest]}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Check widget syntax
+        working-directory: windows-pc-agent-lab/nexus-gateway
+        run: node --check src/widget.mjs
+      - name: Widget, owner privacy, and Live regressions
+        working-directory: windows-pc-agent-lab/nexus-gateway
+        run: node --test test/widget-window-manager.test.mjs test/widget-interactive.test.mjs test/private-frame.test.mjs test/live050.test.mjs test/widget-owner.test.mjs test/handlers.test.mjs
