@@ -21,7 +21,7 @@ import {executeJob, safePath} from '../v3/actions.mjs';
 import {listWindows} from './windows.mjs';
 import {TOOLS, VERSION, PROTOCOL_VERSIONS} from './catalog.mjs';
 /** 0.6.1: owner-only channel (gateway /live page). Never in TOOLS, so never offered to or accepted from the model. */
-export const OWNER_TOOLS = Object.freeze(new Set(['owner_consents', 'owner_decide']));
+export const OWNER_TOOLS = Object.freeze(new Set(['owner_consents', 'owner_decide', 'owner_frame']));
 import {loadCapabilities, validateCapabilities, DEFAULT_CAPABILITIES} from './capabilities.mjs';
 import {createGui} from './gui.mjs';
 import {createProcs} from './procs.mjs';
@@ -181,9 +181,10 @@ export function createRuntime(cfg, deps = {}) {
       return {autostartVerified, logonChannelVerified: caps.logonChannelVerified === true, wakeDevice: caps.wakeDevice || null, sleepStates, unsavedOwnerDocs};
     }, ...(deps.powerDeps || {})});
   gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, handoff, onOwnerActive: why => { session.pauseForOwner(why); runner.cancelAll('owner_paused').catch(() => {}); }, ...(deps.guiDeps || {})});
+  const ownerFrameNonces = new Map();
   const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: pid => procs.registerOwned(pid, 'browser'),
     downloads: {dir: path.join(cfg.workspace, 'downloads'), ingest: (tmp, meta) => scoped.ingestBrowserDownload(tmp, meta)}, ...(deps.browserDeps || {})});
-  const live = createLive({caps, store, session, onResume: () => gui.ownerResumed?.(), onStopResume: () => tasks.allowResume(), capture: (w, q) => gui.frameJpeg(w, q, session.caption()), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
+  const live = createLive({caps, store, session, onResume: () => gui.ownerResumed?.(), onStopResume: () => tasks.allowResume(), capture: (w, q) => gui.frameJpeg(w, q, session.caption()), ownerCapture: (w,q) => gui.frameJpeg(w,q,session.caption(),{ownerOnly:true}),audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
   // End of every session: stream off at the source first, then clean up what NEXUS itself opened.
   session.onEnd(async reason => {
     if (reason==='owner_stop' || reason==='grant_revoked') ownerTouchSet(false);
@@ -248,6 +249,26 @@ export function createRuntime(cfg, deps = {}) {
       if (!pub) throw Error('owner_channel_not_configured: the gateway owner key is not available');
       if (!verifyOwnerDecision(pub, a)) { audit(cfg, {event: 'owner_signature_invalid', consentId: a.consentId}); throw Error('owner_signature_invalid'); }
       return consent.ownerDecide(a.consentId, a.decision);
+    },
+    // Private, per-frame Ed25519-signed Gateway request. Not in public catalog.
+    // No reuse of standard live_frame cache or capture_screen, no file persistence.
+    owner_frame: async a => {
+      if(!a || typeof a!=='object' || Array.isArray(a) ||
+         Object.keys(a).sort().join(',')!=='maxWidth,nonce,quality,sig,ts' ||
+         !Number.isSafeInteger(a.maxWidth)||a.maxWidth<320||a.maxWidth>1600||
+         !Number.isSafeInteger(a.quality)||a.quality<30||a.quality>90||
+         !Number.isSafeInteger(a.ts)||Math.abs(Date.now()-a.ts)>10000||
+         typeof a.nonce!=='string'||!/^[a-f0-9]{32}$/.test(a.nonce)||
+         typeof a.sig!=='string'||!/^[A-Za-z0-9_-]{80,100}$/.test(a.sig))
+        throw Error('owner_frame_invalid');
+      const pub=await ownerPubKey(cfg);
+      if(!pub || !verifyOwnerFrame(pub,a))throw Error('owner_frame_signature_invalid');
+      // Replay-limiting nonce cache belongs to runtime, never exposed as a tool.
+      const tick=Date.now();
+      for(const [k,v] of ownerFrameNonces)if(tick-v>15000)ownerFrameNonces.delete(k);
+      if(ownerFrameNonces.has(a.nonce)||ownerFrameNonces.size>256)throw Error('owner_frame_replay_refused');
+      ownerFrameNonces.set(a.nonce,tick);
+      return live.owner_frame({maxWidth:a.maxWidth,quality:a.quality});
     },
     connection_status: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); const d = diagnostics(cfg); return {host: 'reachable', version: d.version, uptimeSec: d.uptimeSec, tunnel: d.tunnelHealth, registeredAt: d.tunnel?.registeredAt ?? null}; },
     host_diagnostics: a => { if (a && Object.keys(a).length) throw Error('invalid_args'); return diagnostics(cfg); },
@@ -382,6 +403,11 @@ async function ownerPubKey(cfg) {
   return key;
 }
 export const ownerDecisionMessage = ({consentId, decision, ts}) => `nexus-owner-decide-v1|${consentId}|${decision}|${ts}`;
+export const ownerFrameMessage = ({maxWidth,quality,nonce,ts}) => `nexus-owner-frame-v1|${maxWidth}|${quality}|${nonce}|${ts}`;
+export function verifyOwnerFrame(pub,a){
+  try {return crypto.verify(null,Buffer.from(ownerFrameMessage(a)),pub,Buffer.from(a.sig,'base64url'));}
+  catch{return false;}
+}
 export function verifyOwnerDecision(pub, a) {
   try { return crypto.verify(null, Buffer.from(ownerDecisionMessage(a)), pub, Buffer.from(a.sig, 'base64url')); } catch { return false; }
 }
