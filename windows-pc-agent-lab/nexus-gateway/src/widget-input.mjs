@@ -10,3 +10,20 @@ export function framePointToScreen(clientX, clientY, rect, frame) {
   if (u<0 || v<0 || u>=1 || v>=1) return null;
   return {x:Math.floor(u*frame.screenW),y:Math.floor(v*frame.screenH)};
 }
+
+/** Only Host stale_args means the original operation was REFUSED before execution.
+ * Never retry unknown outcomes or unsafe other errors.
+ */
+export function isPreExecutionStale(error) {
+  return /(?:^|\b)stale_args:\s*(?:task_resumed|owner_stop_resumed|owner_pause_resumed)/i.test(String(error?.message||error));
+}
+
+/** Exactly one retry after a verified pre-execution Host refusal and read-only observation. */
+export async function callOnceAfterStale(send,reobserve) {
+  try {return await send();}
+  catch(e){
+    if(!isPreExecutionStale(e)) throw e;
+    await reobserve();
+    return await send();
+  }
+}
