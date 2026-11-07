@@ -7,7 +7,7 @@ test('Live 2.0: genuine opt-in, no touch before owner activation',()=>{
   assert.match(WIDGET_HTML,/let frameGeometry=null, touchEnabled=false/);
   assert.match(WIDGET_HTML,/Date\.now\(\)-lastAt<5000/);
   assert.match(WIDGET_HTML,/framePointToScreen\(e\.clientX,e\.clientY/);
-  assert.match(WIDGET_HTML,/callTool\('mouse_action',\{action:'click'/);
+  assert.match(WIDGET_HTML,/touchCall\('mouse_action',\{action:'click'/);
   assert.match(WIDGET_HTML,/pointerStart/);
 });
 test('Live 2.0: popup follows nonsecret count only, passphrase stays direct to Gateway',()=>{
