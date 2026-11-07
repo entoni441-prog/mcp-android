@@ -29,6 +29,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
 .msg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;text-align:center;color:var(--mut);background:rgba(0,0,0,.72)}
 .msg[hidden]{display:none}.msg b{color:var(--fg)}
 .foot{color:var(--mut);font-size:11px;padding:4px 8px}
+.owner{border-top:1px solid var(--line);padding:8px;display:grid;gap:8px}.owner-head{display:flex;align-items:center;gap:8px;justify-content:space-between}.owner form{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.owner input{min-width:120px;flex:1;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--fg);padding:8px;font:inherit}.owner-entry{border:1px solid var(--line);padding:7px;border-radius:6px;overflow-wrap:anywhere}.owner-entry p{margin:2px 0 8px}.owner-actions{display:flex;gap:6px;flex-wrap:wrap}.owner-status{font-size:12px;color:var(--mut)}.owner button:disabled{opacity:.55;cursor:wait}.owner button.allow{border-color:var(--green);color:var(--green)}
 </style></head>
 <body class="offline">
 <div class="bar">
@@ -40,6 +41,15 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   <span class="meta" id="meta"></span>
 </div>
 <div class="view"><img id="img" alt="Экран Windows владельца"><div class="msg" id="msg"><b id="mt">Подключение…</b><span id="md"></span><button id="ask" hidden>Попросить включить Live View</button></div></div>
+<div class="owner" aria-label="Подтверждения владельца NEXUS">
+  <div class="owner-head"><b>Подтверждения владельца</b><button id="owner-toggle" type="button" aria-expanded="false">Показать</button></div>
+  <div id="owner-panel" hidden>
+    <p class="owner-status">Пароль <b>владельца NEXUS</b> нужен отдельно для каждой операции. Это не PIN и не пароль Windows. Данные передаются напрямую в NEXUS Gateway, не через инструменты модели.</p>
+    <form id="owner-form" autocomplete="off"><input id="owner-secret" type="password" autocomplete="off" required aria-label="Пароль владельца NEXUS" placeholder="Пароль владельца NEXUS"><button id="owner-refresh" type="submit">Проверить заявки</button></form>
+    <p id="owner-status" class="owner-status" role="status">Нет загруженных заявок.</p>
+    <div id="owner-list"></div>
+  </div>
+</div>
 <div class="foot">Только просмотр. Кадры не сохраняются. На экране могут быть личные данные — STOP выключает трансляцию на самом ПК.</div>
 <script>
 (() => {
@@ -134,6 +144,90 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     } finally { busy = false; }
   }
 
+
+  // ── NX-CHAT-OWNER-01: privileged owner approvals, out-of-band from MCP ──
+  // The model and MCP Apps host NEVER receive the password, nonce or decision.
+  // TLS POST goes directly to our owned Cloudflare gateway from this iframe.
+  const OWNER_ORIGIN = 'https://nexus-gateway.entoni441.workers.dev';
+  let ownerEntries = [], ownerBusy = false;
+  const ownerPanel = $('owner-panel'), ownerSecret = $('owner-secret');
+  $('owner-toggle').onclick = () => {
+    ownerPanel.hidden = !ownerPanel.hidden;
+    $('owner-toggle').textContent = ownerPanel.hidden ? 'Показать' : 'Скрыть';
+    $('owner-toggle').setAttribute('aria-expanded', String(!ownerPanel.hidden));
+    size();
+  };
+  function ownerMessage(message) { $('owner-status').textContent = message; size(); }
+  async function ownerPost(route, body) {
+    const r = await fetch(OWNER_ORIGIN + route, {
+      method:'POST',mode:'cors',cache:'no-store',credentials:'omit',
+      headers:{'content-type':'application/json','x-nexus-widget':'1'},
+      body:JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({error:'bad_reply'}));
+    if (!r.ok) throw new Error(String(j.error || 'gateway_error').slice(0,100));
+    return j;
+  }
+  async function ownerRequest(operation, extra) {
+    if (ownerBusy) return null;
+    const pass = ownerSecret.value;
+    if (!pass) { ownerMessage('Введи пароль владельца NEXUS. Не вводи сюда PIN Windows.'); return null; }
+    ownerBusy = true;
+    $('owner-refresh').disabled = true;
+    try {
+      // Each operation consumes a fresh 256-bit challenge, verified by
+      // existing GuardCore lockout and one-time nonce; never sent to model.
+      const challenge = await ownerPost('/live/widget/challenge',
+        {operation, ...(extra || {})});
+      const result = await ownerPost('/live/widget/perform',
+        {nonce:challenge.nonce,passphrase:pass});
+      return result;
+    } catch(e) {
+      ownerMessage('Подтверждение не выполнено: ' + String(e.message || e));
+      return null;
+    } finally {
+      ownerSecret.value = ''; // do not persist user-entered secrets
+      ownerBusy = false;
+      $('owner-refresh').disabled = false;
+      size();
+    }
+  }
+  function renderOwnerEntries() {
+    const el = $('owner-list'); el.textContent = '';
+    const labels = {allow:'Разрешить',cancel:'Отклонить',
+      close_save:'Сохранить и закрыть',close_discard:'Закрыть без сохранения'};
+    if (!ownerEntries.length) {ownerMessage('Заявок на подтверждение сейчас нет.');return;}
+    ownerMessage('Ожидающие запросы: ' + ownerEntries.length);
+    for (const c of ownerEntries) {
+      const div = document.createElement('div'); div.className='owner-entry';
+      const title = document.createElement('p');
+      title.textContent = c.target + ' · ' + Math.ceil(c.expiresInSec / 60) + ' мин';
+      div.appendChild(title);
+      const actions = document.createElement('div');actions.className='owner-actions';
+      for (const decision of c.options) {
+        const b=document.createElement('button'); b.type='button';
+        b.textContent = labels[decision] || decision;
+        if (decision==='allow') b.className='allow';
+        b.onclick=async()=>{
+          // Never authorize on a single unauthenticated click.
+          // Each action requires the owner to RE-ENTER their passphrase.
+          const r=await ownerRequest('decide',{consentId:c.consentId,decision});
+          if (!r?.ok) return;
+          div.remove();ownerEntries=ownerEntries.filter(x=>x.consentId!==c.consentId);
+          ownerMessage('Решение принято: ' + labels[decision] + '. Запрос одноразовый.');
+        };
+        actions.appendChild(b);
+      }
+      div.appendChild(actions);el.appendChild(div);
+    }
+    size();
+  }
+  $('owner-form').onsubmit=async e=>{
+    e.preventDefault();
+    const r=await ownerRequest('list');
+    if (r && Array.isArray(r.pending)) {ownerEntries=r.pending;renderOwnerEntries();}
+  };
+
   $('pp').onclick = () => { paused = !paused; $('pp').textContent = paused ? '▶' : '⏸'; if (paused) { halt(); setState('paused', 'ПАУЗА · кадры не запрашиваются'); } else { stopped = false; tick(); } };
   $('fps').onchange = () => schedule(0);
   $('pip').onclick = () => displayMode('pip');
@@ -170,10 +264,10 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
 </script></body></html>`;
 
 /** resources/list + resources/read payloads (MCP Apps + legacy OpenAI keys). No external origins are allowed. */
-export const WIDGET_RESOURCE = {uri: LIVE_UI, name: 'NEXUS Live View', description: 'Live view of the owner\'s Windows screen (view only).', mimeType: WIDGET_MIME};
+export const WIDGET_RESOURCE = {uri: LIVE_UI, name: 'NEXUS Live View', description: 'Live view of the owner\'s Windows screen; owner-only approvals require direct NEXUS reauthentication.', mimeType: WIDGET_MIME};
 export function widgetContents() {
-  const csp = {connectDomains: [], resourceDomains: [], frameDomains: []};
+  const csp = {connectDomains: ['https://nexus-gateway.entoni441.workers.dev'], resourceDomains: [], frameDomains: []};
   return [{uri: LIVE_UI, mimeType: WIDGET_MIME, text: WIDGET_HTML,
-    _meta: {ui: {csp, prefersBorder: true}, 'openai/widgetCSP': {connect_domains: [], resource_domains: []}, 'openai/widgetPrefersBorder': true,
-      'openai/widgetDescription': 'Live view of the owner\'s Windows screen. View only; STOP switches the stream off at the PC.'}}];
+    _meta: {ui: {csp, prefersBorder: true}, 'openai/widgetCSP': {connect_domains: ['https://nexus-gateway.entoni441.workers.dev'], resource_domains: []}, 'openai/widgetPrefersBorder': true,
+      'openai/widgetDescription': 'Live view of the owner\'s Windows screen. Owner approvals require separate NEXUS passphrase; STOP switches the stream off at the PC.'}}];
 }
