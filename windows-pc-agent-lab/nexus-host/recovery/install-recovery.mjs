@@ -20,7 +20,7 @@ export function makeTaskXml({sid,node,script,start}){
   if(!path.win32.isAbsolute(node)||!node.toLowerCase().endsWith('\\node.exe'))throw Error('bad_node');
   if(!path.win32.isAbsolute(script)||!script.toLowerCase().endsWith('\\recovery-watchdog.mjs'))throw Error('bad_script');
   if(!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$/.test(start))throw Error('bad_date');
-  return `<?xml version="1.0" encoding="UTF-8"?>
+  return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
  <RegistrationInfo><Description>NEXUS independent recovery. Start only verified existing Host scheduled task. No remote commands.</Description></RegistrationInfo>
  <Triggers>
@@ -72,7 +72,7 @@ function run(){
  if(arg==='--check'){console.log(JSON.stringify({state:'RECOVERY_PREFLIGHT_PASS',task:NAME,ownerSidVerified:true,limited:true}));return;}
  fs.mkdirSync(DEST,{recursive:false});
  for(const name of NAMES)fs.copyFileSync(path.join(SOURCE,name),path.join(DEST,name),fs.constants.COPYFILE_EXCL);
- const file=path.join(DEST,'recovery-task.xml');fs.writeFileSync(file,xml,'utf8');
+ const file=path.join(DEST,'recovery-task.xml');fs.writeFileSync(file,Buffer.concat([Buffer.from([0xff,0xfe]),Buffer.from(xml,'utf16le')]));
  const reg=spawnSync(TASK_EXE,['/Create','/TN',NAME,'/XML',file],{windowsHide:true,encoding:'utf8',timeout:20000});
  if(reg.status!==0)throw Error('schedule_registration_failed');
  const verify=execFileSync(TASK_EXE,['/Query','/TN',NAME,'/XML'],
