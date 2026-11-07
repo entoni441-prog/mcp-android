@@ -78,7 +78,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (m.id != null && pending.has(m.id) && !m.method) { const p = pending.get(m.id); pending.delete(m.id); m.error ? p.rej(new Error(m.error.message || 'error')) : p.res(m.result); return; }
     if (m.method === 'ui/notifications/host-context-changed' && m.params) ctx(m.params);
     if (m.method === 'ui/notifications/tool-result' && m.params) onStatus(m.params.structuredContent);
-    if (m.method === 'ui/resource-teardown' && m.id != null) { halt(); window.parent.postMessage({jsonrpc: '2.0', id: m.id, result: {}}, '*'); }
+    if (m.method === 'ui/resource-teardown' && m.id != null) { stopped = true; halt(); clearTimeout(bootTimer); window.parent.postMessage({jsonrpc: '2.0', id: m.id, result: {}}, '*'); }
   });
   function ctx(c) {
     if (Array.isArray(c.availableDisplayModes)) modes = c.availableDisplayModes;
@@ -111,7 +111,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (s.state === 'off') { stopped = true; halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
   }
   let readySince = 0;
-  function halt() { clearTimeout(timer); timer = null; if (typeof bootTimer !== 'undefined') clearTimeout(bootTimer); }
+  function halt() { clearTimeout(timer); timer = null; }
   function schedule(ms) { halt(); if (!paused && !stopped) timer = setTimeout(tick, ms); }
   const interval = () => Math.round(1000 / Number($('fps').value || 2));
 
@@ -268,7 +268,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   $('pip').onclick = () => displayMode('pip');
   $('full').onclick = () => displayMode(mode === 'fullscreen' ? 'inline' : 'fullscreen');
   $('stop').onclick = async () => {
-    stopped = true; halt(); $('img').removeAttribute('src');
+    stopped = true; halt(); clearTimeout(bootTimer); $('img').removeAttribute('src');
     setState('offline', 'STOP…');
     try { await callTool('live_control', {action: 'stop'}); setState('offline', 'NEXUS · остановлено'); show('Трансляция остановлена на ПК', 'live_view выключен. Включить снова можно только просьбой в чате.', true); }
     catch (e) { show('STOP не дошёл до ПК', String(e.message || e) + ' — закрой окно NEXUS Host на ПК, это выключает всё.'); }
