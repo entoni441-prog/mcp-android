@@ -1,0 +1,29 @@
+name: nexus-independent-recovery-ci
+on:
+  push:
+    branches: [experiment/nexus-recovery-watchdog-20261107]
+    paths:
+      - 'windows-pc-agent-lab/nexus-host/recovery/**'
+      - '.github/workflows/nexus-independent-recovery-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  recovery-policy:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify isolation, recovery budget and existing Scheduler identity
+        working-directory: windows-pc-agent-lab/nexus-host/recovery
+        run: node --test recovery-watchdog.test.mjs
+      - name: Parse main task with no execution
+        working-directory: windows-pc-agent-lab/nexus-host/recovery
+        run: node --check recovery-watchdog.mjs
