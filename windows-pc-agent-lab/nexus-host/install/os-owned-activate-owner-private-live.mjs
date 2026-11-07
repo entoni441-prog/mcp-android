@@ -3,7 +3,7 @@
  * Preflight: node <thisfile> --check (safe direct run)
  * Activation: node <thisfile> --deploy ONLY through a standalone Windows Scheduler task.
  * Direct execution from NEXUS Host is rejected by parent-process-chain verification.
- * Changes ONLY three verified Host source files. Never changes system security settings.
+ * Changes ONLY four verified Host source files. Never changes system security settings.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -28,12 +28,14 @@ const ARM=path.join(ROOT,'_owner_private_live_os_owned_armed.json');
 const OLD={
   'server.mjs':'17846e55326f8b4e5b0b90ecc93e7491698289a715971bb1d2959c0424a1fd5e',
   'gui.mjs':'a481024b69f1bf15f46cf8988cd8888c3cbb3758bc9e3b01b9729a8f8b4041a3',
-  'live.mjs':'06395581b00bb6ec25cad347aeaed448c35402113ec2d826ebc6cd5e0b31ecc3'
+  'live.mjs':'06395581b00bb6ec25cad347aeaed448c35402113ec2d826ebc6cd5e0b31ecc3',
+  'catalog.mjs':'2fabaac4a188361deb27d2b0d10572fbc6c13f831185fb30470ea385ebff3ae7'
 };
 const NEW={
   'server.mjs':'a3ad268091c2e46ffdf0c460b7610cf1f555e37f3ec044b3d47ee857f8080055',
   'gui.mjs':'d85973088923880376a5ea85f4eca104c6806db2e08bc31bf8789339ca6adfdf',
-  'live.mjs':'69fc34347ffc6344fdb327f4ca348af4038701e9ccbd4ce9e6b50edde507399e'
+  'live.mjs':'69fc34347ffc6344fdb327f4ca348af4038701e9ccbd4ce9e6b50edde507399e',
+  'catalog.mjs':'83273998eb78048d5469a9b7e5d4ceb77d370da13c8ad2a680a855df6211cc05'
 };
 const FILES=Object.keys(OLD);
 const data={phase:'created',at:new Date().toISOString(),backup:BACKUP,source:SOURCE,changed:FILES,events:[]};
