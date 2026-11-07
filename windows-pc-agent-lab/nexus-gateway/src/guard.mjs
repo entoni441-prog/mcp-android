@@ -6,4 +6,6 @@ export class ConsentGuard extends DurableObject {
   constructor(ctx, env) { super(ctx, env); this.core = new GuardCore(ctx.storage); }
   issue(auth) { return this.core.issue(auth); }
   attempt(args) { return this.core.attempt(args); }
+  issueWidget(auth) { return this.core.issueWidget(auth); }
+  attemptWidget(args) { return this.core.attemptWidget(args); }
 }
