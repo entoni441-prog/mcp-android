@@ -20,3 +20,12 @@ PASS: Windows lock and NEXUS tunnel continuity. BLOCKED: owner login/unlock tran
 After owner unlocks, verify `system_info session` shows `logonUi:false,lockApp:false` and `connection_status online`. Even that will not on its own prove the remote post-reboot login channel; **do not enable `logonChannelVerified` or reboot without independent verification and owner's required approvals**.
 
 Suggested follow-up defect: `power_action({action:"lock",dryRun:true})` should genuinely plan without executing, with unit tests; preserve `dryRun:false` semantics, and record exact safety consequences. No production/main/security changes occurred as part of this checkpoint.
+
+## Unlock acceptance completed (2026-11-07 ~06:53 Europe/Rome)
+
+- The owner explicitly reported unlocking Windows locally. NEXUS then performed independent read-only checks.
+- `system_info({topic:'session'})` reported `logonUi:false`, `consoleUser:true`, console session `krado` active, `explorerSessions:[1]`; `lockApp:true` process presence is not alone a reliable proof of continued lock.
+- Independent `capture_screen` returned an actual 960x540 Windows desktop (not the Winlogon UI): owner login/unlock succeeded, desktop capture PASS. The visible screen was not written to GitHub.
+- `connection_status` returned `verdict:online`, probe HTTP `200`, Host reachable with uptime ~1118 sec; `host_diagnostics` PID `22604`, no pending approvals.
+- `power_action({action:'restart',dryRun:true})` still reports `noUnsavedOwnerDocuments:true`, `autostartVerified:true`, `logonChannelVerified:false`; reboot BLOCKED as designed. A successful *local unlock* validates lock/unlock continuity but **not** the independent remote pre-login channel required after reboot. Never toggle the safety flag based on the local unlock alone.
+- **Verdict**: LOCK→OWNER UNLOCK→DESKTOP/NEXUS RESTORED PASS; REBOOT / PRE-LOGON REMOTE AUTH NOT TESTED.
