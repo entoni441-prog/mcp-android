@@ -34,6 +34,23 @@ const make = async () => {
   }
   return {post,calls,guard,env,deps,ownerRequests};
 };
+test('NX-CHAT-OWNER: widget challenge flood cannot evict OAuth or /live nonce',async()=>{
+  const store=new Map();
+  const c=new GuardCore({get:async k=>store.get(k),
+    put:async(k,v)=>store.set(k,structuredClone(v)),delete:async k=>store.delete(k)});
+  const oauth=await c.issue({kind:'oauth',client:'existing'});
+  const live=await c.issue({kind:'live_login'});
+  for(let i=0;i<30;i++){
+    await c.issueWidget({kind:'widget_owner',origin:ORIGIN,operation:'list'});
+  }
+  const shaPass=await sha(PASS);
+  const o=await c.attempt({nonce:oauth,passphraseSha256:shaPass,approve:true,expectedSha256:shaPass});
+  const l=await c.attempt({nonce:live,passphraseSha256:shaPass,approve:true,expectedSha256:shaPass});
+  assert.equal(o.status,'ok');
+  assert.equal(l.status,'ok');
+  assert.equal((await c.attemptWidget({nonce:oauth,passphraseSha256:shaPass,approve:true,expectedSha256:shaPass})).status,'invalid');
+});
+
 test('NX-CHAT-OWNER: origin restricted to ChatGPT sandbox only',async()=>{
   assert.equal(widgetOriginAllowed(ORIGIN),true);
   for(const origin of ['https://example.org','https://evil.web-sandbox.oaiusercontent.com.attacker.org',
