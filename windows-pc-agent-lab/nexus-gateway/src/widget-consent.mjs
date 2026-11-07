@@ -57,7 +57,7 @@ export async function handleWidgetConsent(request, env, {callHost, sha256hex, si
     if (operation === 'decide' &&
         (!isSafeConsentId(data.consentId) || !OPTIONS.includes(data.decision)))
       return response(origin,400,{error:'invalid_args'});
-    const nonce = await guard.issue({kind:'widget_owner',origin,operation,
+    const nonce = await guard.issueWidget({kind:'widget_owner',origin,operation,
       ...(operation==='decide'?{consentId:data.consentId,decision:data.decision}:{})});
     return response(origin,200,{nonce,expiresInSec:300});
   }
@@ -67,7 +67,7 @@ export async function handleWidgetConsent(request, env, {callHost, sha256hex, si
     return response(origin,400,{error:'invalid_args'});
   // The plaintext NEXUS passphrase is never logged or forwarded to any MCP tool.
   const digest = await sha256hex(data.passphrase);
-  const attempt = await guard.attempt({nonce:data.nonce,passphraseSha256:digest,approve:true,expectedSha256:expected});
+  const attempt = await guard.attemptWidget({nonce:data.nonce,passphraseSha256:digest,approve:true,expectedSha256:expected});
   if (attempt.status !== 'ok') {
     const status = attempt.status === 'locked' ? 429 : attempt.status === 'invalid' ? 400 : 403;
     return response(origin,status,{error:attempt.status,remaining:attempt.remaining??null});
