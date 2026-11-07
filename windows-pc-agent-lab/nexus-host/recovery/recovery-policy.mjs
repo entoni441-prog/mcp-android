@@ -7,9 +7,9 @@ export const RETRY_GAP_MS=2*60_000;
 /** Every recovery attempt starts only the PREINSTALLED NEXUS-Host-Run task.
  * No kill, no logon, no power change, no deployment, no capability changes.
  */
-export function decideRecovery({now,healthy,ownerOff,existingHostAlive,taskVerified,state={}}){
+export function decideRecovery({now,healthy,ownerOff,existingHostAlive,supervisorAlive=false,taskVerified,state={}}){
   if(!Number.isSafeInteger(now)||now<0||typeof healthy!=='boolean'||typeof ownerOff!=='boolean'||
-     typeof existingHostAlive!=='boolean'||typeof taskVerified!=='boolean')throw Error('bad_observation');
+     typeof existingHostAlive!=='boolean'||typeof supervisorAlive!=='boolean'||typeof taskVerified!=='boolean')throw Error('bad_observation');
   const attempts=Array.isArray(state.attempts)?state.attempts:[];
   if(attempts.some((t,i)=>!Number.isSafeInteger(t)||t<0||t>now||(i>0&&t<=attempts[i-1])))throw Error('bad_journal');
   const recent=attempts.filter(t=>now-t<WINDOW_MS);
@@ -21,6 +21,7 @@ export function decideRecovery({now,healthy,ownerOff,existingHostAlive,taskVerif
   }
   const next={attempts:recent,healthySince:null};
   if(existingHostAlive)return {action:'HOST_ALIVE_UNHEALTHY_STOP',next};
+  if(supervisorAlive)return {action:'SUPERVISOR_PRESENT_WAIT',next};
   if(!taskVerified)return {action:'TASK_IDENTITY_UNVERIFIED',next};
   if(recent.length>=MAX_STARTS)return {action:'RESTART_BUDGET_EXHAUSTED',next};
   if(recent.length && now-recent[recent.length-1]<RETRY_GAP_MS)return {action:'RETRY_COOLDOWN',next};
