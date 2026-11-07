@@ -19,6 +19,7 @@ on:
       - 'windows-pc-agent-lab/nexus-gateway/src/private-frame.mjs'
       - 'windows-pc-agent-lab/nexus-gateway/test/private-frame.test.mjs'
       - 'windows-pc-agent-lab/nexus-gateway/test/live050.test.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/test/handlers.test.mjs'
       - '.github/workflows/nexus-owner-private-live-ci.yml'
   workflow_dispatch:
 permissions:
