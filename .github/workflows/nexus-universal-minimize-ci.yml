@@ -1,0 +1,44 @@
+name: nexus-universal-minimize-silent-watchdog
+on:
+  push:
+    branches: [experiment/nexus-universal-minimize-silent-watchdog-20261107]
+    paths:
+      - 'windows-pc-agent-lab/nexus-host/gui.mjs'
+      - 'windows-pc-agent-lab/nexus-host/uia-script.mjs'
+      - 'windows-pc-agent-lab/nexus-host/policy.mjs'
+      - 'windows-pc-agent-lab/nexus-host/catalog.mjs'
+      - 'windows-pc-agent-lab/nexus-host/universal-minimize.test.mjs'
+      - 'windows-pc-agent-lab/nexus-host/gui.test.mjs'
+      - 'windows-pc-agent-lab/nexus-host/install/os-owned-activate-universal-minimize.mjs'
+      - 'windows-pc-agent-lab/nexus-host/install/schedule-os-owned-universal-minimize.mjs'
+      - 'windows-pc-agent-lab/nexus-host/recovery/recovery-silent-launcher.cs'
+      - 'windows-pc-agent-lab/nexus-gateway/src/catalog.mjs'
+      - '.github/workflows/nexus-universal-minimize-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: {os: [windows-latest, ubuntu-latest]}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Syntax check
+        working-directory: windows-pc-agent-lab/nexus-host
+        run: |
+          node --check gui.mjs
+          node --check policy.mjs
+          node --check uia-script.mjs
+          node --check install/os-owned-activate-universal-minimize.mjs
+          node --check install/schedule-os-owned-universal-minimize.mjs
+      - name: Host and permission regressions
+        working-directory: windows-pc-agent-lab/nexus-host
+        run: node --test gui.test.mjs universal-minimize.test.mjs owner-touch-pref.test.mjs
+      - name: Catalog parity
+        shell: bash
+        run: cmp windows-pc-agent-lab/nexus-host/catalog.mjs windows-pc-agent-lab/nexus-gateway/src/catalog.mjs
