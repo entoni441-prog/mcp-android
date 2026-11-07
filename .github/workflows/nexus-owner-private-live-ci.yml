@@ -6,6 +6,10 @@ on:
       - 'windows-pc-agent-lab/nexus-host/gui.mjs'
       - 'windows-pc-agent-lab/nexus-host/live.mjs'
       - 'windows-pc-agent-lab/nexus-host/server.mjs'
+      - 'windows-pc-agent-lab/nexus-host/catalog.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/src/catalog.mjs'
+      - 'windows-pc-agent-lab/nexus-host/install/os-owned-activate-owner-private-live.mjs'
+      - 'windows-pc-agent-lab/nexus-host/install/schedule-os-owned-owner-private-live.mjs'
       - 'windows-pc-agent-lab/nexus-host/owner-private-live.test.mjs'
       - 'windows-pc-agent-lab/nexus-host/stage4-052.test.mjs'
       - 'windows-pc-agent-lab/nexus-gateway/src/widget.mjs'
@@ -37,6 +41,8 @@ jobs:
           node --check server.mjs
           node --check gui.mjs
           node --check live.mjs
+          node --check install/os-owned-activate-owner-private-live.mjs
+          node --check install/schedule-os-owned-owner-private-live.mjs
       - name: Gateway syntax
         working-directory: windows-pc-agent-lab/nexus-gateway
         run: |
@@ -47,6 +53,9 @@ jobs:
       - name: Host owner/AI privacy boundaries
         working-directory: windows-pc-agent-lab/nexus-host
         run: node --test owner-private-live.test.mjs stage4-052.test.mjs
+      - name: Catalog parity
+        shell: bash
+        run: cmp windows-pc-agent-lab/nexus-host/catalog.mjs windows-pc-agent-lab/nexus-gateway/src/catalog.mjs
       - name: Gateway token, widget and Live regressions
         working-directory: windows-pc-agent-lab/nexus-gateway
         run: node --test test/private-frame.test.mjs test/widget-owner.test.mjs test/live050.test.mjs test/widget-interactive.test.mjs test/handlers.test.mjs
