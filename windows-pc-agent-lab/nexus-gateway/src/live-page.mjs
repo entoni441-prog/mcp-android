@@ -39,6 +39,11 @@ export async function signDecision(env, {consentId, decision, ts}) {
   const k = await ownerKey(env);
   return b64u(await crypto.subtle.sign({name: 'Ed25519'}, k.priv, enc.encode(`nexus-owner-decide-v1|${consentId}|${decision}|${ts}`)));
 }
+export async function signOwnerFrame(env,{maxWidth,quality,nonce,ts}){
+  const k=await ownerKey(env);
+  const data=`nexus-owner-frame-v1|${maxWidth}|${quality}|${nonce}|${ts}`;
+  return b64u(await crypto.subtle.sign({name:'Ed25519'},k.priv,enc.encode(data)));
+}
 export const SESSION_TTL_MS = 30 * 60_000;
 export const COOKIE = '__Host-nx_live';
 const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -83,7 +88,7 @@ const STYLE = '<style>body{font:15px system-ui;margin:0;background:#0f1115;color
 function loginPage(n, msg = '', status = 200) {
   return html(`${STYLE}<main><h1>NEXUS Live View</h1><p>Просмотр экрана твоего Windows. Только для владельца.</p>${msg ? `<p class="w">${esc(msg)}</p>` : ''}
 <form method="POST" action="/live/login"><input type="hidden" name="nonce" value="${n}"><label>Пароль владельца<br><input type="password" name="passphrase" autocomplete="current-password" required></label><button type="submit">Войти (сессия 30 мин)</button></form>
-<p style="color:#9aa0a6;font-size:13px">Трансляция идёт, только пока эта страница открыта и на ПК включён live_view. Кадры нигде не сохраняются.</p></main>`, {status});
+<p style="color:#9aa0a6;font-size:13px">Трансляция идёт, только пока эта страница открыта и на ПК включён live_view. Кадры нигде не сохраняются. После входа владельца личные окна показываются без чёрной маски; в ChatGPT скриншотах остаются скрытыми.</p></main>`, {status});
 }
 
 function viewerPage() {
@@ -94,7 +99,7 @@ function viewerPage() {
 <body class="offline"><div class="bar"><span class="dot"></span><b id="s">подключение…</b><button id="pp">⏸</button>
 <select id="f"><option value="0.5">0.5 к/с</option><option value="1">1 к/с</option><option value="2" selected>2 к/с</option><option value="4">4 к/с</option></select>
 <button id="fs">⛶</button><button id="st" class="stop">■ STOP</button><button id="off" class="stop">⏻ Выключить NEXUS</button><button id="lo">Выйти</button><span id="m"></span></div>
-<div id="cq"></div>
+<div id="cq"></div><div style="padding:5px 9px;color:#f5a524;font-size:12px">Приватный просмотр владельца · Документы видны только после входа · Кадры не сохраняются</div>
 <img id="i" alt="Экран Windows"><div id="x"></div>
 <script nonce="${n}">
 (() => {
@@ -186,7 +191,13 @@ export async function handleLive(request, env, {callHost, sha256hex}) {
   if (!session) return jsonR(401, {error: 'unauthorized'});
   if (p === '/live/frame' && request.method === 'GET') {
     const w = Number(url.searchParams.get('w') || 960);
-    const r = await callHost('live_frame', {maxWidth: [960, 1600].includes(w) ? w : 960, quality: 60});
+    // This route is passphrase-cookie-protected, unlike MCP app live_frame.
+    // Host checks the Gateway's Ed25519 signature and never shares its unmasked
+    // capture with the standard app/model cache.
+    const maxWidth=[960,1600].includes(w)?w:960,quality=60,ts=Date.now();
+    const frameNonce=Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
+    const sig=await signOwnerFrame(env,{maxWidth,quality,nonce:frameNonce,ts});
+    const r=await callHost('owner_frame',{maxWidth,quality,nonce:frameNonce,ts,sig});
     if (!r.ok) return jsonR(503, {error: r.reason});
     const sc = r.result?.structuredContent;
     if (sc?.state === 'off') return jsonR(409, {error: 'live_view_off'});
