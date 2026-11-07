@@ -62,19 +62,41 @@ function taskExists(){
 function run(){
  if(process.platform!=='win32')throw Error('windows_only');
  const arg=process.argv[2];
- if(!['--check','--install'].includes(arg)||process.argv.length!==3)throw Error('arg');
+ if(!['--check','--install','--resume'].includes(arg)||process.argv.length!==3)throw Error('arg');
  verifySource();
- if(taskExists()||fs.existsSync(DEST))throw Error('existing_rescue_task_or_directory');
+ const exists=fs.existsSync(DEST);
+ if(taskExists())throw Error('existing_rescue_task');
+ if(arg!=='--resume'&&exists)throw Error('existing_rescue_directory');
+ if(arg==='--resume'&&!exists)throw Error('missing_partial_install');
  const owner=sid();
  if(!fs.existsSync(process.execPath)||!process.execPath.toLowerCase().endsWith('node.exe'))throw Error('node_not_signed_runtime');
  const script=path.win32.join(DEST,'recovery-watchdog.mjs');
  const xml=makeTaskXml({sid:owner,node:process.execPath,script,start:localTime()});
  if(arg==='--check'){console.log(JSON.stringify({state:'RECOVERY_PREFLIGHT_PASS',task:NAME,ownerSidVerified:true,limited:true}));return;}
- fs.mkdirSync(DEST,{recursive:false});
- for(const name of NAMES)fs.copyFileSync(path.join(SOURCE,name),path.join(DEST,name),fs.constants.COPYFILE_EXCL);
- const file=path.join(DEST,'recovery-task.xml');fs.writeFileSync(file,Buffer.concat([Buffer.from([0xff,0xfe]),Buffer.from(xml,'utf16le')]));
+ const file=path.join(DEST,'recovery-task.xml');
+ let taskXml=xml;
+ if(arg==='--resume'){
+   const files=fs.readdirSync(DEST).sort();
+   if(JSON.stringify(files)!==JSON.stringify([...NAMES,'recovery-task.xml'].sort()))throw Error('unexpected_existing_files');
+   for(const name of NAMES){
+     const old=fs.readFileSync(path.join(DEST,name)),fresh=fs.readFileSync(path.join(SOURCE,name));
+     if(!old.equals(fresh))throw Error('partial_install_source_mismatch:'+name);
+   }
+   const oldXml=fs.readFileSync(file,'utf8');
+   const time=oldXml.match(/<StartBoundary>([^<]+)<\/StartBoundary>/)?.[1];
+   if(!time)throw Error('unverified_partial_xml');
+   const expected=makeTaskXml({sid:owner,node:process.execPath,script,start:time});
+   if(oldXml!==expected.replace('encoding="UTF-16"','encoding="UTF-8"'))
+     throw Error('partial_xml_changed');
+   taskXml=expected;
+ } else {
+   fs.mkdirSync(DEST,{recursive:false});
+   for(const name of NAMES)fs.copyFileSync(path.join(SOURCE,name),path.join(DEST,name),fs.constants.COPYFILE_EXCL);
+ }
+ const blob=Buffer.concat([Buffer.from([0xff,0xfe]),Buffer.from(taskXml,'utf16le')]);
+ fs.writeFileSync(file,blob);
  const reg=spawnSync(TASK_EXE,['/Create','/TN',NAME,'/XML',file],{windowsHide:true,encoding:'utf8',timeout:20000});
- if(reg.status!==0)throw Error('schedule_registration_failed');
+ if(reg.status!==0)throw Error('schedule_registration_failed:'+String(reg.stderr||'').slice(0,350));
  const verify=execFileSync(TASK_EXE,['/Query','/TN',NAME,'/XML'],
    {windowsHide:true,encoding:'utf8',timeout:10000});
  if(!String(verify).includes('recovery-watchdog.mjs')||!String(verify).includes('InteractiveToken'))
