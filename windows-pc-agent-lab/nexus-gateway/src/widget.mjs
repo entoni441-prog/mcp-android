@@ -63,6 +63,11 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
 .touch-tools input{min-height:44px}
 #touch-mini[hidden]{display:none!important}
 #touch-mini{font-size:11px;color:var(--mut);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.private-panel{position:fixed;inset:0;z-index:105;background:rgba(0,0,0,.86);padding:14px;display:flex;align-items:center;justify-content:center}
+.private-panel[hidden]{display:none!important}.private-card{width:min(440px,100%);border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:14px;display:grid;gap:10px}
+.private-card input{width:100%;min-height:44px;font:16px system-ui;padding:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:6px}
+.private-card button{min-height:38px}.private-card .warn{color:var(--amber);font-size:12px}
+#private-view.is-on{color:var(--green);border-color:var(--green)}
 
 </style></head>
 <body class="offline">
@@ -71,12 +76,22 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   <button id="pp" title="Пауза / продолжить">⏸</button>
   <button id="touch-toggle" type="button" aria-pressed="false" title="Прямое управление экраном, только по команде владельца">Управление: выкл.</button>
   <button id="touch-open" type="button" hidden aria-label="Открыть клавиатуру Samsung для ввода текста">⌨</button>
+  <button id="private-view" type="button" aria-pressed="false" title="Показать свои документы только тебе после пароля владельца">Личные окна 🔒</button>
   <select id="fps" title="Кадров в секунду" aria-label="Кадров в секунду"><option value="0.5">0.5 к/с</option><option value="1">1 к/с</option><option value="2" selected>2 к/с</option><option value="4">4 к/с</option></select>
   <button id="pip" hidden title="Картинка в картинке">⧉</button><button id="full" hidden title="Во весь экран">⛶</button>
   <button id="stop" class="stop" title="Остановить трансляцию на ПК">■ STOP</button>
   <span class="meta" id="meta"></span>
 </div>
 <div class="view"><img id="img" alt="Экран Windows владельца"><div class="msg" id="msg"><b id="mt">Подключение…</b><span id="md"></span><button id="ask" hidden>Попросить включить Live View</button></div></div>
+<div class="private-panel" id="private-panel" hidden role="dialog" aria-label="Приватный просмотр документов">
+ <div class="private-card"><b>Личные окна Windows</b>
+ <span class="warn">В этом режиме ты увидишь свои документы без чёрной маски. Обычные скриншоты для ChatGPT останутся скрытыми. Только пароль владельца NEXUS — не PIN Windows.</span>
+ <form id="private-form" autocomplete="off"><input id="private-pass" type="password" autocomplete="off" required aria-label="Пароль владельца NEXUS"><button type="submit">Показать на 3 минуты</button></form>
+ <span id="private-status" role="status" class="warn"></span>
+ <button type="button" id="private-close">Отмена</button>
+ <a href="https://nexus-gateway.entoni441.workers.dev/live" target="_blank" rel="noopener noreferrer">Открыть приватный просмотр в браузере</a>
+ </div>
+</div>
 <div class="touch-tools" id="touch-tools" hidden role="dialog" aria-label="Ввод текста в Windows">
   <div class="touch-card">
     <div class="touch-head"><b>Текст в Windows</b><button id="touch-close" type="button" aria-label="Скрыть клавиатуру">Скрыть</button></div>
@@ -129,7 +144,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (m.id != null && pending.has(m.id) && !m.method) { const p = pending.get(m.id); pending.delete(m.id); m.error ? p.rej(new Error(m.error.message || 'error')) : p.res(m.result); return; }
     if (m.method === 'ui/notifications/host-context-changed' && m.params) ctx(m.params);
     if (m.method === 'ui/notifications/tool-result' && m.params) onStatus(m.params.structuredContent);
-    if (m.method === 'ui/resource-teardown' && m.id != null) { stopped = true; clearTap(); clearTimeout(leaseTimer); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); window.parent.postMessage({jsonrpc: '2.0', id: m.id, result: {}}, '*'); }
+    if (m.method === 'ui/resource-teardown' && m.id != null) { stopped = true; stopPrivate(); clearTap(); clearTimeout(leaseTimer); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); window.parent.postMessage({jsonrpc: '2.0', id: m.id, result: {}}, '*'); }
   });
   function ctx(c) {
     if (Array.isArray(c.availableDisplayModes)) modes = c.availableDisplayModes;
@@ -159,7 +174,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   const hide = () => { $('msg').hidden = true; };
   function onStatus(s) {
     if (!s || typeof s !== 'object') return;
-    if (s.state === 'off') { stopped = true; frameGeometry=null; touchConsent=null; resetTouch(); if (ownerPopup) dismissOwnerPopup(); halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
+    if (s.state === 'off') { stopped = true; stopPrivate(); frameGeometry=null; touchConsent=null; resetTouch(); if (ownerPopup) dismissOwnerPopup(); halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
   }
   let readySince = 0;
   function halt() { clearTimeout(timer); timer = null; }
