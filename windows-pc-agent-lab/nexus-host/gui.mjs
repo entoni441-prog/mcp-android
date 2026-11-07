@@ -24,8 +24,7 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {UIA_SCRIPT} from './uia-script.mjs';
 import {requireCap} from './capabilities.mjs';
-import {appGate, classifyApp, classifyIdeInput, classifyIdeClick, redactSecrets, handoffSpec, classifyDestructiveClick, classifyDestructiveKeys} from './policy.mjs';
-import {allowedWindowProcess, isTitlebarMinimizeTouch} from './minimize-policy.mjs';
+import {appGate, classifyApp, classifyIdeInput, classifyIdeClick, redactSecrets, handoffSpec, classifyDestructiveClick, classifyDestructiveKeys, allowedWindowProcess, isTitlebarMinimizeTouch} from './policy.mjs';
 import {classifyKeys, classifyClick, createConsent} from './consent.mjs';
 import {createLifecycle} from './lifecycle.mjs';
 
