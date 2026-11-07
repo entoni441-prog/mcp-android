@@ -162,7 +162,7 @@ test('0.5.2 IDE: typing into the VS Code terminal or pressing F5 needs consent; 
   const {createConsent} = await import('./consent.mjs');
   const mk = elem => {
     const f = fakes({focused: {ok: true, pid: 70, process: 'Code'}}); const uia0 = f.uia;
-    f.uia = async a => (a.mode === 'context' ? {...(await uia0(a)), elem} : uia0(a));
+    f.uia = async a => (a.mode === 'context' ? {...(await uia0(a)), elem: {...elem,isPassword:false}} : uia0(a));
     return {f, g: createGui({caps: caps(), home: tmp, workspace: tmp, platform: 'win32', runUia: f.uia, robot: f.robot, consent: createConsent()})};
   };
   let {f, g} = mk({controlType: 'Edit', name: 'Terminal 1, powershell'});
