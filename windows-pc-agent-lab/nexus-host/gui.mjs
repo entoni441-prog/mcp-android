@@ -761,7 +761,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
           opts: {policyOk}, legacy: 'target_not_allowed', el: at.at?.elem,
           extra: ide?.level === 3 ? {level: 3, what: 'arbitrary_command', via: ide.via} : dz ? {level: 2, what: dz.what, via: dz.via} : null});
         if (pg) return pg;
-        target = {process: at.at.process, pid: at.at.pid, control: at.at.controlType, name: at.at.elem?.name};
+        target = {process: at.at.process, pid: at.at.pid, control: at.at.controlType, name: at.at.elem?.name, isPassword: at.at.elem?.isPassword !== false};
         lastAt = at.at;
       }
       const c = classifyClick(args.action, lastAt);
@@ -796,6 +796,10 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       if (hasKeys && /^(?=.*ctrl)(?=.*alt)/.test(args.keys)) bad(); // Ctrl+Alt+… = AltGr / system chords: refused
       const before = await uia({mode: 'context'});
       if (!before.focused?.ok) throw Error('focus_not_allowed');
+      // Never forward widget text, clipboard or keys into a password/PIN field.
+      if (before.elem?.isPassword === true) throw Error('protected_input_refused');
+      if (hasText && /(?:Edit|Document|ComboBox)/i.test(String(before.elem?.controlType||'')) && before.elem?.isPassword !== false)
+        throw Error('protected_input_unverified');
       if (nexusWin && before.window?.hwnd && String(before.window.hwnd) !== nexusWin.hwnd && before.focused.pid !== nexusWin.pid) {
         try { onOwnerActive('foreground'); } catch { /* the refusal below still holds */ }
         throw Error(`owner_active: the foreground window is now ${before.focused.process || 'another app'}, switched not by NEXUS (the owner may be working there) - typing refused; ${OWNER_HINT}; after that, take your window back with focus_window (pid ${nexusWin.pid ?? '?'})`);
