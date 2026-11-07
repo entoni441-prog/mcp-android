@@ -1,0 +1,52 @@
+name: nexus-owner-private-live
+on:
+  push:
+    branches: [experiment/nexus-owner-private-live-20261107]
+    paths:
+      - 'windows-pc-agent-lab/nexus-host/gui.mjs'
+      - 'windows-pc-agent-lab/nexus-host/live.mjs'
+      - 'windows-pc-agent-lab/nexus-host/server.mjs'
+      - 'windows-pc-agent-lab/nexus-host/owner-private-live.test.mjs'
+      - 'windows-pc-agent-lab/nexus-host/stage4-052.test.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/src/widget.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/src/widget-consent.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/src/live-page.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/src/handlers.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/src/private-frame.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/test/private-frame.test.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/test/live050.test.mjs'
+      - '.github/workflows/nexus-owner-private-live-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  private-regression:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix: {os: [windows-latest, ubuntu-latest]}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Host syntax
+        working-directory: windows-pc-agent-lab/nexus-host
+        run: |
+          node --check server.mjs
+          node --check gui.mjs
+          node --check live.mjs
+      - name: Gateway syntax
+        working-directory: windows-pc-agent-lab/nexus-gateway
+        run: |
+          node --check src/handlers.mjs
+          node --check src/private-frame.mjs
+          node --check src/widget.mjs
+          node --check src/live-page.mjs
+      - name: Host owner/AI privacy boundaries
+        working-directory: windows-pc-agent-lab/nexus-host
+        run: node --test owner-private-live.test.mjs stage4-052.test.mjs
+      - name: Gateway token, widget and Live regressions
+        working-directory: windows-pc-agent-lab/nexus-gateway
+        run: node --test test/private-frame.test.mjs test/widget-owner.test.mjs test/live050.test.mjs test/widget-interactive.test.mjs test/handlers.test.mjs
