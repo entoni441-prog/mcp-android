@@ -8,7 +8,8 @@
  */
 import {TOOLS, PROTOCOL_VERSIONS, SERVER_INFO, LIVE_UI} from './catalog.mjs';
 import {WIDGET_RESOURCE, widgetContents} from './widget.mjs';
-import {handleLive, ownerKey} from './live-page.mjs';
+import {handleLive, ownerKey, signDecision} from './live-page.mjs';
+import {handleWidgetConsent} from './widget-consent.mjs';
 
 const enc = new TextEncoder();
 // `wrangler secret put` fed from a PowerShell pipe may append CR/LF — normalise once.
@@ -57,6 +58,7 @@ export async function handleDefault(request, env, {fetcher = fetch} = {}) {
     const {x} = await ownerKey(env);
     return new Response(JSON.stringify({alg: 'Ed25519', x}), {status: 200, headers: {'content-type': 'application/json', 'cache-control': 'no-store'}});
   }
+  if (url.pathname.startsWith('/live/widget/')) return handleWidgetConsent(request, env, {sha256hex, signDecision, callHost: (name, args) => callHost(env, name, args, {fetcher})});
   if (url.pathname === '/live' || url.pathname.startsWith('/live/')) return handleLive(request, env, {sha256hex, callHost: (name, args) => callHost(env, name, args, {fetcher})});
   if (url.pathname !== '/authorize') return new Response('Not found', {status: 404});
   const expected = secret(env.OWNER_PASSPHRASE_SHA256 || '').toLowerCase();
