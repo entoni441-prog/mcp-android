@@ -25,10 +25,11 @@ Status: **Experimental implementation accepted in unit/integration/CI. Not deplo
 - Gateway new CSP `connectDomains` includes **only** `https://nexus-gateway.entoni441.workers.dev`; no frameDomains, no Windows credentials. Production Worker was not touched.
 
 ## Verified evidence
-- On actual owner's Windows machine: Gateway suite (handlers, offline, live, owner061, guard-core, widget-owner, widget-owner-route): **43/43 PASS** exit 0.
+- On actual owner's Windows machine: Gateway suite (handlers, offline, live, owner061, guard-core, widget-owner, widget-owner-route): **44/44 PASS** exit 0.
 - Negative tests: bad Origin, missing widget header, malformed decisions/ID, wrong passphrase, 5-fail lockout, nonce replay, cross-Origin replay, no owner_decide before authorization, no secret forwarded to Host, one-time signed decision.
 - Independent GitHub Actions: run **42345562253** on Windows-latest and Ubuntu-latest: **both PASS**.
 - Independent GitHub Actions run **42345728235** on Windows-latest and Ubuntu-latest: **both PASS**, including `wrangler deploy --dry-run` production-shaped bundle. This is a *dry run*, nothing deployed.
+- Final hardened run **42346090018**: Windows-latest and Ubuntu-latest both **PASS** (unit/integration, security regression, and Wrangler dry-run).
 - CI added under `.github/workflows/nexus-inline-owner-ci.yml` for this branch only; code syntax and component tests checked.
 
 ## Remaining gates / limitations
@@ -45,3 +46,10 @@ Pre-login provider must run independently from user session and emit only signed
 
 ## Stop point
 Experimental branch code can be reviewed and iterated without touching production. The owner should not enter a Windows password or PIN into current ChatGPT widgets. Additional production/security changes await explicit authorization.
+
+## Security hardening after initial acceptance
+- A public cross-origin widget challenge endpoint could otherwise fill the common pending nonce queue and evict legitimate OAuth / owner Live requests. Fixed by separate Durable Object storage buckets: default `pending` retains OAuth/Live nonces, `widget_pending` contains widget challenges. Both share the **same** owner passphrase failure counter and lockout.
+- `GuardCore.issueWidget` / `attemptWidget` and `ConsentGuard` RPC methods are dedicated to the embedded widget; no new model-callable owner-approval tool.
+- New regression proves 30 widget challenge requests do not evict a previously issued OAuth nonce or external Live nonce, and a nonce from one bucket cannot be redeemed via the other.
+- The Live display timer and the boot connection-status timer were separated, so the normal 2fps frame refresh does not cancel the 15-second status check.
+- Last verified hardened GitHub Actions run: **42346090018** (Windows + Ubuntu PASS). Actual mobile ChatGPT acceptance still required before any production deployment.
