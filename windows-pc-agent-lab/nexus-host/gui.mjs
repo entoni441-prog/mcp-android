@@ -598,12 +598,16 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     },
 
     /** 0.5.0 Live View: one JPEG frame (cursor drawn in). Capability checks are done by live.mjs. */
-    async frameJpeg(maxW, quality, caption = null) {
+    async frameJpeg(maxW, quality, caption = null, options = null) {
       winOnly();
+      // Owner-only capture is NOT an MCP catalog tool. Only the Gateway-signed,
+      // passphrase-authenticated owner channel can request this unmasked frame.
+      // Model capture_screen and the normal app live_frame ALWAYS stay redacted.
+      if (options !== null && (typeof options !== 'object' || Object.keys(options).some(k=>k!=='ownerOnly') || options.ownerOnly!==true)) throw Error('invalid_capture_scope');
       fs.mkdirSync(tmpDir, {recursive: true});
       const file = path.join(tmpDir, 'frm-' + crypto.randomBytes(8).toString('hex') + '.jpg');
       try {
-        const mk = await captureMasks('live');
+        const mk = options?.ownerOnly === true ? {masks: [], hidden: 0} : await captureMasks('live');
         const cap = typeof caption === 'string' && caption ? ' ' + Buffer.from(caption.replace(/[^\x20-\x7e]/g, '?').slice(0, 160), 'utf8').toString('base64') : '';
         const r = await getRobot().cmd(`frame ${maxW} ${quality} ${Buffer.from(file).toString('base64')} ${maskArg(mk.masks)}${cap}`);
         return {jpeg: fs.readFileSync(file), meta: r};
