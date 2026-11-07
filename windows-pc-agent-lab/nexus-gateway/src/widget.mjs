@@ -302,9 +302,9 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
 
 /** resources/list + resources/read payloads (MCP Apps + legacy OpenAI keys). No external origins are allowed. */
 export const WIDGET_RESOURCE = {uri: LIVE_UI, name: 'NEXUS Live View', description: 'Live view of the owner\'s Windows screen; owner-only approvals require direct NEXUS reauthentication.', mimeType: WIDGET_MIME};
-export function widgetContents() {
+export function widgetContents(uri = LIVE_UI) {
   const csp = {connectDomains: ['https://nexus-gateway.entoni441.workers.dev'], resourceDomains: [], frameDomains: []};
-  return [{uri: LIVE_UI, mimeType: WIDGET_MIME, text: WIDGET_HTML,
+  return [{uri, mimeType: WIDGET_MIME, text: WIDGET_HTML,
     _meta: {ui: {csp, prefersBorder: true}, 'openai/widgetCSP': {connect_domains: ['https://nexus-gateway.entoni441.workers.dev'], resource_domains: []}, 'openai/widgetPrefersBorder': true,
       'openai/widgetDescription': 'Live view of the owner\'s Windows screen. Owner approvals require separate NEXUS passphrase; STOP switches the stream off at the PC.'}}];
 }
