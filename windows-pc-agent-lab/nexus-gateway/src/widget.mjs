@@ -181,14 +181,88 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   function schedule(ms) { halt(); if (!paused && !stopped) timer = setTimeout(tick, ms); }
   const interval = () => Math.round(1000 / Number($('fps').value || 2));
 
+  // Private frames go DIRECTLY to the owner's Gateway after a fresh passphrase
+  // challenge. They NEVER use MCP tools/call and cannot enter model-visible
+  // screenshots or the normal Live frame cache. Ticket lives only in memory.
+  let privateTicket='',privateExpiresAt=0,privateUrl=null,privateSeq=0;
+  function stopPrivate(){
+    privateTicket='';privateExpiresAt=0;
+    $('private-pass').value='';$('private-panel').hidden=true;
+    $('private-view').textContent='Личные окна 🔒';$('private-view').classList.remove('is-on');
+    $('private-view').setAttribute('aria-pressed','false');
+    if(privateUrl){URL.revokeObjectURL(privateUrl);privateUrl=null;}
+    size();
+  }
+  function setFrameSource(url,isBlob){
+    if(privateUrl){URL.revokeObjectURL(privateUrl);privateUrl=null;}
+    $('img').src=url;
+    if(isBlob)privateUrl=url;
+  }
+  async function getViewFrame(maxWidth){
+    if(privateTicket && Date.now()>=privateExpiresAt)stopPrivate();
+    if(privateTicket){
+      const r=await fetch(OWNER_ORIGIN+'/live/widget/private-frame',{
+        method:'POST',mode:'cors',cache:'no-store',credentials:'omit',redirect:'error',
+        headers:{'content-type':'application/json','x-nexus-widget':'1','authorization':'Bearer '+privateTicket},
+        body:JSON.stringify({maxWidth})
+      });
+      if(r.status===401||r.status===403){stopPrivate();throw Error('Приватный доступ истёк. Повтори вход владельца.');}
+      if(r.status===204)return {sc:{state:'ready'}};
+      if(r.status===409)return {sc:{state:'off'}};
+      if(!r.ok)throw Error('Не удалось получить приватный кадр (HTTP '+r.status+')');
+      const vals=(r.headers.get('x-nexus-frame')||'').split(',').map(Number);
+      if(vals.length!==6||vals.some(x=>!Number.isSafeInteger(x))||
+         vals[0]<1||vals[1]<1||vals[2]<1||vals[3]<1)
+        throw Error('Некорректный размер приватного кадра');
+      const blob=await r.blob();
+      if(blob.type!=='image/jpeg'||blob.size===0||blob.size>4000000)throw Error('Некорректный приватный кадр');
+      const url=URL.createObjectURL(blob);
+      return {sc:{state:'live',seq:++privateSeq,imageW:vals[0],imageH:vals[1],
+        screenW:vals[2],screenH:vals[3],cursor:vals[4]>=0?{x:vals[4],y:vals[5]}:null},url,isBlob:true};
+    }
+    const r=await callTool('live_frame',{maxWidth,quality:60});
+    if(r?.isError)throw Error(String(r.content?.[0]?.text||'Ошибка Live'));
+    const sc=r?.structuredContent;
+    const im=(r?.content||[]).find(c=>c.type==='image');
+    return {sc,url:im?'data:'+im.mimeType+';base64,'+im.data:null,isBlob:false};
+  }
+  $('private-view').onclick=()=>{
+    if(privateTicket){stopPrivate();lastSeq=-1;return;}
+    if(stopped)return;
+    $('private-panel').hidden=false;$('private-status').textContent='';
+    size();
+  };
+  $('private-close').onclick=()=>{$('private-pass').value='';$('private-panel').hidden=true;size();};
+  $('private-form').onsubmit=async e=>{
+    e.preventDefault();
+    const pass=$('private-pass').value;
+    if(!pass)return;
+    $('private-status').textContent='Проверка владельца…';
+    const submit=$('private-form').querySelector('button[type=submit]');submit.disabled=true;
+    try{
+      const challenge=await ownerPost('/live/widget/challenge',{operation:'private_view'});
+      const result=await ownerPost('/live/widget/perform',{nonce:challenge.nonce,passphrase:pass});
+      if(typeof result.viewerToken!=='string'||result.scope!=='owner_private_frames_only'||
+         !Number.isInteger(result.expiresInSec)||result.expiresInSec<30||result.expiresInSec>180)
+        throw Error('Неверное подтверждение Gateway');
+      privateTicket=result.viewerToken;privateExpiresAt=Date.now()+result.expiresInSec*1000;
+      privateSeq=0;lastSeq=-1;
+      $('private-view').textContent='Личные окна: видны';$('private-view').classList.add('is-on');
+      $('private-view').setAttribute('aria-pressed','true');
+      $('private-panel').hidden=true;
+      $('private-status').textContent='';
+      schedule(0);
+    }catch(err){$('private-status').textContent='Ошибка: '+String(err.message||err).slice(0,100);}
+    finally{$('private-pass').value='';submit.disabled=false;size();}
+  };
+
   async function tick() {
     if (busy || paused || stopped) return;
     if (document.visibilityState === 'hidden') return schedule(1000); // no viewer → no frames
     busy = true;
     try {
-      const r = await callTool('live_frame', {maxWidth: mode === 'fullscreen' ? 1600 : 960, quality: 60});
-      const sc = r && r.structuredContent;
-      if (r && r.isError) throw new Error((r.content && r.content[0] && r.content[0].text) || 'error');
+      const f = await getViewFrame(mode === 'fullscreen' ? 1600 : 960);
+      const sc=f.sc;
       if (!sc || sc.state === 'off') { onStatus({state: 'off'}); return; }
       // 0.5.1: grant on, but no task runs → the PC produces no frames; poll slowly, give up after 10 min idle.
       if (sc.state === 'ready') {
@@ -200,8 +274,9 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
         return schedule(5000);
       }
       readySince = 0;
-      const im = (r.content || []).find(c => c.type === 'image');
-      if (im && sc.seq !== lastSeq) { $('img').src = 'data:' + im.mimeType + ';base64,' + im.data; lastSeq = sc.seq; lastAt = Date.now(); frameGeometry={screenW:sc.screenW,screenH:sc.screenH,imageW:sc.imageW,imageH:sc.imageH}; }
+      if(f.url&&sc.seq!==lastSeq){setFrameSource(f.url,f.isBlob);lastSeq=sc.seq;lastAt=Date.now();
+        frameGeometry={screenW:sc.screenW,screenH:sc.screenH,imageW:sc.imageW,imageH:sc.imageH};}
+      else if(f.isBlob&&f.url)URL.revokeObjectURL(f.url);
       fails = 0; hide();
       setState('live', 'LIVE · Windows');
       $('meta').textContent = (sc.imageW || '?') + '×' + (sc.imageH || '?') + (sc.cursor ? ' · курсор ' + sc.cursor.x + ',' + sc.cursor.y : '');
