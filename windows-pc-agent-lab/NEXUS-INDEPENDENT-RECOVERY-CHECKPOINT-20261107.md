@@ -54,3 +54,15 @@ Interactive User task requires an already signed-in Windows session; while locke
 - Malformed persisted restart budgets or PID metadata cause `CORRUPT_STATE_STOP`, not silent counter reset or uncontrolled restart.
 - Latest source safety commit `5ae1518cd4aa9fabad667289edc4b2aa132cd166`; GitHub Actions [run 42367001503](https://github.com/entoni441-prog/mcp-android/actions/runs/42367001503) **PASS on Windows and Ubuntu**.
 - Still no local activation on owner PC: cloud-only CI cannot reach the actual offline Windows Session.
+
+## Out-of-band recovery discovery (2026-11-07)
+
+The user explicitly requested **zero manual input**. Rechecked independent channels before recommending any local action:
+- NEXUS `connection_status` still `pc_offline_stale_registration`, tunnel HTTP 530, registration older than an hour. Gateway status alone cannot execute Windows code.
+- TinyFish saved Google profile existed; tested `https://remotedesktop.google.com/access`. Its current sign-in was not accepted and it required interactive Google authorization before remote-PC listing. No remote PC or independent login is confirmed; do not request/use Windows/Google passwords in chat.
+- Cloudflare API: no account `cfd_tunnel` objects returned; WARP devices list empty; Cloudflare Access API returned `access.api.error.not_enabled` (HTTP 403). No independent owner PC access can be inferred there.
+- GitHub source workflows inspected; relevant workflows use hosted `windows-latest` / `ubuntu-latest` runners, NOT the owner's Windows. No verified self-hosted runner available for remote task execution.
+- No independent Windows control tool is exposed in this ChatGPT session beyond NEXUS.
+- Created a temporary hourly condition-watch automation titled `NEXUS — восстановление канала` for up to 48 occurrences: while offline, silent; if online, read the interrupted installer journal and 4 file hashes before ANY changes, then install/verify Recovery Watchdog if safe. This reduces future manual effort but **does not remotely boot an offline Windows PC**. Automation was acknowledged as enabled; actual future execution is not yet observed.
+
+Current state: **Recovery Watchdog source PASS; production installation BLOCKED solely on no working inbound or outbound independent control channel.** Do not conceal the gap or claim recovery. The correct architectural fix is to install and verify an OS-owned resident watchdog while the PC is accessible; do not repeat an in-Host self-terminating updater.
