@@ -20,6 +20,7 @@ const INSTALLED=path.win32.join(os.homedir(),'Documents','NEXUS','nexus-host','n
 const ROOT=path.join(os.homedir(),'NEXUS-workspace','nexus-recovery-independent');
 const STOP=path.join(os.homedir(),'.nexus-host','host-off');
 const PIDFILE=path.join(os.homedir(),'.nexus-host','host.pid');
+const SUPERVISOR_PIDFILE=path.join(os.homedir(),'.nexus-host','supervisor.pid');
 const STATE=path.join(ROOT,'state.json');
 const SUMMARY=path.join(ROOT,'summary.json');
 const schtasks=path.win32.join(process.env.SystemRoot||'C:\\Windows','System32','schtasks.exe');
@@ -79,20 +80,23 @@ export async function runOnce(){
   const isHealthy=await healthy();
   const rawPid=readJson(PIDFILE);
   // Corrupt durability state is never interpreted as "zero prior starts".
+  const rawSupervisor=readJson(SUPERVISOR_PIDFILE);
   if((fs.existsSync(PIDFILE)&&(!rawPid||!Number.isSafeInteger(rawPid.pid)))||
+     (fs.existsSync(SUPERVISOR_PIDFILE)&&(!rawSupervisor||!Number.isSafeInteger(rawSupervisor.pid)))||
      (fs.existsSync(STATE)&&readJson(STATE)===null)){
     persistStatus('CORRUPT_STATE_STOP');
     return;
   }
   const hostPid=rawPid?.pid;
   const hostAlive=alive(hostPid);
-  const verified=hostOff||isHealthy||hostAlive?false:taskIdentity();
+  const supervisorAlive=alive(rawSupervisor?.pid);
+  const verified=hostOff||isHealthy||hostAlive||supervisorAlive?false:taskIdentity();
   const state=readJson(STATE)||{};
   const decision=decideRecovery({now,healthy:isHealthy,ownerOff:hostOff,
-    existingHostAlive:hostAlive,taskVerified:verified,state});
+    existingHostAlive:hostAlive,supervisorAlive,taskVerified:verified,state});
   atomicJson(STATE,decision.next); // Durable budget BEFORE any start attempt.
   if(decision.action!=='START_EXISTING_TASK'){
-    persistStatus(decision.action,{healthy:isHealthy,hostAlive,ownerOff:hostOff});
+    persistStatus(decision.action,{healthy:isHealthy,hostAlive,supervisorAlive,ownerOff:hostOff});
     return;
   }
   try{
