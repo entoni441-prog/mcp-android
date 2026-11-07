@@ -17,7 +17,7 @@ internal static class RecoverySilentLauncher {
       if (WindowsIdentity.GetCurrent() == null || WindowsIdentity.GetCurrent().IsSystem) return 22;
       var psi = new ProcessStartInfo {
         FileName = node,
-        Arguments = "\\"" + script + "\\" --once",
+        Arguments = (char)34 + script + (char)34 + " --once",
         WorkingDirectory = dir,
         UseShellExecute = false,
         CreateNoWindow = true,
