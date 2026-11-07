@@ -38,6 +38,19 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
 .owner.is-popup .owner-head{border-radius:10px 10px 0 0}.owner.is-popup #owner-panel{max-height:75vh;overflow-y:auto;border-top:none;border-radius:0 0 10px 10px}
 .owner.is-popup #owner-panel[hidden],.touch-tools[hidden]{display:none}
 .owner.is-popup #owner-secret{font-size:16px;min-height:42px}
+/* Keep both NEXUS status sections short unless explicitly expanded. */
+.boot,.owner:not(.is-popup){padding:5px 8px;gap:4px}
+.boot-head,.owner-head{display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:30px}
+.boot-head b,.owner-head b{white-space:nowrap;font-size:12px}
+.boot-head #boot-state{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--mut);min-width:0}
+.boot-head button,.owner-head button{flex:none;font-size:12px;padding:2px 7px;min-height:26px}
+#boot-hint:not([hidden]){display:block;padding:3px 0 6px;font-size:11px;color:var(--mut)}
+#boot-hint[hidden],#owner-panel[hidden],#owner-fallback[hidden]{display:none!important}
+.owner:not(.is-popup) #owner-panel{max-height:min(45vh,300px);overflow:auto;padding:6px 0}
+#owner-mini{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px;color:var(--mut)}
+.owner.is-popup #owner-mini{display:none}
+#owner-fallback{display:inline-block;font-size:12px;color:var(--fg);padding:5px 0;text-decoration:underline}
+
 .touch-tools{border-top:1px solid var(--line);padding:8px;display:grid;gap:7px}
 .touch-tools form{display:flex;gap:6px}.touch-tools input{flex:1;min-width:0;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;font:16px system-ui}
 .touch-tools .keys{display:flex;flex-wrap:wrap;gap:6px}.touch-tools .notice{font-size:11px;color:var(--amber)}
@@ -61,15 +74,16 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   <span id="touch-status" class="owner-status" role="status">Для ввода необходима активная трансляция и разрешение NEXUS Host.</span>
 </div>
 <div class="boot" aria-label="Статус запуска и входа Windows">
-  <b>Доступ после запуска:</b><span id="boot-state" role="status">Проверяю подключение NEXUS…</span>
-  <span id="boot-hint">Защищённый дистанционный вход до Windows пока не настроен. Пароль Windows сюда не вводи.</span>
+  <div class="boot-head"><b>Доступ после запуска</b><span id="boot-state" role="status">Проверка…</span><button id="boot-toggle" type="button" aria-expanded="false">Подробнее</button></div>
+  <span id="boot-hint" hidden>Защищённый дистанционный вход до Windows пока не настроен. Пароль Windows сюда не вводи.</span>
 </div>
 <div class="owner" id="owner-container" aria-label="Подтверждения владельца NEXUS">
-  <div class="owner-head"><b>Подтверждения владельца</b><button id="owner-toggle" type="button" aria-expanded="false">Показать</button></div>
+  <div class="owner-head"><b>Подтверждения владельца</b><span id="owner-mini">Скрыто</span><button id="owner-toggle" type="button" aria-expanded="false">Показать</button></div>
   <div id="owner-panel" hidden>
     <p class="owner-status">Пароль <b>владельца NEXUS</b> нужен отдельно для каждой операции. Это не PIN и не пароль Windows. Данные передаются напрямую в NEXUS Gateway, не через инструменты модели.</p>
     <form id="owner-form" autocomplete="off"><input id="owner-secret" type="password" autocomplete="off" required aria-label="Пароль владельца NEXUS" placeholder="Пароль владельца NEXUS"><button id="owner-refresh" type="submit">Проверить заявки</button></form>
     <p id="owner-status" class="owner-status" role="status">Нет загруженных заявок.</p>
+    <a id="owner-fallback" href="https://nexus-gateway.entoni441.workers.dev/live" target="_blank" rel="noopener noreferrer" hidden>Открыть резервное подтверждение NEXUS</a>
     <div id="owner-list"></div>
   </div>
 </div>
@@ -201,6 +215,13 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     clearTimeout(bootTimer);
     if (!stopped) bootTimer = setTimeout(async()=>{await checkBootStatus();bootSchedule();},15000);
   }
+  $('boot-toggle').onclick = () => {
+    const detail=$('boot-hint');
+    detail.hidden=!detail.hidden;
+    $('boot-toggle').textContent=detail.hidden?'Подробнее':'Скрыть';
+    $('boot-toggle').setAttribute('aria-expanded',String(!detail.hidden));
+    size();
+  };
 
   // ── NX-CHAT-OWNER-01: privileged owner approvals, out-of-band from MCP ──
   // The model and MCP Apps host NEVER receive the password, nonce or decision.
@@ -212,6 +233,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   function dismissOwnerPopup() {
     ownerPopup=false;
     ownerContainer.classList.remove('is-popup');
+    $('owner-mini').textContent= pendingCount>0 ? 'Есть заявки: '+pendingCount : 'Нет заявок';
     ownerPanel.hidden=true;
     ownerSecret.value='';
     $('owner-toggle').textContent='Показать';
@@ -222,6 +244,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   function showOwnerPopup(count) {
     if (ownerPopup || !ownerPanel.hidden || stopped) return;
     ownerPopup=true;
+    $('owner-mini').textContent='Запросов: '+count;
     resetTouch();
     ownerContainer.classList.add('is-popup');
     ownerPanel.hidden=false;
@@ -240,7 +263,11 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
       const count=Number(r?.structuredContent?.pendingConsents);
       if (r?.isError || !Number.isSafeInteger(count) || count<0) return;
       pendingCount=count;
-      if (count===0) snoozeOwnerUntil=0;
+      $('owner-mini').textContent=count>0?'Запросов: '+count:'Нет заявок';
+      if (count===0) {
+        snoozeOwnerUntil=0;
+        if (ownerPopup) dismissOwnerPopup();
+      }
       if (count>0 && (seenPending===0 || count>seenPending || Date.now()>snoozeOwnerUntil) &&
           !ownerPopup && ownerPanel.hidden && (Date.now()>snoozeOwnerUntil || count>seenPending)) showOwnerPopup(count);
       seenPending=count;
@@ -256,6 +283,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     ownerPanel.hidden = !ownerPanel.hidden;
     $('owner-toggle').textContent = ownerPanel.hidden ? 'Показать' : 'Скрыть';
     $('owner-toggle').setAttribute('aria-expanded', String(!ownerPanel.hidden));
+    if (ownerPanel.hidden) ownerSecret.value='';
     size();
   };
   function ownerMessage(message) { $('owner-status').textContent = message; size(); }
@@ -274,6 +302,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     const pass = ownerSecret.value;
     if (!pass) { ownerMessage('Введи пароль владельца NEXUS. Не вводи сюда PIN Windows.'); return null; }
     ownerBusy = true;
+    $('owner-fallback').hidden=true;
     $('owner-refresh').disabled = true;
     try {
       // Each operation consumes a fresh 256-bit challenge, verified by
@@ -284,7 +313,13 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
         {nonce:challenge.nonce,passphrase:pass});
       return result;
     } catch(e) {
-      ownerMessage('Подтверждение не выполнено: ' + String(e.message || e));
+      const message=String(e.message || e);
+      const transport=/Failed to fetch|NetworkError|Load failed|fetch failed/i.test(message);
+      $('owner-fallback').hidden=!transport;
+      if (transport) {
+        $('owner-mini').textContent='Нет связи с формой';
+        ownerMessage('Нет соединения с Gateway из встроенной формы ChatGPT. Действие не подтверждено. Используй резервную страницу NEXUS; секреты в чат не вводи.');
+      } else ownerMessage('Подтверждение не выполнено: ' + message.slice(0,100));
       return null;
     } finally {
       ownerSecret.value = ''; // do not persist user-entered secrets
@@ -297,7 +332,12 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     const el = $('owner-list'); el.textContent = '';
     const labels = {allow:'Разрешить',cancel:'Отклонить',
       close_save:'Сохранить и закрыть',close_discard:'Закрыть без сохранения'};
-    if (!ownerEntries.length) {ownerMessage('Заявок на подтверждение сейчас нет.');return;}
+    if (!ownerEntries.length) {
+      ownerMessage('Заявок на подтверждение сейчас нет.');
+      $('owner-mini').textContent='Нет заявок';
+      dismissOwnerPopup();
+      return;
+    }
     ownerMessage('Ожидающие запросы: ' + ownerEntries.length);
     for (const c of ownerEntries) {
       const div = document.createElement('div'); div.className='owner-entry';
@@ -326,7 +366,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
               touchMessage('Решение передано Host. Проверь экран Windows.');
             } catch(e) {touchMessage('Подтверждение принято, но исполнение не подтверждено: '+String(e.message||e));}
           }
-          if (ownerPopup) dismissOwnerPopup();
+          dismissOwnerPopup();
         };
         actions.appendChild(b);
       }
