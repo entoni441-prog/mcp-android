@@ -21,7 +21,7 @@ const LOCK=path.join(ROOT,'_activate-live-v4-20261107.lock');
 const OLD={
   'server.mjs':'d7133271cffd112eae3fe4877800a1979730e3e5b309b9d760333f1e1dbe7737',
   'catalog.mjs':'eff2c49ab4b8078c43ed7b5ab9d706269bd054611d34a2e87f92799877ed26b8',
-  'gui.mjs':'45a577daa93088d957b49359f6050707752c1c7a9e69acb',
+  'gui.mjs':'45a577daa93088d957b49359f6050707752c1c7a9f1ab878aad7b784a9e69acb',
   'uia-script.mjs':'1ea08d9d738fb78e5eded046c26ed6e1f675639ad00978261dd292f616664bbd'
 };
 const NEW={
