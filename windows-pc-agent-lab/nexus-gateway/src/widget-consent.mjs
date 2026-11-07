@@ -11,6 +11,7 @@
  * decision before a fresh owner-passphrase reauthentication for THAT request.
  * The worker signs an owner_decide only after nonce consumption and auth success.
  */
+import {makePrivateTicket,PRIVATE_FRAME_TTL_MS} from './private-frame.mjs';
 const originAllowed = origin => /^https:\/\/[a-z0-9-]+\.web-sandbox\.oaiusercontent\.com$/.test(origin || '');
 const isSafeConsentId = x => typeof x === 'string' && /^[a-f0-9]{12}$/.test(x);
 const OPTIONS = Object.freeze(['allow', 'cancel', 'close_discard', 'close_save']);
@@ -51,8 +52,8 @@ export async function handleWidgetConsent(request, env, {callHost, sha256hex, si
     if (Object.keys(data).some(k=>!['operation','consentId','decision'].includes(k)))
       return response(origin,400,{error:'invalid_args'});
     const operation = data.operation;
-    if (!['list','decide'].includes(operation)) return response(origin,400,{error:'invalid_operation'});
-    if (operation === 'list' && (data.consentId !== undefined || data.decision !== undefined))
+    if (!['list','decide','private_view'].includes(operation)) return response(origin,400,{error:'invalid_operation'});
+    if ((operation === 'list'||operation==='private_view') && (data.consentId !== undefined || data.decision !== undefined))
       return response(origin,400,{error:'invalid_args'});
     if (operation === 'decide' &&
         (!isSafeConsentId(data.consentId) || !OPTIONS.includes(data.decision)))
@@ -74,8 +75,12 @@ export async function handleWidgetConsent(request, env, {callHost, sha256hex, si
   }
   const auth=attempt.auth;
   if (auth?.kind !== 'widget_owner' || auth.origin !== origin ||
-      !['list','decide'].includes(auth.operation))
+      !['list','decide','private_view'].includes(auth.operation))
     return response(origin,403,{error:'wrong_challenge'});
+  if(auth.operation==='private_view'){
+    const viewerToken=await makePrivateTicket(env,origin);
+    return response(origin,200,{viewerToken,expiresInSec:Math.floor(PRIVATE_FRAME_TTL_MS/1000),scope:'owner_private_frames_only'});
+  }
   if (auth.operation === 'list') {
     const r=await callHost('owner_consents',{});
     if (!r.ok) return response(origin,503,{error:'host_offline'});
