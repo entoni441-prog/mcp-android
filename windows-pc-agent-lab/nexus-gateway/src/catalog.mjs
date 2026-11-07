@@ -15,7 +15,8 @@ const SP = 'Screen points (same space as capture_screen when imageToScreen=1)';
 export const LEGACY_LIVE_UI = 'ui://nexus/live-view-v1.html';
 export const PREVIOUS_LIVE_UI = 'ui://nexus/live-view-v2.html';
 export const LIVE_V3_UI = 'ui://nexus/live-view-v3.html';
-export const LIVE_UI = 'ui://nexus/live-view-v4.html';
+export const LIVE_V4_UI = 'ui://nexus/live-view-v4.html';
+export const LIVE_UI = 'ui://nexus/live-view-v5.html';
 const UI = (visibility) => ({ui: {resourceUri: LIVE_UI, visibility}, 'openai/outputTemplate': LIVE_UI, 'openai/widgetAccessible': true, ...(visibility.includes('model') ? {} : {'openai/visibility': 'private'})});
 
 export const TOOLS = [
