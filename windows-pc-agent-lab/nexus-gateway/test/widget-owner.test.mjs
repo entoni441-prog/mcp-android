@@ -118,6 +118,8 @@ test('NX-CHAT-OWNER: widget talks direct HTTPS to Gateway and not via tools/call
   assert.doesNotMatch(WIDGET_HTML,/callTool\('owner_decide'/);
   assert.doesNotMatch(WIDGET_HTML,/localStorage|sessionStorage/);
   assert.match(WIDGET_HTML,/connection_status/);
+  assert.match(WIDGET_HTML,/function halt\(\) \{ clearTimeout\(timer\); timer = null; \}/);
+  assert.match(WIDGET_HTML,/clearTimeout\(bootTimer\)/);
   assert.match(WIDGET_HTML,/HOST_OFFLINE/);
   assert.doesNotMatch(WIDGET_HTML,/<input[^>]+(?:PIN Windows|Пароль Windows)/i);
   assert.match(WIDGET_HTML,/Наличие экрана входа Windows до запуска Host пока не подтверждено/);
