@@ -129,7 +129,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   const hide = () => { $('msg').hidden = true; };
   function onStatus(s) {
     if (!s || typeof s !== 'object') return;
-    if (s.state === 'off') { stopped = true; frameGeometry=null; resetTouch(); halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
+    if (s.state === 'off') { stopped = true; frameGeometry=null; touchConsent=null; resetTouch(); if (ownerPopup) dismissOwnerPopup(); halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
   }
   let readySince = 0;
   function halt() { clearTimeout(timer); timer = null; }
