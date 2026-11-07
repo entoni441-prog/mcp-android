@@ -1,0 +1,34 @@
+name: nexus-live-v4-os-owned-updater
+on:
+  push:
+    branches: [experiment/nexus-live-v4-os-updater-20261107]
+    paths:
+      - 'windows-pc-agent-lab/nexus-host/install/os-owned-*'
+      - 'windows-pc-agent-lab/nexus-host/install/schedule-os-owned-live-v4.mjs'
+      - 'windows-pc-agent-lab/nexus-host/recovery/maintenance-policy.mjs'
+      - 'windows-pc-agent-lab/nexus-host/recovery/recovery-watchdog.mjs'
+      - '.github/workflows/nexus-live-v4-os-updater-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  policy:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix: {os: [windows-latest, ubuntu-latest]}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax checks
+        working-directory: windows-pc-agent-lab/nexus-host
+        run: |
+          node --check install/os-owned-activate-live-v4.mjs
+          node --check install/schedule-os-owned-live-v4.mjs
+          node --check recovery/recovery-watchdog.mjs
+      - name: Host recovery and activation safety
+        working-directory: windows-pc-agent-lab/nexus-host
+        run: node --test install/os-owned-live-v4.test.mjs recovery/recovery-watchdog.test.mjs recovery/install-recovery.test.mjs
