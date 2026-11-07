@@ -394,73 +394,210 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (r && Array.isArray(r.pending)) {ownerEntries=r.pending;renderOwnerEntries();}
   };
 
-  // Owner touch is opt-in. Coordinates travel through the existing Host GUI policy;
-  // never attempt Winlogon or send secrets over model-visible keyboard_action.
-  function touchMessage(s) { $('touch-status').textContent=s; }
-  function resetTouch() {
-    touchEnabled=false; pointerStart=null;
-    $('touch-tools').hidden=true;
-    $('touch-text').value='';
-    $('img').classList.remove('touchable');
-    $('touch-toggle').textContent='Управление: выкл.';
-    $('touch-toggle').setAttribute('aria-pressed','false');
+  // NEXUS Live v4 — durable owner preference, automatic stale-read recovery,
+  // native Android text input, and intentional one/double tap gestures.
+  // Permission remains enforced by Host GUI policy for every tool call.
+  let leaseTimer=null, leaseUntil=0;
+  function touchMessage(message) {
+    const el=$('touch-mini');el.hidden=false;
+    el.textContent=String(message).slice(0,145);
+    clearTimeout(lastStatusTimer);
+    lastStatusTimer=setTimeout(()=>{if(!touchBusy)el.hidden=true;},6000);
     size();
   }
-  function touchReady() {
-    return touchEnabled && !paused && !stopped && !touchBusy &&
-      document.visibilityState !== 'hidden' && frameGeometry &&
-      lastAt>0 && Date.now()-lastAt<5000 && $('img').getAttribute('src');
+  function hideComposer() {
+    $('touch-tools').hidden=true;
+    $('touch-text').blur();
+    size();
   }
-  async function touchCall(name,args) {
-    if (!touchReady()) { touchMessage('Нет свежего кадра или управление не включено. Действие не отправлено.');return; }
-    touchBusy=true;
-    try {
-      const r=await callTool(name,args);
-      if (r?.isError) throw Error(String(r.content?.[0]?.text||'Host отказал').slice(0,160));
-      const status=String(r?.structuredContent?.status||'');
-      if (status==='consent_required' || status==='owner_approval_pending') {
-        const sc=r.structuredContent||{};
-        touchConsent=/^[a-f0-9]{12}$/.test(String(sc.consentId||'')) && typeof sc.target==='string'
-          ? {consentId:sc.consentId,target:sc.target} : null;
-        touchMessage('Host требует разрешение владельца. После решения действие завершится по одноразовому consentId.');
-        showOwnerPopup(Math.max(1,pendingCount));
-      } else if (r?.structuredContent?.done === true) touchMessage('Выполнено на ПК.');
-      else touchMessage('Ответ Host: ' + (status || 'проверь результат на экране'));
-    } catch(e) {touchMessage('Действие не выполнено: '+String(e.message||e).slice(0,140));}
-    finally {touchBusy=false;}
+  function showComposer() {
+    if (!touchEnabled || paused || stopped || ownerPopup) return;
+    $('touch-tools').hidden=false;
+    size();
+    // Real native Android keyboard is attached to this ordinary HTML input.
+    // If Android requires a fresh user gesture, tapping the field will open it.
+    try {$('touch-text').focus({preventScroll:true});}catch{}
   }
-  $('touch-toggle').onclick=()=>{
-    touchEnabled=!touchEnabled;
-    $('touch-tools').hidden=!touchEnabled;
+  function setTouchVisual(enabled) {
+    touchEnabled=enabled===true;
     $('img').classList.toggle('touchable',touchEnabled);
     $('touch-toggle').textContent=touchEnabled?'Управление: вкл.':'Управление: выкл.';
     $('touch-toggle').setAttribute('aria-pressed',String(touchEnabled));
-    touchMessage(touchEnabled?'Касание по свежему кадру = одиночный клик. Только обычный текст.':'Управление отключено.');
+    $('touch-open').hidden=!touchEnabled;
+    if (!touchEnabled) hideComposer();
     size();
-  };
+  }
+  function clearTap() {
+    clearTimeout(tapTimer);tapTimer=null;lastTap=null;pointerStart=null;
+  }
+  function resetTouch() {
+    clearTap();setTouchVisual(false);
+    $('touch-text').value='';
+    leaseUntil=0;
+  }
+  async function loadOwnerPreference() {
+    try {
+      const r=await callTool('owner_ui_pref',{action:'get'});
+      if (r?.isError || typeof r?.structuredContent?.enabled!=='boolean') throw Error('owner_ui_pref_unavailable');
+      if (!stopped) {
+        setTouchVisual(r.structuredContent.enabled);
+        if (touchEnabled) leaseUntil=Date.now()+10*60*1000;
+      }
+    } catch {
+      // Older Host: never pretend persistence works and never silently enable input.
+      setTouchVisual(false);
+      touchMessage('Настройка управления требует обновлённого NEXUS Host.');
+    }
+  }
+  function touchReady() {
+    return touchEnabled && !paused && !stopped && !ownerPopup && !touchBusy &&
+      document.visibilityState!=='hidden' && frameGeometry &&
+      lastAt>0 && Date.now()-lastAt<5000 && !!$('img').getAttribute('src');
+  }
+  const toolFailure = r => r?.isError ? String(r.content?.[0]?.text||'Host отклонил действие') : '';
+  function staleRefusal(msg) {
+    // A stale_args Host rejection occurs BEFORE the desktop action.
+    // No other errors, including timeouts and screen_changed_retry, are retried.
+    return /(?:^|\\b)stale_args:\\s*(?:task_resumed|owner_stop_resumed|owner_pause_resumed)/i.test(String(msg));
+  }
+  async function reobserveFreshFrame(geometry, gestureAt) {
+    if (!touchEnabled || stopped || paused || ownerPopup || Date.now()-gestureAt>8000) throw Error('Касание устарело. Ничего не отправлено.');
+    const w=await callTool('list_windows',{includeTitles:false});
+    if (!w || toolFailure(w)) throw Error('Не удалось обновить окна. Действие отменено.');
+    const f=await callTool('live_frame',{maxWidth:mode==='fullscreen'?1600:960,quality:60});
+    const sc=f?.structuredContent;
+    if (!sc || toolFailure(f) || sc.state!=='live' ||
+        !Number.isFinite(sc.screenW) || !Number.isFinite(sc.screenH) ||
+        sc.screenW!==geometry.screenW || sc.screenH!==geometry.screenH ||
+        !Array.isArray(f.content) || !f.content.some(c=>c.type==='image'))
+      throw Error('Экран изменился или недоступен. Действие отменено.');
+    if (!touchEnabled || stopped || paused || ownerPopup || Date.now()-gestureAt>8000) throw Error('Касание устарело. Действие отменено.');
+    const im=f.content.find(c=>c.type==='image');
+    $('img').src='data:'+im.mimeType+';base64,'+im.data;
+    frameGeometry={screenW:sc.screenW,screenH:sc.screenH,imageW:sc.imageW,imageH:sc.imageH};
+    lastAt=Date.now();lastSeq=sc.seq;
+  }
+  async function touchCall(name,args) {
+    if (!touchReady()) {touchMessage('Нет свежего кадра или управление выключено.');return null;}
+    touchBusy=true;
+    const geometry={...frameGeometry}, gestureAt=Date.now();
+    leaseUntil=Date.now()+10*60*1000;
+    try {
+      const send=async()=>{
+        const r=await callTool(name,args);
+        const fail=toolFailure(r);
+        if (fail)throw Error(fail);
+        return r;
+      };
+      let r;
+      try {r=await send();}
+      catch(e) {
+        if (!staleRefusal(e?.message)) throw e;
+        touchMessage('NEXUS обновляет экран…');
+        await reobserveFreshFrame(geometry,gestureAt);
+        // Exactly ONE repeat after a proven pre-execution stale refusal.
+        // No retries for an unknown outcome or any other error.
+        r=await send();
+      }
+      const sc=r?.structuredContent||{};
+      const status=String(sc.status||'');
+      if (status==='consent_required' || status==='owner_approval_pending') {
+        touchConsent=/^[a-f0-9]{12}$/.test(String(sc.consentId||''))&&typeof sc.target==='string'
+          ? {consentId:sc.consentId,target:sc.target}:null;
+        touchMessage('Требуется разрешение владельца.');
+        showOwnerPopup(Math.max(1,pendingCount));
+        return sc;
+      }
+      if (sc.done===true) {
+        touchMessage('Выполнено на ПК.');
+        if (name==='mouse_action' && sc.action==='click' && touchEnabled &&
+            /(?:Edit|Document|ComboBox)/i.test(String(sc.target?.control||'')) &&
+            !/(?:password|пароль|pin|код безопасности|otp|cvv)/i.test(String(sc.target?.name||'')))
+          showComposer();
+        return sc;
+      }
+      touchMessage(status?'Ответ NEXUS: '+status:'Действие ещё не подтверждено.');
+      return sc;
+    } catch(e) {
+      const message=String(e.message||e);
+      touchMessage(staleRefusal(message)?'Экран требует обновления. Касание отменено.'
+        : /owner_paused|stopped_by_owner/.test(message)?'Управление остановлено владельцем.'
+        : /screen_changed_retry/.test(message)?'Экран изменился. Касание отменено.'
+        : /timeout|pc_offline/.test(message)?'Нет ответа NEXUS. Повторять действие автоматически нельзя.'
+        : 'Действие не выполнено: '+message.slice(0,72));
+      return null;
+    } finally {touchBusy=false;}
+  }
+  async function changeOwnerTouch(enabled) {
+    if (touchBusy) return;
+    $('touch-toggle').disabled=true;
+    try {
+      const r=await callTool('owner_ui_pref',{action:'set',enabled});
+      if (!r || toolFailure(r) || r.structuredContent?.enabled!==enabled) throw Error('Host не сохранил настройку');
+      clearTap();setTouchVisual(enabled);
+      if(enabled)leaseUntil=Date.now()+10*60*1000;
+      else leaseUntil=0;
+      touchMessage(enabled?'Управление включено и сохранено на NEXUS Host.':'Управление выключено.');
+    } catch(e) {touchMessage('Настройка не применена: '+String(e.message||e).slice(0,80));}
+    finally {$('touch-toggle').disabled=false;}
+  }
+  $('touch-toggle').onclick=()=>changeOwnerTouch(!touchEnabled);
+  $('touch-open').onclick=()=>showComposer();
+  $('touch-close').onclick=hideComposer;
+  $('touch-tools').addEventListener('pointerdown',e=>{if(e.target===$('touch-tools'))hideComposer();});
   $('img').addEventListener('pointerdown',e=>{
-    pointerStart=touchEnabled && e.isTrusted && e.button===0 ?
-      {id:e.pointerId,x:e.clientX,y:e.clientY,at:Date.now()} : null;
+    pointerStart=touchEnabled && e.isTrusted && e.button===0 && !paused && !stopped ?
+      {id:e.pointerId,x:e.clientX,y:e.clientY,at:Date.now()}:null;
   });
+  $('img').addEventListener('pointercancel',()=>{pointerStart=null;});
   $('img').addEventListener('pointerup',e=>{
     const start=pointerStart;pointerStart=null;
     if (!start || start.id!==e.pointerId || Math.abs(e.clientX-start.x)>12 ||
-        Math.abs(e.clientY-start.y)>12 || Date.now()-start.at>900) return;
+        Math.abs(e.clientY-start.y)>12 || Date.now()-start.at>900 || !touchReady()) return;
     const point=framePointToScreen(e.clientX,e.clientY,$('img').getBoundingClientRect(),frameGeometry);
-    if (!point) {touchMessage('Касание вне изображения: действие отменено.');return;}
-    touchCall('mouse_action',{action:'click',x:point.x,y:point.y});
+    if (!point) {touchMessage('Касание вне изображения.');return;}
+    leaseUntil=Date.now()+10*60*1000;
+    // Defer an ordinary single click briefly so a double tap emits EXACTLY one
+    // double_click instead of a single_click + double_click triple activation.
+    const prior=lastTap;
+    if (prior && Date.now()-prior.at<=330 &&
+        Math.hypot(point.x-prior.x,point.y-prior.y)<=40) {
+      clearTimeout(tapTimer);tapTimer=null;lastTap=null;
+      touchCall('mouse_action',{action:'double_click',x:point.x,y:point.y});
+    } else {
+      clearTap();
+      lastTap={x:point.x,y:point.y,at:Date.now()};
+      tapTimer=setTimeout(()=>{
+        const tap=lastTap;tapTimer=null;lastTap=null;
+        if(tap)touchCall('mouse_action',{action:'click',x:tap.x,y:tap.y});
+      },340);
+    }
   });
-  $('touch-form').onsubmit=e=>{
+  $('touch-form').onsubmit=async e=>{
     e.preventDefault();
-    const el=$('touch-text'), value=el.value;
+    const el=$('touch-text'),value=el.value;
     if (!value || value.length>500) return;
-    if (!touchReady()) { touchMessage('Нет активного безопасного кадра. Текст оставлен в поле, отправки не было.');return; }
-    el.value=''; // no secret persistence, no retries
-    touchCall('keyboard_action',{text:value});
+    if (!touchReady()) {touchMessage('Нет свежего экрана. Текст не отправлен.');return;}
+    const result=await touchCall('keyboard_action',{text:value});
+    if(result?.done===true){el.value='';hideComposer();}
+    // Keep the draft if the result is unknown; never blindly repeat typed text.
   };
-  for (const b of document.querySelectorAll('[data-touch-key]')) b.onclick=()=>{
-    touchCall('keyboard_action',{keys:b.getAttribute('data-touch-key')});
+  for (const b of document.querySelectorAll('[data-touch-key]')) b.onclick=async()=>{
+    const result=await touchCall('keyboard_action',{keys:b.getAttribute('data-touch-key')});
+    if (result?.done===true && b.getAttribute('data-touch-key')==='esc')hideComposer();
   };
+  function ownerLeaseLoop() {
+    clearTimeout(leaseTimer);
+    leaseTimer=setTimeout(async()=>{
+      if (!stopped && !paused && touchEnabled && document.visibilityState==='visible' && Date.now()<leaseUntil) {
+        try {
+          const r=await callTool('get_capabilities',{});
+          if (r?.isError || r?.structuredContent?.state==='owner_stop') resetTouch();
+        } catch { /* no hidden retries, normal lease will safely expire */ }
+      }
+      if(!stopped)ownerLeaseLoop();
+    },20000);
+  }
 
   $('pp').onclick = () => { paused = !paused; $('pp').textContent = paused ? '▶' : '⏸'; if (paused) { halt(); setState('paused', 'ПАУЗА · кадры не запрашиваются'); } else { stopped = false; tick(); } };
   $('fps').onchange = () => schedule(0);
