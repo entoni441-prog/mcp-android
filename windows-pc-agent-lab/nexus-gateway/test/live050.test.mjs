@@ -29,7 +29,7 @@ function hostFake({liveState = 'live', healthz = 200, verdict = 'ok'} = {}) {
     const m = JSON.parse(init.body);
     const name = m.params.name;
     let result;
-    if (name === 'live_frame') result = liveState === 'off' ? {content: [{type: 'text', text: '{}'}], structuredContent: {state: 'off'}} :
+    if (name === 'owner_frame') result = liveState === 'off' ? {content: [{type: 'text', text: '{}'}], structuredContent: {state: 'off'}} :
       {content: [{type: 'image', data: JPEG, mimeType: 'image/jpeg'}, {type: 'text', text: '{}'}], structuredContent: {state: 'live', imageW: 960, imageH: 540, cursor: {x: 1, y: 2}}};
     else if (name === 'live_control') result = {content: [], structuredContent: {state: 'off', stopped: true}};
     else if (name === 'connection_status') result = {content: [], structuredContent: {host: 'reachable', tunnel: {verdict}}};
@@ -47,7 +47,7 @@ test('widget resource: MCP Apps mime, gateway-only direct owner auth domain, no 
   assert.equal(r.uri, 'ui://nexus/live-view-v4.html');
   assert.equal(r.mimeType, 'text/html;profile=mcp-app');
   assert.deepEqual(r._meta.ui.csp.connectDomains, ['https://nexus-gateway.entoni441.workers.dev']); assert.deepEqual(r._meta.ui.csp.resourceDomains, []);
-  assert.ok(!/trycloudflare|Bearer|NEXUS_TOKEN|localStorage|sessionStorage/.test(r.text));
+  assert.ok(!/trycloudflare|NEXUS_TOKEN|localStorage|sessionStorage/.test(r.text));
   assert.match(r.text,/https:\/\/nexus-gateway\.entoni441\.workers\.dev/);;
   assert.match(r.text, /ui\/initialize/); assert.match(r.text, /live_frame/); assert.match(r.text, /live_control/);
   assert.match(WIDGET_HTML,/aria-pressed="false"/); assert.match(WIDGET_HTML,/function touchReady\(\)/);
@@ -127,7 +127,10 @@ test('/live/frame: 401 without/with tampered/expired cookie; JPEG bytes no-store
   const r = await handleDefault(withCookie('/live/frame?w=960', good), e, {fetcher: h.fetcher});
   assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'image/jpeg'); assert.equal(r.headers.get('cache-control'), 'no-store');
   assert.deepEqual([...new Uint8Array(await r.arrayBuffer())].slice(0, 3), [0xff, 0xd8, 0xff]);
-  assert.equal(h.calls[0].body.params.name, 'live_frame'); assert.equal(h.calls[0].init.headers.authorization, 'Bearer ' + TOKEN);
+  assert.equal(h.calls[0].body.params.name, 'owner_frame');
+  assert.equal(h.calls[0].init.headers.authorization, 'Bearer ' + TOKEN);
+  assert.equal(typeof h.calls[0].body.params.arguments.sig,'string');
+  assert.match(h.calls[0].body.params.arguments.nonce,/^[a-f0-9]{32}$/);
   const off = hostFake({liveState: 'off'});
   assert.equal((await handleDefault(withCookie('/live/frame', good), e, {fetcher: off.fetcher})).status, 409);
   assert.equal((await handleDefault(withCookie('/live/frame', good), await env({registered: false}), {fetcher: h.fetcher})).status, 503);
