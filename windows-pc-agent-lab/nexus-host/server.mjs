@@ -146,6 +146,20 @@ export function createRuntime(cfg, deps = {}) {
     journal: {keyFor: (what, target) => (isExternal(what, target) ? idemKey(what, target) : null), alreadyDone: k => tasks.alreadyDone(k), record: r => tasks.recordOp(r)}});
   // NEXT: STOP is sticky and persisted — a Host restart must not lift it (owner requirement 03.11).
   const stopFile = path.join(cfg.home, 'owner-stop.json');
+  // Pure UI preference, never a capability or permission grant. No secret is stored.
+  // This setting is owned by the Windows Host so a new ChatGPT widget can restore it.
+  const ownerTouchFile = path.join(cfg.home, 'owner-touch-pref.json');
+  const ownerTouchRead = () => {
+    try { const v=JSON.parse(fs.readFileSync(ownerTouchFile,'utf8')); return v?.enabled === true; }
+    catch { return false; }
+  };
+  let ownerTouchEnabled=ownerTouchRead();
+  const ownerTouchSet = enabled => {
+    ownerTouchEnabled=!!enabled;
+    fs.writeFileSync(ownerTouchFile, JSON.stringify({enabled:ownerTouchEnabled,version:1}), {mode:0o600});
+    audit(cfg,{event:'owner_touch_preference',enabled:ownerTouchEnabled});
+    return ownerTouchEnabled;
+  };
   const stopStore = {load: () => (fs.existsSync(stopFile) ? JSON.parse(fs.readFileSync(stopFile, 'utf8')) : null),
     save: v => (v ? fs.writeFileSync(stopFile, JSON.stringify(v), {mode: 0o600}) : fs.rmSync(stopFile, {force: true}))};
   const session = createSession({caps, audit: e => audit(cfg, e), stopStore, ...(deps.sessionDeps || {})});
@@ -171,7 +185,11 @@ export function createRuntime(cfg, deps = {}) {
     downloads: {dir: path.join(cfg.workspace, 'downloads'), ingest: (tmp, meta) => scoped.ingestBrowserDownload(tmp, meta)}, ...(deps.browserDeps || {})});
   const live = createLive({caps, store, session, onResume: () => gui.ownerResumed?.(), onStopResume: () => tasks.allowResume(), capture: (w, q) => gui.frameJpeg(w, q, session.caption()), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
   // End of every session: stream off at the source first, then clean up what NEXUS itself opened.
-  session.onEnd(async () => { const m = live.sessionEnded() || {}; return {liveActive: false, liveLastFrameAt: m.lastFrameAt ?? null, liveFramesDropped: m.droppedAfterStop ?? 0}; }, 'live');
+  session.onEnd(async reason => {
+    if (reason==='owner_stop' || reason==='grant_revoked') ownerTouchSet(false);
+    const m=live.sessionEnded()||{};
+    return {liveActive:false,liveLastFrameAt:m.lastFrameAt??null,liveFramesDropped:m.droppedAfterStop??0};
+  },'live');
   session.onEnd(async (reason, s) => (typeof procs.cancelSession === 'function' ? {tasks: await procs.cancelSession(reason, s)} : {}), 'tasks');
   session.onEnd(async reason => (['view_idle', 'lease_expired', 'max_duration'].includes(reason) ? {} : {commands: await runner.cancelAll(reason)}), 'commands');
   session.onEnd(async reason => (typeof gui.cleanupOwned === 'function' ? {windows: await gui.cleanupOwned(reason, {ownerPaused: session.ownerPaused?.() === true})} : {}), 'windows');
@@ -247,7 +265,7 @@ export function createRuntime(cfg, deps = {}) {
       const r = store.set(a.capability, a.enabled, 'tool');
       if (!a.enabled && a.capability === 'commands') r.commandsCancelled = (await runner.cancelAll('grant_revoked')).cancelled;
       if (!a.enabled && a.capability === 'live_view') live.live_control({action: 'stop'});
-      if (!a.enabled && a.capability === 'gui_input') await session.end('grant_revoked');
+      if (!a.enabled && a.capability === 'gui_input') { ownerTouchSet(false); await session.end('grant_revoked'); }
       return {...r, persistent: true, note: 'Persistent grant (survives tasks and restarts). Recorded in audit log.'};
     },
     // 0.5.1: explicit end of a task — stream off, NEXUS-owned windows/tabs closed, verified state returned.
@@ -260,6 +278,17 @@ export function createRuntime(cfg, deps = {}) {
       if (!r.ended && tasks.peek()) { r.task = tasks.close('finish_task'); r.taskStatus = 'finished'; }
       rtRef.reobserve = null;
       return {...r, verified: {liveActive: session.status().liveActive, live: live.status().state, sessionActive: session.active()}};
+    },
+    owner_ui_pref: a => {
+      if (!a || typeof a!=='object' || Object.keys(a).some(k=>!['action','enabled'].includes(k)) ||
+          !['get','set'].includes(a.action)) throw Error('invalid_args');
+      if (a.action==='get') {
+        if (a.enabled!==undefined) throw Error('invalid_args');
+        return {enabled:ownerTouchEnabled && caps.gui_input===true && !session.stoppedByOwner(),editable:caps.gui_input===true,stopped:session.stoppedByOwner()};
+      }
+      if (typeof a.enabled!=='boolean') throw Error('invalid_args');
+      if (a.enabled && (caps.gui_input!==true || session.stoppedByOwner())) throw Error('owner_control_unavailable');
+      return {enabled:ownerTouchSet(a.enabled),editable:caps.gui_input===true};
     },
     live_frame: a => live.live_frame(a), watch_nexus: a => live.watch_nexus(a),
     run_command: a => runner.run_command(a), command_plan: a => runner.command_plan(a), system_info: a => diag.system_info(a),
