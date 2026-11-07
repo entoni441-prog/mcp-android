@@ -191,7 +191,8 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     $('private-view').textContent='Личные окна 🔒';$('private-view').classList.remove('is-on');
     $('private-view').setAttribute('aria-pressed','false');
     if(privateUrl){URL.revokeObjectURL(privateUrl);privateUrl=null;}
-    size();
+    $('img').removeAttribute('src');frameGeometry=null;lastAt=0;lastSeq=-1;
+    clearTap();size();
   }
   function setFrameSource(url,isBlob){
     if(privateUrl){URL.revokeObjectURL(privateUrl);privateUrl=null;}
@@ -552,16 +553,19 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (!touchEnabled || stopped || paused || ownerPopup || Date.now()-gestureAt>8000) throw Error('Касание устарело. Ничего не отправлено.');
     const w=await callTool('list_windows',{includeTitles:false});
     if (!w || toolFailure(w)) throw Error('Не удалось обновить окна. Действие отменено.');
-    const f=await callTool('live_frame',{maxWidth:mode==='fullscreen'?1600:960,quality:60});
-    const sc=f?.structuredContent;
-    if (!sc || toolFailure(f) || sc.state!=='live' ||
-        !Number.isFinite(sc.screenW) || !Number.isFinite(sc.screenH) ||
-        sc.screenW!==geometry.screenW || sc.screenH!==geometry.screenH ||
-        !Array.isArray(f.content) || !f.content.some(c=>c.type==='image'))
+    const f=await getViewFrame(mode==='fullscreen'?1600:960);
+    const sc=f?.sc;
+    if(!sc||sc.state!=='live'||!f.url||
+       !Number.isFinite(sc.screenW)||!Number.isFinite(sc.screenH)||
+       sc.screenW!==geometry.screenW||sc.screenH!==geometry.screenH){
+      if(f.isBlob&&f.url)URL.revokeObjectURL(f.url);
       throw Error('Экран изменился или недоступен. Действие отменено.');
-    if (!touchEnabled || stopped || paused || ownerPopup || Date.now()-gestureAt>8000) throw Error('Касание устарело. Действие отменено.');
-    const im=f.content.find(c=>c.type==='image');
-    $('img').src='data:'+im.mimeType+';base64,'+im.data;
+    }
+    if(!touchEnabled||stopped||paused||ownerPopup||Date.now()-gestureAt>8000){
+      if(f.isBlob)URL.revokeObjectURL(f.url);
+      throw Error('Касание устарело. Действие отменено.');
+    }
+    setFrameSource(f.url,f.isBlob);
     frameGeometry={screenW:sc.screenW,screenH:sc.screenH,imageW:sc.imageW,imageH:sc.imageH};
     lastAt=Date.now();lastSeq=sc.seq;
   }
@@ -687,7 +691,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   $('pip').onclick = () => displayMode('pip');
   $('full').onclick = () => displayMode(mode === 'fullscreen' ? 'inline' : 'fullscreen');
   $('stop').onclick = async () => {
-    stopped = true; frameGeometry=null; touchConsent=null; resetTouch(); clearTimeout(leaseTimer); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); dismissOwnerPopup(); $('img').removeAttribute('src');
+    stopped = true;stopPrivate(); frameGeometry=null; touchConsent=null; resetTouch(); clearTimeout(leaseTimer); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); dismissOwnerPopup(); $('img').removeAttribute('src');
     setState('offline', 'STOP…');
     try { await callTool('live_control', {action: 'stop'}); setState('offline', 'NEXUS · остановлено'); show('Трансляция остановлена на ПК', 'live_view выключен. Включить снова можно только просьбой в чате.', true); }
     catch (e) { show('STOP не дошёл до ПК', String(e.message || e) + ' — закрой окно NEXUS Host на ПК, это выключает всё.'); }
