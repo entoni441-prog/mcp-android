@@ -789,8 +789,8 @@ export function createGui({caps, home, workspace, platform = process.platform, r
             fromX:u.x,fromY:u.y,dx:end.x-u.x,dy:end.y-u.y});
           if(effect?.verified!==true || Number(effect.pid)!==Number(move.pid) ||
              Number(effect.hwnd)!==Number(move.hwnd) ||
-             String(effect.process||'').replace(/\\.exe$/i,'').toLowerCase()!==
-               String(move.process||'').replace(/\\.exe$/i,'').toLowerCase())
+             String(effect.process||'').replace(/\.exe$/i,'').toLowerCase()!==
+               String(move.process||'').replace(/\.exe$/i,'').toLowerCase())
             throw Error('titlebar_move_not_verified: no mouse or shell input was sent');
           return {done:true,action:'window_move',pid:Number(move.pid),hwnd:Number(move.hwnd),
             verified:true,shellInputSent:false};
@@ -799,7 +799,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         // creating a sticky shell-command handoff on an innocent titlebar tap.
         const w=at.at?.window;
         if((args.action==='click'||args.action==='drag') &&
-           String(w?.process||'').replace(/\\.exe$/i,'').toLowerCase()==='windowsterminal' &&
+           String(w?.process||'').replace(/\.exe$/i,'').toLowerCase()==='windowsterminal' &&
            w?.rect && Number.isFinite(w.rect.y) && Number.isFinite(w.rect.h) &&
            u.y>=w.rect.y && u.y<w.rect.y+Math.min(70,w.rect.h*0.13))
           throw Error('terminal_caption_unverified: safe window action not recognized; no shell input or handoff');
