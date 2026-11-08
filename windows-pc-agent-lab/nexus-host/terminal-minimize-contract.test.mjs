@@ -20,12 +20,14 @@ test('NX-TM-01: Host and Gateway expose identical, owner-scoped minimize_window'
   assert.equal(WORK_TOOLS.has('minimize_window'),true);
   assert.equal(STALE_TOOLS.has('minimize_window'),true);
 });
-test('NX-TM-01: terminal input stays guarded in normal policy and only fixed visual state mode exists', () => {
+test('NX-TM-01: terminal input stays guarded; only verified visual window modes exist', () => {
   assert.match(UIA_SCRIPT,/'minimize'\s*\{/);
   assert.match(UIA_SCRIPT,/SetWindowVisualState\(\[System\.Windows\.Automation\.WindowVisualState\]::Minimized\)/);
   assert.match(UIA_SCRIPT,/NxTopOf \$w/);
   assert.match(UIA_SCRIPT,/\$res\.hwnd\s*=\s*\[int64\]\$a\.hwnd/);
-  assert.match(UIA_SCRIPT,/NxPName \$res\.pid\) -ieq 'WindowsTerminal'/);
+  assert.match(UIA_SCRIPT, /NxPName .* -notin/);
+  assert.match(UIA_SCRIPT, /'move_caption'\\s*\\{/);
+  assert.match(UIA_SCRIPT, /MoveCaption\\(\\$res\\.hwnd,\\$res\\.pid/);
   const op=UIA_SCRIPT.slice(UIA_SCRIPT.indexOf("  'minimize' {"),
     UIA_SCRIPT.indexOf("  'activate' {"));
   assert.ok(!/AppActivate|SendKeys|Invoke-Expression|Start-Process|SetFocus|WScript\.Shell|(?:\s|^)cmd\.exe/.test(op));
