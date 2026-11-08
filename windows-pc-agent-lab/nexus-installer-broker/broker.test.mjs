@@ -56,7 +56,9 @@ test('B: Live-owner approval independently installs without chat signature',asyn
 test('two channel trust roots are never interchangeable',()=>{
   const grant=permit('chat');
   const forged={...grant,payload:{...grant.payload,channel:'live'}};
-  assert.throws(()=>verifyApproval(forged,{publicKeys:keys,now:t}),/approval_signature_invalid/);
+  assert.throws(()=>verifyApproval(forged,{publicKeys:keys,now:t}),/channel_trust_root_missing/);
+  const overlap={chat:keys.chat,live:{'test-chat':live.publicKey}};
+  assert.throws(()=>verifyApproval(forged,{publicKeys:overlap,now:t}),/approval_signature_invalid/);
   const noChat={live:keys.live};
   assert.throws(()=>verifyApproval(grant,{publicKeys:noChat,now:t}),/channel_trust_root_missing/);
 });
@@ -64,7 +66,7 @@ test('signature binds package digest, exact schema and timestamp',()=>{
   const g=permit('live');
   assert.throws(()=>verifyApproval({...g,payload:{...g.payload,artifactSha256:'0'.repeat(64)}},{publicKeys:keys,now:t}),
     /package_digest_not_allowlisted/);
-  assert.throws(()=>verifyApproval({...g,payload:{...g.payload,issuedAt:g.payload.issuedAt-5}},{publicKeys:keys,now:t}),
+  assert.throws(()=>verifyApproval({...g,payload:{...g.payload,issuedAt:g.payload.issuedAt+5}},{publicKeys:keys,now:t}),
     /approval_signature_invalid/);
   assert.throws(()=>verifyApproval({...g,payload:{...g.payload,extra:'sudo'}},{publicKeys:keys,now:t}),
     /approval_schema_invalid/);
