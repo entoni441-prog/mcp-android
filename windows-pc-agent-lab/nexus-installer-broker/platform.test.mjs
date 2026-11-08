@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {generateTaskXml,BROKER_RUNNER,NODE_PATH} from './task-xml.mjs';
+import {generateTaskXml,BROKER_LAUNCHER} from './task-xml.mjs';
 import {createProtectedJournal} from './journal.mjs';
 import {inspectSignedGoogleMsi,trustedSourcePath} from './windows-package.mjs';
 
@@ -14,14 +14,14 @@ test('admin provisioning task is fixed, highest privilege, on-demand and single-
   assert.match(xml,/<LogonType>InteractiveToken<\/LogonType>/);
   assert.match(xml,/<AllowStartOnDemand>true<\/AllowStartOnDemand>/);
   assert.match(xml,/<MultipleInstancesPolicy>IgnoreNew<\/MultipleInstancesPolicy>/);
-  assert.match(xml,/--run-once/);
-  assert.ok(xml.includes(BROKER_RUNNER)&&xml.includes(NODE_PATH));
+  assert.doesNotMatch(xml,/--run-once/);
+  assert.ok(xml.includes(BROKER_LAUNCHER)&&!xml.includes('node.exe'));
   assert.doesNotMatch(xml.match(/<Command>([^<]+)<\/Command>/)?.[1]||'',/SYSTEM|powershell|cmd\.exe|http:/i);
 });
 test('task cannot be changed to attacker-controlled script or executable',()=>{
   const sid='S-1-5-21-100-200-300-500';
-  assert.throws(()=>generateTaskXml({ownerSid:sid,taskRunner:'C:\\Users\\krado\\evil.mjs'}),/broker_executable_must_be_pinned/);
-  assert.throws(()=>generateTaskXml({ownerSid:sid,node:'C:\\Temp\\node.exe'}),/broker_executable_must_be_pinned/);
+  assert.throws(()=>generateTaskXml({ownerSid:sid,launcher:'C:\\Users\\krado\\evil.mjs'}),/broker_executable_must_be_pinned/);
+  assert.throws(()=>generateTaskXml({ownerSid:sid,launcher:'C:\\Temp\\node.exe'}),/broker_executable_must_be_pinned/);
   assert.throws(()=>generateTaskXml({ownerSid:'administrator'}),/invalid_owner_sid/);
 });
 test('journal claim persists on disk with replay refusal and stable request receipt', {skip:process.platform!=='win32'},()=>{
