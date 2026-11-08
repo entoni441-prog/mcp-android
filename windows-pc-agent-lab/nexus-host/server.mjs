@@ -37,6 +37,7 @@ import {createRunner} from './runner.mjs';
 import {createDiag} from './diag.mjs';
 import {createScoped} from './scoped.mjs';
 import {createPower} from './power.mjs';
+import {createLogonAttestation} from './logon-attestation.mjs';
 import {resourceDecision, writeDecision, isProtectedPath, shortDiff, redactDeep, REDACTED_MARK} from './policy.mjs';
 
 /**
@@ -172,13 +173,21 @@ export function createRuntime(cfg, deps = {}) {
   const runner = createRunner({caps, cfg, consent, tasks, audit: e => audit(cfg, e), ...(deps.runnerDeps || {})});
   const diag = createDiag({caps, ...(deps.diagDeps || {})});
   const scoped = createScoped({caps, cfg, consent, audit: e => audit(cfg, e), ...(deps.scopedDeps || {})});
-  const power = createPower({caps, consent, audit: e => audit(cfg, e), onLock: () => { session.end('locked').catch(() => {}); },
+  const logonAttestation = createLogonAttestation({store, consent, diag,
+    audit: e => audit(cfg, e)});
+  const power = createPower({caps, consent, audit: e => audit(cfg, e),
+    onBeforeRestart: () => store.recordLogonAttestation(false, 'restart_gate_consumed'),
+    onLock: () => { session.end('locked').catch(() => {}); },
     facts: async () => {
       let autostartVerified = false, sleepStates = [], unsavedOwnerDocs = [];
       try { const a = await diag.system_info({topic: 'autostart_nexus'}); autostartVerified = (a.data?.tasks || []).some(t => /NEXUS-Host-Logon/i.test(t.name) && (t.triggers || []).some(x => /Logon/i.test(x)) && t.state !== 'Disabled'); } catch {}
       try { const p = await diag.system_info({topic: 'power'}); sleepStates = (p.data?.sleepStates || []).map(String); } catch {}
       try { const w = await listWindows({includeTitles: true}, {tmpDir: path.join(cfg.home, 'tmp')}); unsavedOwnerDocs = (w.windows || []).filter(x => /^\*|\*\s*[-–]|•/.test(String(x.title || ''))).map(x => x.process); } catch {}
-      return {autostartVerified, logonChannelVerified: caps.logonChannelVerified === true, wakeDevice: caps.wakeDevice || null, sleepStates, unsavedOwnerDocs};
+      const liveChannel = await logonAttestation.probe();
+      return {autostartVerified,
+        // Attestation alone never overrides a disabled/uninstalled CRD service.
+        logonChannelVerified: caps.logonChannelVerified === true && liveChannel.ready,
+        wakeDevice: caps.wakeDevice || null, sleepStates, unsavedOwnerDocs};
     }, ...(deps.powerDeps || {})});
   gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, handoff, onOwnerActive: why => { session.pauseForOwner(why); runner.cancelAll('owner_paused').catch(() => {}); }, ...(deps.guiDeps || {})});
   const ownerFrameNonces = new Map();
@@ -313,7 +322,8 @@ export function createRuntime(cfg, deps = {}) {
     },
     live_frame: a => live.live_frame(a), watch_nexus: a => live.watch_nexus(a),
     run_command: a => runner.run_command(a), command_plan: a => runner.command_plan(a), system_info: a => diag.system_info(a),
-    files_scoped: a => scoped.files_scoped(a), download_verify: a => scoped.download_verify(a), power_action: a => power.power_action(a),
+    files_scoped: a => scoped.files_scoped(a), download_verify: a => scoped.download_verify(a),
+    logon_attestation: a => logonAttestation.logon_attestation(a), power_action: a => power.power_action(a),
     live_control: a => {
       // 0.6.1: host_off = NEXUS fully off (the supervisor will not restart it) — the replacement for «close the window»,
       // now that a crashed/killed Host is restarted automatically. Turning it on again: start NEXUS-Host-Run on the PC.
