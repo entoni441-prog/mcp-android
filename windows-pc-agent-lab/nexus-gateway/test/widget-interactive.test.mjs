@@ -23,7 +23,7 @@ test('Live 7.1: only a compact out-of-frame link follows nonsecret consent count
 });
 test('Live 2.0: text is manual, explicitly nonsecret, and no credentials recorded',()=>{
   assert.match(WIDGET_HTML,/id="touch-text"[^>]*type="text"/);
-  assert.match(WIDGET_HTML,/if\(result\?\.done===true\)\{el\.value='';hideComposer\(\);\}/);
+  assert.match(WIDGET_HTML,/if\(editable\)showComposer\(\)/);
   assert.match(WIDGET_HTML,/const result=await touchCall\\('keyboard_action',op\\)/);
   assert.match(WIDGET_HTML,/Не вводи PIN, пароль/);
   const src=WIDGET_HTML.match(/<script>([\s\S]*?)<\/script>/)?.[1];
@@ -84,7 +84,7 @@ test('Live v4: stale recovery is read-only and limited to proven nonexecution',(
 });
 test('Live v4: Samsung keyboard is a native mobile input inside a popup',()=>{
   assert.match(WIDGET_HTML,/id="touch-tools" hidden role="dialog"/);
-  assert.match(WIDGET_HTML,/id="touch-text"[^>]*inputmode="text" enterkeyhint="send"/);
+  assert.match(WIDGET_HTML,/id="touch-text"[^>]*inputmode="text" enterkeyhint="enter"/);
   assert.match(WIDGET_HTML,/function showComposer\(\)/);
   assert.match(WIDGET_HTML,/\$\('touch-text'\)\.focus/);
   assert.match(WIDGET_HTML,/function hideComposer\(\)/);
@@ -96,5 +96,5 @@ test('Live 7.1: Samsung text entry is independent of the Windows frame',()=>{
   assert.doesNotMatch(WIDGET_HTML,/\.touch-tools\{position:fixed;inset:0/);
   assert.match(WIDGET_HTML,/id="touch-open"[^>]*hidden[^>]*>⌨ Клавиатура/);
   assert.match(WIDGET_HTML,/\$\('touch-open'\)\.hidden=true/);
-  assert.match(WIDGET_HTML,/if\(result\?\.done===true\)\{el\.value='';hideComposer\(\);\}/);
+  assert.match(WIDGET_HTML,/if\(editable\)showComposer\(\)/);
 });
