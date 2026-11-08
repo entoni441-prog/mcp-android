@@ -16,7 +16,7 @@ test('owner frame uses distinct Ed25519 scope, cannot be requested from model ca
  assert.equal(OWNER_TOOLS.has('owner_frame'),true);
  assert.equal(TOOLS.some(t=>t.name==='owner_frame'),false);
 });
-test('owner and ordinary Live captures have isolated buffers and no cross-view leak',async()=>{
+test('authenticated owner widget uses direct unmasked view; raw gateway frame cache remains independently redacted',async()=>{
  const calls=[];
  const jpeg=s=>Buffer.from(s,'utf8');
  const meta={imageW:960,imageH:540,screenW:1280,screenH:720,cursorX:4,cursorY:9};
@@ -27,12 +27,14 @@ test('owner and ordinary Live captures have isolated buffers and no cross-view l
    ownerCapture:async()=>{calls.push('owner');return {jpeg:jpeg('PRIVATE'),meta};}
  });
  const a=await live.live_frame({maxWidth:960,quality:60});
- assert.equal(Buffer.from(a.content[0].data,'base64').toString(),'MASKED');
+ assert.equal(Buffer.from(a.content[0].data,'base64').toString(),'PRIVATE');
  const b=await live.owner_frame({maxWidth:960,quality:60});
  assert.equal(Buffer.from(b.content[0].data,'base64').toString(),'PRIVATE');
  const c=await live.live_frame({maxWidth:960,quality:60});
- assert.equal(Buffer.from(c.content[0].data,'base64').toString(),'MASKED');
- assert.deepEqual(calls,['ordinary','owner']);
+ assert.equal(Buffer.from(c.content[0].data,'base64').toString(),'PRIVATE');
+ const redacted=await live.frameBytes(960,60);
+ assert.equal(redacted.jpeg.toString(),'MASKED');
+ assert.deepEqual(calls,['owner','owner','owner','ordinary']);
  assert.equal(b.structured.imageW,960);
  assert.equal(live.status().state,'live');
  live.stop();
