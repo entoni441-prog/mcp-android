@@ -27,3 +27,27 @@ export async function callOnceAfterStale(send,reobserve) {
     return await send();
   }
 }
+
+/** Keep the desktop point under the fingers fixed while pinch scale/pan changes.
+ * Coordinates are CSS pixels relative to the untransformed image center.
+ * A two-finger gesture never executes a Windows action.
+ */
+export function anchoredZoomPan(oldScale, oldPanX, oldPanY, newScale, fromX, fromY, toX, toY, centerX, centerY) {
+  const values=[oldScale,oldPanX,oldPanY,newScale,fromX,fromY,toX,toY,centerX,centerY];
+  if (!values.every(Number.isFinite) || oldScale<=0 || newScale<=0) return null;
+  const ratio=newScale/oldScale;
+  return {
+    panX:toX-centerX-ratio*(fromX-centerX-oldPanX),
+    panY:toY-centerY-ratio*(fromY-centerY-oldPanY)
+  };
+}
+
+/** Pan only inside the visible viewport; do not expose black space at the edge. */
+export function clampZoomPan(scale, panX, panY, imgW, imgH, viewW, viewH) {
+  if (![scale,panX,panY,imgW,imgH,viewW,viewH].every(Number.isFinite) ||
+      scale<1 || imgW<=0 || imgH<=0 || viewW<=0 || viewH<=0) return null;
+  const maxX=Math.max(0,(imgW*scale-viewW)/2);
+  const maxY=Math.max(0,(imgH*scale-viewH)/2);
+  return {panX:Math.max(-maxX,Math.min(maxX,panX)),
+          panY:Math.max(-maxY,Math.min(maxY,panY))};
+}
