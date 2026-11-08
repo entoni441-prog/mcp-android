@@ -8,10 +8,16 @@ import path from 'node:path';
 
 const ROOT='C:\\Program Files\\NEXUS\\InstallerBroker';
 const DATA='C:\\ProgramData\\NEXUS\\InstallerBroker';
-const EXPECTED=[
-  ROOT,path.win32.join(ROOT,'run-once.mjs'),path.win32.join(ROOT,'trust.json'),
-  path.win32.join(DATA,'staging'),path.win32.join(DATA,'journal')
-];
+const FILES=Object.freeze([
+  'run-once.mjs','broker.mjs','contract.mjs','journal.mjs',
+  'windows-io.mjs','windows-package.mjs','acl-check.mjs','task-xml.mjs','trust.json'
+]);
+const EXPECTED=Object.freeze([
+  'C:\\Program Files\\NEXUS',
+  ROOT,
+  ...FILES.map(n=>path.win32.join(ROOT,n)),
+  DATA,path.win32.join(DATA,'staging'),path.win32.join(DATA,'journal')
+]);
 const quote=s=>"'"+s.replaceAll("'","''")+"'";
 export function verifyProtectedAcls({spawn=spawnSync,paths=EXPECTED}={}){
   if(process.platform!=='win32')return false;
