@@ -80,7 +80,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
   <button id="pp" title="Пауза / продолжить">⏸</button>
   <button id="touch-toggle" type="button" aria-pressed="false" title="Прямое управление экраном, только по команде владельца">Управление: выкл.</button>
   <button id="zoom-reset" type="button" hidden title="Сбросить масштаб Live до 1×" aria-label="Сбросить приближение Live">1.0× ↺</button>
-  <button id="touch-open" type="button" hidden aria-label="Показать клавиатуру Samsung для обычного текстового поля">⌨ Клавиатура</button>
+  <button id="touch-open" type="button" hidden aria-label="Открыть системную клавиатуру телефона для обычного текстового поля">⌨ Клавиатура</button>
   <button id="extra-toggle" type="button" aria-expanded="false" title="Резервные функции Live">⋯</button>
   <button id="private-view" type="button" hidden aria-pressed="false" title="Резервный приватный просмотр">Личные окна 🔒</button>
   <button id="window-open" type="button" hidden aria-expanded="false" title="Резервное сворачивание выбранного окна">Окна ▾</button>
@@ -113,9 +113,9 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
 </div>
 <div class="touch-tools" id="touch-tools" hidden role="dialog" aria-label="Ввод текста в Windows">
   <div class="touch-card">
-    <div class="touch-head"><b>Клавиатура Samsung → Windows</b><button id="touch-close" type="button" aria-label="Скрыть клавиатуру">Скрыть</button></div>
+    <div class="touch-head"><b>Клавиатура телефона → Windows</b><button id="touch-close" type="button" aria-label="Скрыть клавиатуру">Скрыть</button></div>
     <span class="notice">Только обычный текст. Не вводи PIN, пароль, код, токен или платёжные данные.</span>
-    <form id="touch-form" autocomplete="off"><input id="touch-text" type="text" inputmode="text" enterkeyhint="enter" maxlength="2000" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Прямой ввод с клавиатуры Samsung в Windows" placeholder="Пиши здесь — сразу в Windows"><button type="submit">↵</button></form>
+    <form id="touch-form" autocomplete="off"><input id="touch-text" type="text" inputmode="text" enterkeyhint="enter" maxlength="2000" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Прямой ввод с системной клавиатуры телефона в Windows" placeholder="Пиши здесь — сразу в Windows"><button type="submit">↵</button></form>
     <div class="keys"><button data-touch-key="enter" type="button">Enter</button><button data-touch-key="tab" type="button">Tab</button><button data-touch-key="backspace" type="button">⌫</button><button data-touch-key="esc" type="button">Esc</button></div>
   </div>
 </div>
@@ -638,7 +638,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
   }
   function showComposer() {
     if(!touchEnabled||paused||stopped)return;
-    // HTML input is an Android IME bridge. No Windows document text is read.
+    // HTML input is an iOS/Android IME bridge. No Windows document text is read.
     imeActive=true;imeBlocked=false;imeComposing=false;imeMirror='';
     clearTimeout(imeTimer);imeTimer=null;imeQueue=[];
     $('touch-text').value='';
@@ -646,7 +646,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
     $('touch-open').hidden=false; // Android may require a fresh user gesture
     size();
     try{$('touch-text').focus({preventScroll:true});}catch{}
-    touchMessage('Набирай текст: отправляется прямо в Windows.');
+    touchMessage('Обычный текст: системная клавиатура телефона. Если iPhone её не открыл, нажми кнопку ⌨. Пароли/PIN запрещены.');
   }
   function setTouchVisual(enabled) {
     touchEnabled=enabled===true;
@@ -774,7 +774,11 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
             /(?:Edit|Document|ComboBox)/i.test(String(sc.target?.control||'')) &&
             !/(?:password|пароль|pin|код безопасности|otp|cvv)/i.test(String(sc.target?.name||''));
           if(editable)showComposer();
-          else hideComposer(); // a password, unknown field or other target disarms the IME
+          else {
+            hideComposer(); // Never hand a password/PIN to the model-mediated keyboard_action.
+            if(sc.target?.isPassword===true || /(?:password|пароль|pin|пин-код|код безопасности|otp|cvv)/i.test(String(sc.target?.name||'')))
+              touchMessage('PIN/пароль: ввод через обычный Live отключён. Введи его непосредственно в Windows; не отправляй в ChatGPT.');
+          }
         }
         return sc;
       }
@@ -804,7 +808,14 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
     finally {$('touch-toggle').disabled=false;}
   }
   $('touch-toggle').onclick=()=>changeOwnerTouch(!touchEnabled);
-  $('touch-open').onclick=()=>showComposer();
+  // iOS Safari opens the native keyboard only during a DIRECT user gesture.
+  // The first verified remote click is async and cannot reliably open it.
+  // This extra tap calls focus synchronously, with no RPC and no new trust.
+  $('touch-open').onclick=()=>{
+    if(!imeActive||imeBlocked||!touchEnabled||stopped||paused)return;
+    try{$('touch-text').focus({preventScroll:true});}catch{}
+    touchMessage('Клавиатура телефона активирована для проверенного обычного поля.');
+  };
   $('touch-close').onclick=hideComposer;
   $('touch-tools').addEventListener('pointerdown',e=>{if(e.target===$('touch-tools'))hideComposer();});
 
