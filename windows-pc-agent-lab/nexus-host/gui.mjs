@@ -87,7 +87,10 @@ export class RobotDaemon {
 }
 
 // ───────────── PowerShell UIA runner ─────────────
-export const UIA_BOOTSTRAP = "$s = $env:NEXUS_UIA_PS; Remove-Item Env:NEXUS_UIA_PS; . ([ScriptBlock]::Create($s))";
+// Split long fixed UIA script across two environment values: Windows limits
+// each individual environment value to ~32767 characters. No script on disk.
+export const UIA_BOOTSTRAP = "$s = $env:NEXUS_UIA_PS + $env:NEXUS_UIA_PS_2; Remove-Item Env:NEXUS_UIA_PS,Env:NEXUS_UIA_PS_2; . ([ScriptBlock]::Create($s))";
+export const UIA_ENV_CHUNKS = Object.freeze([UIA_SCRIPT.slice(0,23000),UIA_SCRIPT.slice(23000)]);
 const UIA_BOOTSTRAP_B64 = Buffer.from(UIA_BOOTSTRAP, 'utf16le').toString('base64');
 export function runUiaReal(args, {systemRoot = process.env.SystemRoot, tmpDir, timeoutMs = 20_000} = {}) {
   if (typeof systemRoot !== 'string' || !/^[a-zA-Z]:\\/.test(systemRoot)) throw Error('invalid_windows_system_root');
@@ -101,7 +104,7 @@ export function runUiaReal(args, {systemRoot = process.env.SystemRoot, tmpDir, t
   return new Promise((resolve, reject) => {
     const p = spawn(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
       stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true,
-      env: {...process.env, NEXUS_UIA_PS: UIA_SCRIPT, NEXUS_UIA_ARGS: JSON.stringify(args), NEXUS_UIA_OUT: out},
+      env: {...process.env, NEXUS_UIA_PS: UIA_ENV_CHUNKS[0], NEXUS_UIA_PS_2: UIA_ENV_CHUNKS[1], NEXUS_UIA_ARGS: JSON.stringify(args), NEXUS_UIA_OUT: out},
     });
     let err = '';
     const timer = setTimeout(() => { p.kill(); reject(Error('uia_timeout')); }, timeoutMs);
