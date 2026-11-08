@@ -56,3 +56,16 @@ Owner's latest real Samsung Live v11 E2E: Notepad text input, deleting through t
 At this checkpoint: **no Windows restart, power-off, logoff, lock, remote desktop service install, RDP/firewall change, auto-login, activation of Cloudflare Access, new plan or billing action**. Production Host/Gateway/main unchanged. Unsaved Notepad untouched. User approval needed to enable a new persistent remote-access channel; then proceed one verified step at a time.
 
 Next decision: owner authorizes or declines **installation and secured setup of Chrome Remote Desktop Remote Access host as an independent pre-login recovery channel**. The model does not request his Google credentials or CRD PIN.
+
+
+## 2026-11-08 Chrome Remote Desktop installation attempt
+
+- Owner authorized installation of independent Chrome Remote Desktop host for pre-login rescue. **No reboot and no power settings changed.**
+- NEXUS Host online, Gateway tunnel HTTP 200. Previous unsaved Notepad untouched.
+- Read-only inspection found **no** Google Chrome `chrome.exe` and **no** CRD Host service/installation.
+- Official Google Cloud documentation source MSI: `https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi`.
+- NEXUS `download_verify`: downloaded 24,616,960 bytes to `C:\\Users\\krado\\NEXUS-workspace\\downloads\\chromeremotedesktophost.msi`; SHA-256 **`1aef26d305b0091bba71589d3caaabe6db5a042648e5801969332086db7c1a90`**. Authenticode **Valid**, signed by **Google LLC**; Mark of the Web retained. Verified installer is staged, not yet installed.
+- Attempted ordinary silent MSI installation `msiexec.exe /i <verified MSI> /qn /norestart`: **exit code 1603**, no install success. Read-only Application Event log `MsiInstaller` ID **11925** identifies root cause **Error 1925: You do not have sufficient privileges to complete this installation for all users of the machine**. No CRD service created. No blind retries.
+- `whoami /groups`: user belongs to BUILTIN Administrators but token at **Medium Mandatory Level**, Administrators SID **Deny Only**. NEXUS commands are unelevated. Installer requires explicit Windows **UAC elevation** from owner; NEXUS Live in ordinary user session cannot approve secure-desktop UAC itself. Do not disable UAC, impersonate SYSTEM, launch an elevated scheduled task to bypass consent, or expose local credentials to the model.
+- **Next action**: owner states whether able to approve a Windows UAC dialog at the physical PC. If ready, launch signed MSI via standard Windows elevation and let owner press Yes locally. Then verify `Chrome Remote Desktop Service` (installed and startup automatic) and proceed with Google account/PIN setup in Google's trusted UI. Do not ask owner to paste Google credentials/CRD PIN in chat. If away from PC, stop without risking lost remote control; a different independently trusted admin-capable channel would be required.
+- **State**: installation BLOCKED by Windows UAC; restart remains blocked by `logonChannelVerified=false` and unsaved Notepad. Production NEXUS Host/Gateway/main untouched.
