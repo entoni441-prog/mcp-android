@@ -9,7 +9,7 @@
  */
 // Gateway-only cache key. Host/Gateway shared tool catalog stays byte-identical.
 export const LIVE_UI = 'ui://nexus/live-view-v8.html';
-import {framePointToScreen,isPreExecutionStale,callOnceAfterStale} from './widget-input.mjs';
+import {framePointToScreen,isPreExecutionStale,callOnceAfterStale,anchoredZoomPan,clampZoomPan} from './widget-input.mjs';
 
 export const WIDGET_MIME = 'text/html;profile=mcp-app';
 
@@ -25,9 +25,9 @@ export const WIDGET_HTML = `<!doctype html>
 .st{font-weight:600;letter-spacing:.02em}.meta{color:var(--mut);margin-left:auto;font-variant-numeric:tabular-nums}
 button,select{font:inherit;color:var(--fg);background:transparent;border:1px solid var(--line);border-radius:6px;padding:3px 8px;min-height:28px;cursor:pointer}
 button:hover{border-color:var(--mut)}button.stop{border-color:var(--red);color:var(--red);font-weight:600}button[hidden]{display:none}
-.view{position:relative;background:#000;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.view{position:relative;background:#000;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}
 .fs .view{aspect-ratio:auto;height:calc(100vh - 44px)}
-img{max-width:100%;max-height:100%;display:block;object-fit:contain}
+img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-origin:center center;user-select:none;-webkit-user-drag:none;will-change:transform}
 .msg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;text-align:center;color:var(--mut);background:rgba(0,0,0,.72)}
 .msg[hidden]{display:none}.msg b{color:var(--fg)}
 .foot{color:var(--mut);font-size:11px;padding:4px 8px}
@@ -54,7 +54,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
 .touch-tools{border-top:1px solid var(--line);padding:8px;display:grid;gap:7px}
 .touch-tools form{display:flex;gap:6px}.touch-tools input{flex:1;min-width:0;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;font:16px system-ui}
 .touch-tools .keys{display:flex;flex-wrap:wrap;gap:6px}.touch-tools .notice{font-size:11px;color:var(--amber)}
-#img.touchable{cursor:crosshair;touch-action:manipulation}
+#img.touchable{cursor:crosshair;touch-action:none}
 .touch-tools{position:relative;inset:auto;z-index:auto;background:var(--bg);display:flex;align-items:stretch;justify-content:center;padding:8px;border-top:1px solid var(--line)}
 .touch-tools[hidden]{display:none!important}
 .touch-card{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:10px;max-height:none;overflow:auto;box-shadow:none}
@@ -78,6 +78,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   <span class="dot" aria-hidden="true"></span><span class="st" id="st">NEXUS · подключение…</span>
   <button id="pp" title="Пауза / продолжить">⏸</button>
   <button id="touch-toggle" type="button" aria-pressed="false" title="Прямое управление экраном, только по команде владельца">Управление: выкл.</button>
+  <button id="zoom-reset" type="button" hidden title="Сбросить масштаб Live до 1×" aria-label="Сбросить приближение Live">1.0× ↺</button>
   <button id="touch-open" type="button" hidden aria-label="Открыть отдельную форму ввода текста">Ввести текст ↗</button>
   <button id="extra-toggle" type="button" aria-expanded="false" title="Резервные функции Live">⋯</button>
   <button id="private-view" type="button" hidden aria-pressed="false" title="Резервный приватный просмотр">Личные окна 🔒</button>
@@ -87,7 +88,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   <button id="stop" class="stop" title="Остановить трансляцию на ПК">■ STOP</button>
   <span class="meta" id="meta"></span>
 </div>
-<div class="view"><img id="img" alt="Экран Windows владельца"><div class="msg" id="msg"><b id="mt">Подключение…</b><span id="md"></span><button id="ask" hidden>Попросить включить Live View</button></div></div>
+<div class="view" id="view" aria-label="Экран Windows: двумя пальцами приблизить, одним пальцем переместить увеличенный экран"><img id="img" draggable="false" alt="Экран Windows владельца"><div class="msg" id="msg"><b id="mt">Подключение…</b><span id="md"></span><button id="ask" hidden>Попросить включить Live View</button></div></div>
 <div class="private-panel" id="private-panel" hidden role="dialog" aria-label="Приватный просмотр документов">
  <div class="private-card"><b>Личные окна Windows</b>
  <span class="warn">В этом режиме ты увидишь свои документы без чёрной маски. Обычные скриншоты для ChatGPT останутся скрытыми. Только пароль владельца NEXUS — не PIN Windows.</span>
@@ -137,12 +138,16 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
 (() => {
   const $ = id => document.getElementById(id);
   const framePointToScreen = ${framePointToScreen.toString()};
+  const anchoredZoomPan = ${anchoredZoomPan.toString()};
+  const clampZoomPan = ${clampZoomPan.toString()};
   const isPreExecutionStale = ${isPreExecutionStale.toString()};
   const callOnceAfterStale = ${callOnceAfterStale.toString()};
   let seq = 0, pending = new Map(), host = null, modes = [], mode = 'inline';
   let paused = false, stopped = false, busy = false, timer = null, fails = 0, lastSeq = -1, lastAt = 0;
   let frameGeometry=null, touchEnabled=false, touchBusy=false, pointerStart=null, touchConsent=null;
   let lastTap=null, tapTimer=null, lastStatusTimer=null;
+  let zoomScale=1, zoomPanX=0, zoomPanY=0, pinchOrigin=null, gestureUsed=false;
+  const activePointers=new Map();
   const legacy = () => typeof window.openai === 'object' && window.openai && typeof window.openai.callTool === 'function';
 
   // ── MCP Apps bridge (JSON-RPC 2.0 over postMessage) ──
@@ -165,6 +170,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   });
   function ctx(c) {
     if (Array.isArray(c.availableDisplayModes)) modes = c.availableDisplayModes;
+    if (c.displayMode && c.displayMode!==mode) resetZoom();
     if (c.displayMode) mode = c.displayMode;
     $('pip').hidden = !modes.includes('pip') || mode === 'pip';
     $('full').hidden = !modes.includes('fullscreen') || mode === 'fullscreen';
@@ -286,7 +292,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (document.visibilityState === 'hidden') return schedule(1000); // no viewer → no frames
     busy = true;
     try {
-      const f = await getViewFrame(mode === 'fullscreen' ? 1600 : 960);
+      const f = await getViewFrame(mode === 'fullscreen' || zoomScale>1.01 ? 1600 : 960);
       const sc=f.sc;
       if (!sc || sc.state === 'off') { onStatus({state: 'off'}); return; }
       // 0.5.1: grant on, but no task runs → the PC produces no frames; poll slowly, give up after 10 min idle.
@@ -643,8 +649,38 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   function clearTap() {
     clearTimeout(tapTimer);tapTimer=null;lastTap=null;pointerStart=null;
   }
+  // v9: client-side visual zoom only. No mouse/keyboard tool is invoked by a
+  // pinch or a pan. Image DOMRect after CSS transform remains the sole source
+  // for mapping a later deliberate tap to unscaled Windows coordinates.
+  function drawZoom() {
+    const img=$('img'), view=$('view');
+    const bounds=clampZoomPan(zoomScale,zoomPanX,zoomPanY,
+      img.offsetWidth,img.offsetHeight,view.clientWidth,view.clientHeight);
+    if(bounds){zoomPanX=bounds.panX;zoomPanY=bounds.panY;}
+    else{zoomPanX=0;zoomPanY=0;}
+    img.style.transform='translate3d('+zoomPanX+'px,'+zoomPanY+'px,0) scale('+zoomScale+')';
+    $('zoom-reset').hidden=zoomScale<=1.001;
+    $('zoom-reset').textContent=zoomScale.toFixed(1)+'× ↺';
+  }
+  function resetZoom() {
+    zoomScale=1;zoomPanX=0;zoomPanY=0;pinchOrigin=null;gestureUsed=false;
+    activePointers.clear();clearTap();drawZoom();
+  }
+  function pinchPoints() {
+    if(activePointers.size!==2)return null;
+    const [a,b]=[...activePointers.values()];
+    return {distance:Math.hypot(b.x-a.x,b.y-a.y),
+      x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+  }
+  function beginPinch() {
+    const p=pinchPoints();
+    pinchOrigin=p&&p.distance>=8
+      ? {distance:p.distance,x:p.x,y:p.y,scale:zoomScale,panX:zoomPanX,panY:zoomPanY}:null;
+  }
+  $('zoom-reset').onclick=resetZoom;
+
   function resetTouch() {
-    clearTap();setTouchVisual(false);
+    clearTap();setTouchVisual(false);resetZoom();
     $('touch-text').value='';
     leaseUntil=0;
   }
@@ -673,7 +709,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (!touchEnabled || stopped || paused || Date.now()-gestureAt>8000) throw Error('Касание устарело. Ничего не отправлено.');
     const w=await callTool('list_windows',{includeTitles:false});
     if (!w || toolFailure(w)) throw Error('Не удалось обновить окна. Действие отменено.');
-    const f=await getViewFrame(mode==='fullscreen'?1600:960);
+    const f=await getViewFrame(mode==='fullscreen'||zoomScale>1.01?1600:960);
     const sc=f?.sc;
     if(!sc||sc.state!=='live'||!f.url||
        !Number.isFinite(sc.screenW)||!Number.isFinite(sc.screenH)||
@@ -752,26 +788,76 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   $('touch-open').onclick=()=>showComposer();
   $('touch-close').onclick=hideComposer;
   $('touch-tools').addEventListener('pointerdown',e=>{if(e.target===$('touch-tools'))hideComposer();});
-  $('img').addEventListener('pointerdown',e=>{
-    pointerStart=touchEnabled && e.isTrusted && e.button===0 && !paused && !stopped ?
-      {id:e.pointerId,x:e.clientX,y:e.clientY,at:Date.now()}:null;
+
+  // Pointer events are captured by the viewer, not by the transformed image:
+  // pinch-to-zoom and panning work inside the ChatGPT inline Live card.
+  const viewer=$('view');
+  viewer.addEventListener('pointerdown',e=>{
+    if(!e.isTrusted || (e.pointerType==='mouse'&&e.button!==0))return;
+    activePointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    try{viewer.setPointerCapture(e.pointerId);}catch{}
+    if(activePointers.size===1){
+      pointerStart={id:e.pointerId,x:e.clientX,y:e.clientY,at:Date.now(),
+        panX:zoomPanX,panY:zoomPanY,moved:false};
+    }else{
+      gestureUsed=true;clearTap();beginPinch();
+    }
   });
-  $('img').addEventListener('pointercancel',()=>{pointerStart=null;});
-  $('img').addEventListener('pointerup',e=>{
-    const start=pointerStart;pointerStart=null;
-    if (!start || start.id!==e.pointerId || Math.abs(e.clientX-start.x)>12 ||
-        Math.abs(e.clientY-start.y)>12 || Date.now()-start.at>900 || !touchReady()) return;
+  viewer.addEventListener('pointermove',e=>{
+    if(!activePointers.has(e.pointerId))return;
+    activePointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(activePointers.size===2){
+      if(!pinchOrigin)beginPinch();
+      const p=pinchPoints(),origin=pinchOrigin;
+      if(!p||!origin)return;
+      const scale=Math.max(1,Math.min(5,origin.scale*p.distance/origin.distance));
+      const box=viewer.getBoundingClientRect(),cx=box.left+box.width/2,cy=box.top+box.height/2;
+      const next=anchoredZoomPan(origin.scale,origin.panX,origin.panY,scale,
+        origin.x,origin.y,p.x,p.y,cx,cy);
+      if(!next)return;
+      zoomScale=scale;zoomPanX=next.panX;zoomPanY=next.panY;drawZoom();
+      return;
+    }
+    // Once enlarged, one finger drags the picture instead of clicking Windows.
+    if(activePointers.size===1&&pointerStart){
+      const dx=e.clientX-pointerStart.x,dy=e.clientY-pointerStart.y;
+      if(Math.hypot(dx,dy)>12)pointerStart.moved=true;
+      if(zoomScale>1.001&&pointerStart.moved){
+        zoomPanX=pointerStart.panX+dx;zoomPanY=pointerStart.panY+dy;drawZoom();
+      }
+    }
+  });
+  viewer.addEventListener('pointercancel',()=>{
+    activePointers.clear();pinchOrigin=null;gestureUsed=false;clearTap();
+  });
+  viewer.addEventListener('pointerup',e=>{
+    if(!activePointers.has(e.pointerId))return;
+    const multi=gestureUsed||activePointers.size>1;
+    const start=pointerStart;
+    activePointers.delete(e.pointerId);
+    try{viewer.releasePointerCapture(e.pointerId);}catch{}
+    if(multi){
+      pointerStart=null;pinchOrigin=null;
+      if(activePointers.size===0)gestureUsed=false;
+      return; // Never dispatch a Windows action after a multi-touch gesture.
+    }
+    pointerStart=null;
+    if(!start||start.id!==e.pointerId||start.moved||
+        Math.hypot(e.clientX-start.x,e.clientY-start.y)>12||
+        Date.now()-start.at>900||!touchReady())return;
+    // Do not accept a captured pointer outside the clipped visible viewer.
+    const box=viewer.getBoundingClientRect();
+    if(e.clientX<box.left||e.clientY<box.top||e.clientX>=box.right||e.clientY>=box.bottom)return;
     const point=framePointToScreen(e.clientX,e.clientY,$('img').getBoundingClientRect(),frameGeometry);
-    if (!point) {touchMessage('Касание вне изображения.');return;}
+    if(!point){touchMessage('Касание вне изображения.');return;}
     leaseUntil=Date.now()+10*60*1000;
-    // Defer an ordinary single click briefly so a double tap emits EXACTLY one
-    // double_click instead of a single_click + double_click triple activation.
+    // Defer the click; a second tap emits EXACTLY one double_click.
     const prior=lastTap;
-    if (prior && Date.now()-prior.at<=330 &&
-        Math.hypot(point.x-prior.x,point.y-prior.y)<=40) {
+    if(prior&&Date.now()-prior.at<=330&&
+       Math.hypot(point.x-prior.x,point.y-prior.y)<=40){
       clearTimeout(tapTimer);tapTimer=null;lastTap=null;
       touchCall('mouse_action',{action:'double_click',x:point.x,y:point.y});
-    } else {
+    }else{
       clearTap();
       lastTap={x:point.x,y:point.y,at:Date.now()};
       tapTimer=setTimeout(()=>{
