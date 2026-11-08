@@ -8,7 +8,7 @@
  * which switches live_view off at the source. Owner touch/text are opt-in and remain subject to Host policy.
  */
 // Gateway-only cache key. Host/Gateway shared tool catalog stays byte-identical.
-export const LIVE_UI = 'ui://nexus/live-view-v8.html';
+export const LIVE_UI = 'ui://nexus/live-view-v9.html';
 import {framePointToScreen,isPreExecutionStale,callOnceAfterStale,anchoredZoomPan,clampZoomPan} from './widget-input.mjs';
 
 export const WIDGET_MIME = 'text/html;profile=mcp-app';
