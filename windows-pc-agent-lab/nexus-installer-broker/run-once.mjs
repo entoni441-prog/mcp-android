@@ -45,6 +45,19 @@ export function fixedRunnerIsProvisioned({selfPath=fileURLToPath(import.meta.url
     path.win32.normalize(selfPath).toLowerCase()===path.win32.normalize(expected).toLowerCase() &&
     elevated===true && aclValid===true;
 }
+/** Mirrors the existing NEXUS owner STOP marker (a deny-only signal).
+ * Unreadable/corrupt marker fails closed. Owner STOP never grants privilege.
+ */
+export function isOwnerStopped({home=os.homedir(),fsImpl=fs}={}){
+  try{
+    if(fsImpl.existsSync(path.win32.join(PROTECTED_DATA_ROOT,'STOP')))return true;
+    const ownerFile=path.win32.join(home,'.nexus-host','owner-stop.json');
+    if(!fsImpl.existsSync(ownerFile))return false;
+    const stop=JSON.parse(fsImpl.readFileSync(ownerFile,'utf8'));
+    return stop?.stopped!==false;
+  }catch{return true;}
+}
+
 export async function runOne(){
   if(!fixedRunnerIsProvisioned())throw Error('broker_not_provisioned');
   const st=fs.lstatSync(file);
@@ -58,7 +71,7 @@ export async function runOne(){
   const io=createWindowsInstallerIo();
   const broker=createInstallerBroker({keys,journal,io,
     privilegedReady:()=>fixedRunnerIsProvisioned(),
-    stopRequested:()=>fs.existsSync(path.win32.join(PROTECTED_DATA_ROOT,'STOP')),
+    stopRequested:()=>isOwnerStopped(),
     audit:()=>{}});
   return broker.install(envelope);
 }
