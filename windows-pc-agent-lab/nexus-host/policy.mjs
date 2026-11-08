@@ -469,7 +469,7 @@ export function isTitlebarMinimizeTouch(at,action){
   if(action!=='click'||!at||!allowedWindowProcess(at.window?.process)||!Number.isSafeInteger(Number(at.window?.pid))||
     !Number.isSafeInteger(Number(at.window?.hwnd))||Number(at.window.hwnd)<=0) return false;
   const el=at.elem||{},win=at.window;
-  if(at.controlType!=='ControlType.Button'||el.isPassword!==false)return false;
+  if(at.controlType!=='ControlType.Button'||el.isPassword===true)return false;
   if(!MINIMIZE_NAME.test(String(el.name||'').trim())&&!MINIMIZE_ID.test(String(el.id||'').trim()))return false;
   if(!validRect(el.rect)||!validRect(win.rect)||el.rect.w>120||el.rect.h>75)return false;
   const midX=el.rect.x+el.rect.w/2,midY=el.rect.y+el.rect.h/2;
