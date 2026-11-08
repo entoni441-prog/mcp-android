@@ -915,18 +915,114 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
       },340);
     }
   });
-  $('touch-form').onsubmit=async e=>{
-    e.preventDefault();
-    const el=$('touch-text'),value=el.value;
-    if (!value || value.length>500) return;
-    if (!touchReady()) {touchMessage('Нет свежего экрана. Текст не отправлен.');return;}
-    const result=await touchCall('keyboard_action',{text:value});
-    if(result?.done===true){el.value='';hideComposer();}
-    // Keep the draft if the result is unknown; never blindly repeat typed text.
+
+  // Samsung native IME: only newly entered text is proxied to a verified
+  // Windows text caret. Existing Windows document content stays in Windows.
+  // Composition, autocorrection and deletions are serialized, not repeated.
+  function queueIme(op){
+    if(!imeActive||imeBlocked||!op)return;
+    const last=imeQueue[imeQueue.length-1];
+    if(op.text && last?.text && last.text.length+op.text.length<=1000)
+      last.text+=op.text;
+    else if(op.keys==='backspace'&&last?.text){
+      last.text=Array.from(last.text).slice(0,-1).join('');
+      if(!last.text)imeQueue.pop();
+    }else imeQueue.push(op);
+    clearTimeout(imeTimer);imeTimer=setTimeout(flushIme,130);
+  }
+  async function flushIme(){
+    clearTimeout(imeTimer);imeTimer=null;
+    if(imeRunning||!imeActive||imeBlocked)return;
+    imeRunning=true;
+    try{
+      while(imeActive&&!imeBlocked&&imeQueue.length){
+        if(!touchReady()){
+          imeBlocked=true;imeQueue=[];
+          touchMessage('Нет свежего Live. Ввод остановлен. Проверь поле Windows.');
+          break;
+        }
+        const op=imeQueue.shift();
+        if(op?.text==='')continue;
+        const result=await touchCall('keyboard_action',op);
+        if(!imeActive)break;
+        if(result?.done!==true){
+          imeBlocked=true;imeQueue=[];
+          touchMessage('Ввод остановлен: результат неизвестен. Не повторяю текст.');
+          break;
+        }
+      }
+    }finally{imeRunning=false;}
+  }
+  function imeDeleteOnEmpty(){
+    if(!imeActive||imeBlocked)return;
+    const now=Date.now();
+    if(now-imeLastEmptyDelete<90)return; // keydown + beforeinput can both fire
+    imeLastEmptyDelete=now;queueIme({keys:'backspace'});
+  }
+  function imeSpecialKey(key){
+    if(!imeActive||imeBlocked)return;
+    queueIme({keys:key});
+    if(['enter','tab','left','right','home','end','esc'].includes(key)){
+      imeMirror='';$('touch-text').value='';
+    }
+  }
+  const imeInput=$('touch-text');
+  function acceptImeInput(e){
+    if(!imeActive||imeBlocked||imeComposing||e?.isComposing)return;
+    const next=imeInput.value;
+    const atEnd=!Number.isInteger(imeInput.selectionStart)||
+      imeInput.selectionStart===next.length;
+    const ops=planImeSuffixEdit(imeMirror,next,atEnd);
+    if(ops===null){
+      imeBlocked=true;imeQueue=[];
+      touchMessage('Редактируй позицию курсора в Windows. Ввод остановлен.');
+      return;
+    }
+    if(!ops.length&&!next&&e?.inputType==='deleteContentBackward'){
+      imeDeleteOnEmpty();return;
+    }
+    imeMirror=next;
+    for(const op of ops)queueIme(op);
+  }
+  imeInput.addEventListener('compositionstart',()=>{imeComposing=true;});
+  imeInput.addEventListener('compositionend',()=>{
+    imeComposing=false;acceptImeInput(null);
+  });
+  imeInput.addEventListener('input',acceptImeInput);
+  imeInput.addEventListener('beforeinput',e=>{
+    if(!imeActive||imeBlocked)return;
+    if(e.inputType==='deleteContentBackward'&&!imeInput.value&&!imeMirror){
+      e.preventDefault();imeDeleteOnEmpty();
+    }else if(e.inputType==='insertLineBreak'){
+      e.preventDefault();imeSpecialKey('enter');
+    }
+  });
+  imeInput.addEventListener('keydown',e=>{
+    if(!imeActive||imeBlocked)return;
+    if(e.key==='Enter'){e.preventDefault();imeSpecialKey('enter');}
+    else if(e.key==='Backspace'&&!imeInput.value){
+      e.preventDefault();imeDeleteOnEmpty();
+    }else if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){
+      e.preventDefault();
+      imeSpecialKey(({ArrowLeft:'left',ArrowRight:'right',Home:'home',End:'end'})[e.key]);
+    }
+  });
+  $('touch-form').onsubmit=e=>{
+    e.preventDefault();imeSpecialKey('enter');
+    try{imeInput.focus({preventScroll:true});}catch{}
   };
-  for (const b of document.querySelectorAll('[data-touch-key]')) b.onclick=async()=>{
-    const result=await touchCall('keyboard_action',{keys:b.getAttribute('data-touch-key')});
-    if (result?.done===true && b.getAttribute('data-touch-key')==='esc')hideComposer();
+  for(const b of document.querySelectorAll('[data-touch-key]'))b.onclick=()=>{
+    const key=b.getAttribute('data-touch-key');
+    if(!imeActive||imeBlocked)return;
+    if(key==='backspace'&&imeInput.value){
+      const next=Array.from(imeInput.value).slice(0,-1).join('');
+      const ops=planImeSuffixEdit(imeMirror,next,true);
+      if(ops===null)return;
+      imeInput.value=next;imeMirror=next;
+      for(const op of ops)queueIme(op);
+    }else if(key==='backspace')imeDeleteOnEmpty();
+    else imeSpecialKey(key);
+    if(key==='esc')hideComposer();
   };
   function ownerLeaseLoop() {
     clearTimeout(leaseTimer);
