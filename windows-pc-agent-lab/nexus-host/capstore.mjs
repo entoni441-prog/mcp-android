@@ -26,6 +26,8 @@ function diff(a, b) {
   if (JSON.stringify(a.launchApps) !== JSON.stringify(b.launchApps)) changes.launchApps = [Object.keys(a.launchApps || {}), Object.keys(b.launchApps || {})];
   for (const k of ['javaPath', 'edgePath']) if (a[k] !== b[k]) changes[k] = [a[k], b[k]];
   if (JSON.stringify(a.ownerBans) !== JSON.stringify(b.ownerBans)) changes.ownerBans = [a.ownerBans, b.ownerBans];
+  if (a.logonChannelVerified !== b.logonChannelVerified)
+    changes.logonChannelVerified = [a.logonChannelVerified, b.logonChannelVerified];
   return changes;
 }
 
@@ -89,6 +91,27 @@ export function createCapStore({file, initial, audit = () => {}, intervalMs = 20
     }, source);
     return {capability: key, enabled: value, previous, changed: previous !== value, ownerBan: !value};
   }
+  /**
+   * Dedicated internal mutation, NEVER included in SETTABLE / set_capability.
+   * The caller must already have consumed a cryptographically verified owner
+   * approval on Live, after the CRD SYSTEM-service check. False is fail-safe
+   * and is also used to consume a one-time reboot attestation.
+   */
+  function recordLogonAttestation(enabled, reason = 'owner_live_crd_logon_test') {
+    if(typeof enabled !== 'boolean' || !/^(owner_live_crd_logon_test|restart_gate_consumed|owner_revoked)$/.test(reason))
+      throw Error('invalid_attestation');
+    const previous = caps.logonChannelVerified === true;
+    edit(raw => {
+      raw.logonChannelVerified = enabled;
+      raw._logonChannelAttestation = enabled ? {
+        channel:'chrome_remote_desktop',
+        basis:'owner_tested_full_signout_remote_signin_samsung',
+        by:'signed_owner_live', at:new Date().toISOString(), postRebootTested:false,
+        purpose:'single_reboot_trial',
+      } : null;
+    }, enabled ? 'signed_owner_live_attestation' : reason);
+    return {verified: enabled, changed:previous !== enabled, persisted: true};
+  }
   const isBanned = key => (caps.ownerBans || []).includes(key);
 
   /** 0.5.0: owner-consented app access (manage_app_access → confirm_action allow) and revocation. */
@@ -122,9 +145,9 @@ export function createCapStore({file, initial, audit = () => {}, intervalMs = 20
   });
 
   return {
-    view, refresh, set, isBanned, grantApp, revokeApp, edit,
+    view, refresh, set, isBanned, grantApp, revokeApp, recordLogonAttestation, edit,
     get: () => caps,
-    status: () => ({...Object.fromEntries(FLAGS.map(k => [k, caps[k]])), appAccess: caps.appAccess, blockedApps: caps.blockedApps, inputApps: caps.inputApps, launchApps: Object.keys(caps.launchApps || {}), tasks: Object.keys(caps.tasks), taskRoots: caps.taskRoots, ownerBans: caps.ownerBans, fileError: lastError, settableFromChat: SETTABLE}),
+    status: () => ({...Object.fromEntries(FLAGS.map(k => [k, caps[k]])), logonChannelVerified: caps.logonChannelVerified===true, appAccess: caps.appAccess, blockedApps: caps.blockedApps, inputApps: caps.inputApps, launchApps: Object.keys(caps.launchApps || {}), tasks: Object.keys(caps.tasks), taskRoots: caps.taskRoots, ownerBans: caps.ownerBans, fileError: lastError, settableFromChat: SETTABLE}),
     watch() { if (file && !timer) { timer = setInterval(() => refresh('file'), intervalMs); timer.unref?.(); } },
     stop() { clearInterval(timer); timer = null; },
   };
