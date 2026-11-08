@@ -57,15 +57,21 @@ export function createLive({caps, store, capture, ownerCapture = null, session =
       if (!int(maxW, 320, 1600) || !int(quality, 30, 90)) bad();
       if (!granted()) { setViewing(false, 'capability_off'); return {state: 'off', hint: 'Live View is not granted by the owner.'}; }
       if (!allowed()) { setViewing(false, 'no_active_session'); return {state: 'ready', hint: 'No task is running on the desktop: nothing to show. Frames resume automatically with the next GUI task.'}; }
-      const f = await grab(maxW, quality);
+      // Owner's authenticated ChatGPT Live widget is an app-only view, not the
+      // model's capture_screen API. Ordinary Notepad is visible to the owner
+      // without a second passphrase; model screenshots remain independently redacted.
+      // Never reuse an owner-visible JPEG in the model/shared frame cache.
+      const ownerFrame = typeof ownerCapture === 'function' ? await ownerCapture(maxW, quality) : null;
+      const frame = ownerFrame ? {jpeg: ownerFrame.jpeg, meta: ownerFrame.meta, t: now(), seq: ++seq}
+        : await grab(maxW, quality);
       // 0.5.2 N-07: a capture that was in flight when Stop/finish ended the session is DROPPED, never delivered.
       if (!allowed()) { droppedAfterStop++; setViewing(false, 'ended_during_capture'); return {state: state(), hint: 'The session ended while a frame was being captured; it was discarded.'}; }
       lastServed = now(); lastFrameAt = lastServed; served++;
       setViewing(true, 'frame_request');
-      const structured = {state: 'live', seq: f.seq, capturedAt: new Date(f.t).toISOString(), imageW: f.meta.imageW, imageH: f.meta.imageH,
-        screenW: f.meta.screenW, screenH: f.meta.screenH, cursor: f.meta.cursorX >= 0 ? {x: f.meta.cursorX, y: f.meta.cursorY} : null,
-        bytes: f.jpeg.length, ms: f.meta.ms};
-      return {content: [{type: 'image', data: f.jpeg.toString('base64'), mimeType: 'image/jpeg'}, {type: 'text', text: JSON.stringify(structured)}], structured};
+      const structured = {state: 'live', seq: frame.seq, capturedAt: new Date(frame.t).toISOString(), imageW: frame.meta.imageW, imageH: frame.meta.imageH,
+        screenW: frame.meta.screenW, screenH: frame.meta.screenH, cursor: frame.meta.cursorX >= 0 ? {x: frame.meta.cursorX, y: frame.meta.cursorY} : null,
+        bytes: frame.jpeg.length, ms: frame.meta.ms};
+      return {content: [{type: 'image', data: frame.jpeg.toString('base64'), mimeType: 'image/jpeg'}, {type: 'text', text: JSON.stringify(structured)}], structured};
     },
     /**
      * Owner-only signed Gateway channel; never listed among ChatGPT MCP tools.
