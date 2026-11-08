@@ -246,6 +246,68 @@ public static long TopAt(int x, int y) {
     return @{ ok = $true; hwnd = $nativeHwnd; pid = [int]$hitProcessId }
   } catch { return @{ ok = $false } }
 }
+# Native caption evidence (read-only): proves the tapped point is the actual
+# MINIMIZE caption button of the exact live top-level window. No shell text,
+# process termination or synthetic mouse click is ever sent.
+function NxCaptionMinimizeAt($native, $x, $y) {
+  if ($null -eq $native -or $native.ok -ne $true) { return $null }
+  try {
+    if (-not ('NxCaption.Proof' -as [type])) {
+      Add-Type -Namespace NxCaption -Name Proof -MemberDefinition @'
+[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+public struct RECT { public int left, top, right, bottom; }
+[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+public struct TBINFO {
+  public uint cbSize;
+  public RECT title;
+  [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.ByValArray, SizeConst = 6)]
+  public uint[] states;
+  [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.ByValArray, SizeConst = 6)]
+  public RECT[] rects;
+}
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+private static extern uint GetWindowThreadProcessId(System.IntPtr hwnd, out uint pid);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+private static extern bool IsWindowVisible(System.IntPtr hwnd);
+[System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+private static extern System.IntPtr MsgInfo(System.IntPtr hwnd, uint msg, System.UIntPtr wp, ref TBINFO lparam, uint flags, uint timeout, out System.UIntPtr result);
+[System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+private static extern System.IntPtr MsgHit(System.IntPtr hwnd, uint msg, System.UIntPtr wp, System.IntPtr lparam, uint flags, uint timeout, out System.UIntPtr result);
+public static bool IsMinButton(long hwnd, int pid, int x, int y) {
+  if (hwnd <= 0 || pid <= 0) return false;
+  var h = new System.IntPtr(hwnd);
+  uint realPid = 0;
+  GetWindowThreadProcessId(h, out realPid);
+  if (realPid != (uint)pid || !IsWindowVisible(h)) return false;
+  try {
+    var ti = new TBINFO();
+    ti.states = new uint[6]; ti.rects = new RECT[6];
+    ti.cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(TBINFO));
+    System.UIntPtr result;
+    if (MsgInfo(h, 0x033F, System.UIntPtr.Zero, ref ti, 0x0002, 150, out result) != System.IntPtr.Zero) {
+      var r = ti.rects[2]; // Microsoft TITLEBARINFOEX: index 2 = minimize (never index 5 = close).
+      if ((ti.states[2] & 0x00018001u) == 0 &&
+          r.right-r.left >= 12 && r.right-r.left <= 120 &&
+          r.bottom-r.top >= 12 && r.bottom-r.top <= 75 &&
+          x >= r.left+2 && x < r.right-2 && y >= r.top+2 && y < r.bottom-2) return true;
+    }
+  } catch { }
+  try {
+    // Standard non-client caption fallback: HTMINBUTTON=8; HTCLIENT/HTCLOSE is never accepted.
+    var point = new System.IntPtr((long)(ushort)x | ((long)(ushort)y << 16));
+    System.UIntPtr hit;
+    return MsgHit(h, 0x0084, System.UIntPtr.Zero, point, 0x0002, 150, out hit) != System.IntPtr.Zero &&
+      hit.ToUInt64() == 8;
+  } catch { return false; }
+}
+'@
+    }
+    if ([NxCaption.Proof]::IsMinButton([int64]$native.hwnd, [int]$native.pid, [int]$x, [int]$y)) {
+      return @{ verified = $true; hwnd = [int64]$native.hwnd; pid = [int]$native.pid; process = (NxPName ([int]$native.pid)) }
+    }
+  } catch { }
+  return $null
+}
 $res = @{ mode = $a.mode; root = (NxRect $AE::RootElement) }
 if ($null -ne $a.pid) { $res.target = @{ pid = [int]$a.pid; process = (NxPName ([int]$a.pid)) } }
 switch ($a.mode) {
@@ -259,7 +321,10 @@ switch ($a.mode) {
     if ($null -ne $tab) { $res.at.tab = @{ rid = (NxRid $tab); name = (NxStr $tab.Current.Name 120) } }
     $top = NxTopOf $e
     $res.at.window = NxWin $top
-    if ($a.nativeHitTest -eq $true) { $res.at.nativeHit = Nx26NativeHit ([int]$a.x) ([int]$a.y) }
+    if ($a.nativeHitTest -eq $true) {
+      $res.at.nativeHit = Nx26NativeHit ([int]$a.x) ([int]$a.y)
+      $res.at.nativeCaptionMinimize = NxCaptionMinimizeAt $res.at.nativeHit ([int]$a.x) ([int]$a.y)
+    }
     try { $p = $TW.GetParent($e); if ($null -ne $p) { $res.at.parentType = (NxType $p); $res.at.parent = @{ name = (NxStr $p.Current.Name 200); className = $p.Current.ClassName; hwnd = [int64]$p.Current.NativeWindowHandle } } } catch { }
     $proof = NxEdgeTranslateBubble $e $top $epid
     if ($null -ne $proof) { $res.at.nativeBubble = $proof }
