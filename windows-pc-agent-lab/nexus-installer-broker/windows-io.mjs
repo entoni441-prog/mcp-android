@@ -19,7 +19,7 @@ const isSame=(a,b)=>typeof a==='string'&&typeof b==='string'&&
 export function windowsIsElevated({spawn=spawnSync}={}){
   if(process.platform!=='win32')return false;
   const code=`$p=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent());if($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 0}else{exit 7}`;
-  const r=spawn('powershell.exe',['-NoProfile','-NonInteractive','-Command',code],
+  const r=spawn('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',['-NoProfile','-NonInteractive','-Command',code],
     {encoding:'utf8',timeout:10000,windowsHide:true,maxBuffer:1024});
   return r.status===0&&!r.error;
 }
