@@ -115,7 +115,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
   <div class="touch-card">
     <div class="touch-head"><b>Клавиатура Samsung → Windows</b><button id="touch-close" type="button" aria-label="Скрыть клавиатуру">Скрыть</button></div>
     <span class="notice">Только обычный текст. Не вводи PIN, пароль, код, токен или платёжные данные.</span>
-    <form id="touch-form" autocomplete="off"><input id="touch-text" type="text" inputmode="text" enterkeyhint="enter" maxlength="500" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Прямой ввод с клавиатуры Samsung в Windows" placeholder="Пиши здесь — сразу в Windows"><button type="submit">↵</button></form>
+    <form id="touch-form" autocomplete="off"><input id="touch-text" type="text" inputmode="text" enterkeyhint="enter" maxlength="2000" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Прямой ввод с клавиатуры Samsung в Windows" placeholder="Пиши здесь — сразу в Windows"><button type="submit">↵</button></form>
     <div class="keys"><button data-touch-key="enter" type="button">Enter</button><button data-touch-key="tab" type="button">Tab</button><button data-touch-key="backspace" type="button">⌫</button><button data-touch-key="esc" type="button">Esc</button></div>
   </div>
 </div>
