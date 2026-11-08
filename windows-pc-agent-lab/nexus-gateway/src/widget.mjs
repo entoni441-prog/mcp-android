@@ -8,7 +8,7 @@
  * which switches live_view off at the source. Owner touch/text are opt-in and remain subject to Host policy.
  */
 // Gateway-only cache key. Host/Gateway shared tool catalog stays byte-identical.
-export const LIVE_UI = 'ui://nexus/live-view-v9.html';
+export const LIVE_UI = 'ui://nexus/live-view-v10.html';
 import {framePointToScreen,isPreExecutionStale,callOnceAfterStale,anchoredZoomPan,clampZoomPan} from './widget-input.mjs';
 
 export const WIDGET_MIME = 'text/html;profile=mcp-app';
@@ -948,7 +948,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
   (async () => {
     try {
       const init = await Promise.race([
-        rpc('ui/initialize', {appInfo: {name: 'nexus-live-view', version: '9.0.0-pinch-zoom'}, appCapabilities: {availableDisplayModes: ['inline', 'pip', 'fullscreen']}, protocolVersion: '2026-01-26'}),
+        rpc('ui/initialize', {appInfo: {name: 'nexus-live-view', version: '10.0.0-titlebar-gesture'}, appCapabilities: {availableDisplayModes: ['inline', 'pip', 'fullscreen']}, protocolVersion: '2026-01-26'}),
         new Promise((_, rej) => setTimeout(() => rej(new Error('no_mcp_apps_host')), 4000)),
       ]);
       host = init || {}; notify('ui/notifications/initialized', {});
