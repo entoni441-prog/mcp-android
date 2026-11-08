@@ -2,7 +2,7 @@
 
 Checkpoint: 2026-11-08 (Europe/Rome)
 Branch: `experiment/nexus-logon-attestation-20261108`
-Disposition: **code implemented and regression-tested in an isolated experiment; NOT deployed to the active Host/Gateway; Windows NOT rebooted**.
+Disposition (updated 2026-11-08 ~21:30 Europe/Rome): **Gateway v31 and Windows Host released; owner attestation pending signed Live approval; Windows NOT rebooted**.
 
 ## Confirmed preconditions (owner test, earlier in this conversation)
 - Official signed Chrome Remote Desktop Host installed on Windows as `Antoni-ChatGPT`; `chromoting` is `Running / Auto / LocalSystem`.
@@ -40,3 +40,12 @@ Release gate:
 5. Only after verifying recovery can the post-reboot result be claimed PASS.
 
 All signing keys/owner passphrase/PIN remain outside repository and model-visible channels.
+
+## Production rollout (2026-11-08, after initial checkpoint)
+- Cloudflare published version 30 (`8282af73-d76e-41e3-ae83-f5ea6e4608f0`) was verified and retained for rollback, its canonical original `index.js` and `index.js.map` hashes are recorded in `NEXUS-LIVE-V11-ROLLBACK-20261108.md`.
+- Candidate v31 (`87d93ae5-ab8d-4926-8800-eb52a8e2364a`) was assembled from the **deployed Live v11 bundle** adding only the `logon_attestation` public-tool catalog entry (811 inserted JS characters), preserving all four inherited Cloudflare bindings. Activated with deployment `b7fd9890-72b1-4d1c-94dc-3a63f07e5cdd` at 100%; GET deployments confirmed v31. NEXUS connection_status online after deployment.
+- Active Windows Host directory: `C:\\Users\\krado\\Documents\\NEXUS\\nexus-host`. Five original files `server.mjs, consent.mjs, capstore.mjs, power.mjs, catalog.mjs` were independently copied to `C:\\Users\\krado\\NEXUS-workspace\\nexus-livev11-pre-attest-<file>-20261108.mjs`. NEXUS `files_scoped` created *additional* automatic per-file backups under `C:\\Users\\krado\\.nexus-host\\backups` and atomically updated the five originals using compare-SHA. New `logon-attestation.mjs` created. No hand edits to secrets/profile/safety policy.
+- `node --check` **6/6 PASS** on all actual installed modules. Verified Host listening PID 2908, logon and recovery scheduled tasks present. Targeted process termination caused expected temporary HTTP 530; NEXUS supervisor recovered automatically to online, host uptime 38 s at 20:25 UTC. CRD Windows service remains Running/Auto/LocalSystem; the owner did not have to reconnect manually. Windows remained running; no reboot.
+- Local authenticated MCP request `logon_attestation status` returned `ready:true`, with all five checks true, `verified:false`. The already-open ChatGPT session still has the pre-update tool catalog; a local loopback MCP call was used to request **only** owner attestation, with the Host token read on the PC and not emitted into chat/connector output. No owner decision was forged or sent by ChatGPT.
+- Pending Live consent `21344140f9c7`, kind `logon_channel_attestation`, 600s TTL. Owner action: approve at `https://nexus-gateway.entoni441.workers.dev/live/approvals` (worker subdomain confirmed enabled via Cloudflare API), then ChatGPT must call `confirm_action` with exact target returned by source. This approval does **not** reboot. If expired, create a fresh request; never silently reuse one.
+- After confirmed owner approval: `power_action restart dryRun:true` must show all preconditions satisfied, and then restart requires another separate owner-signed Live confirmation. Do not reboot unless the owner confirms and verification is current. No UAC/security settings changed and GitHub `main` untouched.
