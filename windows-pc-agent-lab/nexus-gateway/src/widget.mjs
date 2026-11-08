@@ -26,6 +26,7 @@ export const WIDGET_HTML = `<!doctype html>
 button,select{font:inherit;color:var(--fg);background:transparent;border:1px solid var(--line);border-radius:6px;padding:3px 8px;min-height:28px;cursor:pointer}
 button:hover{border-color:var(--mut)}button.stop{border-color:var(--red);color:var(--red);font-weight:600}button[hidden]{display:none}
 .view{position:relative;background:#000;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}
+.view.window-grab{outline:1px solid var(--green);outline-offset:-1px}
 .fs .view{aspect-ratio:auto;height:calc(100vh - 44px)}
 img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-origin:center center;user-select:none;-webkit-user-drag:none;will-change:transform}
 .msg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;text-align:center;color:var(--mut);background:rgba(0,0,0,.72)}
@@ -147,6 +148,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
   let frameGeometry=null, touchEnabled=false, touchBusy=false, pointerStart=null, touchConsent=null;
   let lastTap=null, tapTimer=null, lastStatusTimer=null;
   let zoomScale=1, zoomPanX=0, zoomPanY=0, pinchOrigin=null, gestureUsed=false;
+  let windowHoldTimer=null;
   const activePointers=new Map();
   const legacy = () => typeof window.openai === 'object' && window.openai && typeof window.openai.callTool === 'function';
 
@@ -646,8 +648,12 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
     if (!touchEnabled) hideComposer();
     size();
   }
+  function cancelWindowHold() {
+    clearTimeout(windowHoldTimer);windowHoldTimer=null;
+    $('view').classList.remove('window-grab');
+  }
   function clearTap() {
-    clearTimeout(tapTimer);tapTimer=null;lastTap=null;pointerStart=null;
+    cancelWindowHold();clearTimeout(tapTimer);tapTimer=null;lastTap=null;pointerStart=null;
   }
   // v9: client-side visual zoom only. No mouse/keyboard tool is invoked by a
   // pinch or a pan. Image DOMRect after CSS transform remains the sole source
@@ -798,7 +804,18 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
     try{viewer.setPointerCapture(e.pointerId);}catch{}
     if(activePointers.size===1){
       pointerStart={id:e.pointerId,x:e.clientX,y:e.clientY,at:Date.now(),
-        panX:zoomPanX,panY:zoomPanY,moved:false};
+        panX:zoomPanX,panY:zoomPanY,moved:false,windowGrab:false};
+      // Hold still on the caption for half a second, then drag the WINDOW.
+      // Ordinary swipes keep panning the enlarged image; no extra toolbar.
+      if(touchReady()){
+        windowHoldTimer=setTimeout(()=>{
+          if(pointerStart?.id!==e.pointerId || pointerStart.moved ||
+             activePointers.size!==1 || !touchReady())return;
+          pointerStart.windowGrab=true;
+          $('view').classList.add('window-grab');
+          touchMessage('Захват окна: тяни заголовок. Команды в терминал не отправляются.');
+        },500);
+      }
     }else{
       gestureUsed=true;clearTap();beginPinch();
     }
@@ -821,7 +838,12 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
     // Once enlarged, one finger drags the picture instead of clicking Windows.
     if(activePointers.size===1&&pointerStart){
       const dx=e.clientX-pointerStart.x,dy=e.clientY-pointerStart.y;
-      if(Math.hypot(dx,dy)>12)pointerStart.moved=true;
+      const distance=Math.hypot(dx,dy);
+      if(pointerStart.windowGrab){
+        if(distance>12)pointerStart.moved=true;
+        return; // Grabbed window never pans the Live image.
+      }
+      if(distance>10){pointerStart.moved=true;cancelWindowHold();}
       if(zoomScale>1.001&&pointerStart.moved){
         zoomPanX=pointerStart.panX+dx;zoomPanY=pointerStart.panY+dy;drawZoom();
       }
@@ -836,12 +858,26 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
     const start=pointerStart;
     activePointers.delete(e.pointerId);
     try{viewer.releasePointerCapture(e.pointerId);}catch{}
+    cancelWindowHold();
     if(multi){
       pointerStart=null;pinchOrigin=null;
       if(activePointers.size===0)gestureUsed=false;
       return; // Never dispatch a Windows action after a multi-touch gesture.
     }
     pointerStart=null;
+    if(start?.windowGrab){
+      if(!touchReady()||Math.hypot(e.clientX-start.x,e.clientY-start.y)<15)return;
+      const rect=viewer.getBoundingClientRect();
+      if(e.clientX<rect.left||e.clientY<rect.top||e.clientX>=rect.right||e.clientY>=rect.bottom)return;
+      const imgRect=$('img').getBoundingClientRect();
+      const from=framePointToScreen(start.x,start.y,imgRect,frameGeometry);
+      const to=framePointToScreen(e.clientX,e.clientY,imgRect,frameGeometry);
+      if(!from||!to){touchMessage('Захват вне экрана. Окно не перемещено.');return;}
+      // One narrowly-scoped Host action. Verified titlebar -> native window
+      // move. Unverified/terminal body -> refusal, never shell input.
+      touchCall('mouse_action',{action:'drag',x:from.x,y:from.y,x2:to.x,y2:to.y});
+      return;
+    }
     if(!start||start.id!==e.pointerId||start.moved||
         Math.hypot(e.clientX-start.x,e.clientY-start.y)>12||
         Date.now()-start.at>900||!touchReady())return;
