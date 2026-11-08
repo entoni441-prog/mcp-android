@@ -7,7 +7,8 @@
  * Pull model: a frame is requested only while the widget is visible and not paused. STOP calls live_control stop,
  * which switches live_view off at the source. Owner touch/text are opt-in and remain subject to Host policy.
  */
-import {LIVE_UI} from './catalog.mjs';
+// Gateway-only cache key. Host/Gateway shared tool catalog stays byte-identical.
+export const LIVE_UI = 'ui://nexus/live-view-v8.html';
 import {framePointToScreen,isPreExecutionStale,callOnceAfterStale} from './widget-input.mjs';
 
 export const WIDGET_MIME = 'text/html;profile=mcp-app';
