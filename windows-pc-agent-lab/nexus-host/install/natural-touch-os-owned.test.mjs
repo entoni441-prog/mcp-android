@@ -4,8 +4,8 @@ import fs from 'node:fs';
 const a=fs.readFileSync(new URL('./os-owned-activate-natural-touch.mjs',import.meta.url),'utf8');
 const c=fs.readFileSync(new URL('./schedule-os-owned-natural-touch.mjs',import.meta.url),'utf8');
 
-test('natural-touch rollout remains exactly three version-pinned source files',()=>{
- for(const file of ['gui.mjs','live.mjs','uia-script.mjs']){
+test('natural-touch rollout remains exactly four version-pinned source files',()=>{
+ for(const file of ['gui.mjs','live.mjs','uia-script.mjs','catalog.mjs']){
    assert.match(a,new RegExp("'"+file.replace('.','\\.')+"'"));
  }
  assert.match(a,/const FILES=Object.keys\(OLD\)/);
