@@ -31,6 +31,12 @@ test('separate approval URL requires owner auth; no Windows frame or secret in w
   assert.match(html,/\/live\/consents/);
   assert.match(html,/\/live\/decide/);
   assert.match(html,/window\.close\(\)/);
+  assert.match(html,/Разрешено владельцем; ожидается выполнение ChatGPT/);
+  assert.match(html,/Повторное подтверждение не требуется/);
+  assert.match(html,/const waiting=list.filter\(x=>!x.decided\), decided=list.filter\(x=>!!x.decided\)/);
+  assert.doesNotMatch(html,/data.pending\?data.pending.filter\(x=>!x.decided\)/);
+  assert.doesNotMatch(html,/closeAfterSuccess\(/);
+
   assert.doesNotMatch(html,/<img[^>]*>/);
   assert.doesNotMatch(html,/\/live\/frame/);
   const script=html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)?.[1];

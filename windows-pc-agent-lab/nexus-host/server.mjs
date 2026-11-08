@@ -370,6 +370,8 @@ export function diagnostics(cfg) {
       cloudflaredAlive: t.alive ?? null, lastEvents: (t.events || []).slice(-20)} : 'not started by nexus.mjs',
     capabilitiesFileError: cfg.runtime?.store?.status().fileError ?? null,
     pendingConsents: cfg.runtime?.consent?.pendingCount() ?? 0,
+    awaitingOwnerApprovals: cfg.runtime?.consent?.ownerList()?.filter(c => !c.decided).length ?? 0,
+    approvedAwaitingExecution: cfg.runtime?.consent?.ownerList()?.filter(c => c.decided && c.decided !== 'cancel').length ?? 0,
     ownerAction: cfg.runtime?.handoffs?.pending() ? {handoffId: cfg.runtime.handoffs.pending().handoffId, reason: cfg.runtime.handoffs.pending().reason} : null,
     liveView: cfg.runtime?.live?.status() ?? null,
     tunnelHealth: t ? tunnelHealth(t.events || []) : null,

@@ -27,6 +27,19 @@ test('R-01 clicks: delete/remove/uninstall/erase (EN/RU/IT) need consent; ordina
   assert.equal(C(B('Delete'), 'right_click'), null);
 });
 
+test('R-01: remote desktop is not deleting data; explicit delete still requires owner consent', () => {
+  for (const n of ['Скачать Удаленный рабочий стол Chrome', 'Скачать Удалённый рабочий стол Chrome',
+    'Удалённый доступ', 'Открыть удаленные устройства']) {
+    assert.equal(C(B(n)), null, n);
+    assert.equal(K('enter', {elem:{controlType:'Button',name:n}}), null, n);
+  }
+  for (const n of ['Удалить удалённый рабочий стол Chrome', 'Удаление удалённых устройств',
+    'Удалённый доступ — удалить подключение']) {
+    assert.ok(isC(C(B(n))), n);
+    assert.ok(isC(K('enter', {elem:{controlType:'Button',name:n}})), n);
+  }
+});
+
 test('R-01 weak words: clear/reset/очистить need consent unless it is a field/search/filter context', () => {
   for (const n of ['Clear', 'Clear all', 'Clear history', 'Reset', 'Reset app', 'Очистить', 'Сбросить', 'Svuota', 'Discard changes']) assert.ok(isC(C(B(n))), n);
   for (const n of ['Clear search', 'Clear filter', 'Clear selection', 'Reset zoom', 'Очистить поиск', 'Очистить поле', 'Clear formatting']) assert.equal(C(B(n)), null, n);

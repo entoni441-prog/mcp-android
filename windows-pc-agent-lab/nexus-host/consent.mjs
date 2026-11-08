@@ -268,8 +268,9 @@ export function createConsent({audit = () => {}, now = () => Date.now(), journal
       return p;
     },
     armDiscard(hwnd) { armed.set(String(hwnd), now() + DISCARD_ARM_MS); },
-    pendingCount: () => pending.size,
-    /** 0.6.1 owner channel (Live View page only — not in the model's catalog): waiting owner-tier approvals. */
+    /** Count only live records; resolved owner decisions remain until confirm_action consumes them. */
+    pendingCount: () => { for (const [k,v] of pending) if (v.expires < now()) pending.delete(k); return pending.size; },
+    /** 0.6.1 owner channel: includes owner-decided records still awaiting the final confirm_action. */
     ownerList() {
       for (const [k, v] of pending) if (v.expires < now()) pending.delete(k);
       return [...pending.values()].filter(p => p.owner).map(p => ({consentId: p.id, what: p.c.what || p.c.kind, kind: p.c.kind, target: p.target,

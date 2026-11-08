@@ -107,6 +107,25 @@ test('verified Notepad editor tap opens Samsung keyboard automatically and strea
   assert.deepEqual(sent.map(x=>x.arguments),[{text:'При'}]);
 });
 
+test('iPhone fallback opens native keyboard in an explicit synchronous tap, no second Windows action',async()=>{
+  const t=makeWidget();await t.open();
+  const box=t.elem('touch-text');
+  const first=box.focusCount, remoteCalls=t.calls.length;
+  assert.equal(t.elem('touch-open').hidden,false);
+  t.elem('touch-open').onclick();
+  assert.equal(box.focusCount,first+1);
+  assert.equal(t.calls.length,remoteCalls,'local focus never sends a new mouse/keyboard RPC');
+});
+
+test('PIN or password never opens the model-mediated text channel on iPhone',async()=>{
+  const t=makeWidget();t.setEditable(false);await t.open();
+  assert.equal(t.elem('touch-open').hidden,true);
+  assert.match(t.elem('touch-mini').textContent,/PIN\/пароль/);
+  t.elem('touch-open').onclick();
+  t.input('85764412');await t.fire(130);
+  assert.equal(t.calls.filter(x=>x.name==='keyboard_action').length,0);
+});
+
 test('IME backspace and predictive replacement apply only a suffix at remote caret',async()=>{
   const t=makeWidget();await t.open();
   t.input('teh');await t.fire(130);
