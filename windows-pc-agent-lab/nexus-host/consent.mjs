@@ -33,7 +33,7 @@ const OWNER_TTL_MS = 10 * 60_000;
  *   lifting a ban the owner set.
  */
 export const OWNER_WHATS = Object.freeze(new Set(['browser_financial', 'browser_irreversible', 'protected_file', 'protected_app',
-  'security_page', 'destructive_action', 'destructive_command', 'security_command', 'secret_access', 'owner_unban', 'logon_channel_attestation']));
+  'security_page', 'destructive_action', 'destructive_command', 'security_command', 'secret_access', 'owner_unban', 'logon_channel_attestation', 'system_power']));
 const DISCARD_ARM_MS = 60_000;
 
 const isClickable = t => ['Button', 'MenuItem', 'SplitButton', 'ListItem', 'Hyperlink'].includes(t);
