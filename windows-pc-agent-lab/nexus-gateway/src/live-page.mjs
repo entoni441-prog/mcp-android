@@ -85,9 +85,9 @@ const jsonR = (status, body, headers = {}) => new Response(JSON.stringify(body),
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
 const STYLE = '<style>body{font:15px system-ui;margin:0;background:#0f1115;color:#e8eaed}main{max-width:420px;margin:48px auto;padding:0 16px}input,button{font:inherit;padding:10px;border-radius:8px;border:1px solid #2a2f3a;background:#161a22;color:inherit;width:100%}button{cursor:pointer;margin-top:10px}.w{color:#f5a524}</style>';
 
-function loginPage(n, msg = '', status = 200) {
-  return html(`${STYLE}<main><h1>NEXUS Live View</h1><p>Просмотр экрана твоего Windows. Только для владельца.</p>${msg ? `<p class="w">${esc(msg)}</p>` : ''}
-<form method="POST" action="/live/login"><input type="hidden" name="nonce" value="${n}"><label>Пароль владельца<br><input type="password" name="passphrase" autocomplete="current-password" required></label><button type="submit">Войти (сессия 30 мин)</button></form>
+function loginPage(n, msg = '', status = 200, mode = 'live') {
+  return html(`${STYLE}<main><h1>${mode==='approvals'?'Подтверждения NEXUS':'NEXUS Live View'}</h1><p>${mode==='approvals'?'Войди для подтверждения защищённого действия. Экран Windows здесь не отображается.':'Просмотр экрана твоего Windows. Только для владельца.'}</p>${msg ? `<p class="w">${esc(msg)}</p>` : ''}
+<form method="POST" action="/live/login${mode==='approvals'?'?return=approvals':''}"><input type="hidden" name="nonce" value="${n}"><label>Пароль владельца<br><input type="password" name="passphrase" autocomplete="current-password" required></label><button type="submit">Войти (сессия 30 мин)</button></form>
 <p style="color:#9aa0a6;font-size:13px">Трансляция идёт, только пока эта страница открыта и на ПК включён live_view. Кадры нигде не сохраняются. После входа владельца личные окна показываются без чёрной маски; в ChatGPT скриншотах остаются скрытыми.</p></main>`, {status});
 }
 
@@ -159,6 +159,80 @@ function viewerPage() {
 </script></body>`, {n});
 }
 
+function approvalsPage() {
+  const n=nonce();
+  return html(`<style>
+    *{box-sizing:border-box}body{font:15px/1.4 system-ui;margin:0;background:#0f1115;color:#e8eaed}
+    main{max-width:520px;margin:0 auto;padding:18px 14px}
+    h1{font-size:20px;margin:4px 0 8px}.muted{color:#9aa0a6;font-size:13px}
+    .ci{border:1px solid #454b58;border-radius:10px;padding:12px;margin:12px 0;overflow-wrap:anywhere}
+    .ci p{margin:0 0 12px}.actions{display:flex;flex-wrap:wrap;gap:8px}
+    button{font:inherit;border:1px solid #454b58;background:#161a22;color:#e8eaed;border-radius:8px;padding:10px 12px;min-height:42px}
+    button.allow{border-color:#30a46c;color:#30a46c}button:disabled{opacity:.5}
+    #status{color:#f5a524;min-height:18px}#close{margin-top:10px}
+  </style><body><main><h1>Подтверждение NEXUS</h1>
+  <p class="muted">Это отдельная страница подтверждения. Экран Windows в чате остаётся без всплывающих форм.</p>
+  <div id="items" aria-live="polite"></div><p id="status" role="status">Проверка запросов…</p>
+  <button type="button" id="close">Закрыть это окно</button>
+  </main><script nonce="${n}">
+  (() => {
+    const items=document.getElementById('items'), status=document.getElementById('status');
+    let busy=false,completed=false,closing=false;
+    const labels={allow:'Разрешить',cancel:'Отклонить',close_save:'Сохранить и закрыть',close_discard:'Закрыть без сохранения'};
+    function closeAfterSuccess(){
+      if(closing)return;
+      closing=true;
+      status.textContent='Решение принято. Окно закрывается.';
+      setTimeout(()=>{window.close();status.textContent='Готово. Если вкладка осталась открытой, закрой её вручную.';},450);
+    }
+    async function refresh(){
+      if(busy || document.visibilityState==='hidden' || closing) return;
+      busy=true;
+      try {
+        const r=await fetch('/live/consents',{cache:'no-store',credentials:'same-origin'});
+        if(r.status===401){location.href='/live/approvals';return;}
+        if(!r.ok) throw Error('HTTP '+r.status);
+        const data=await r.json();
+        const list=Array.isArray(data.pending)?data.pending.filter(x=>!x.decided):[];
+        items.replaceChildren();
+        if(!list.length){
+          if(completed)closeAfterSuccess();
+          else status.textContent='Нет ожидающих запросов.';
+          return;
+        }
+        status.textContent='Ожидающие запросы: '+list.length;
+        for(const c of list){
+          const card=document.createElement('div');card.className='ci';
+          const title=document.createElement('p');title.textContent=String(c.target||'Операция NEXUS')+' · '+Math.ceil(Number(c.expiresInSec||0)/60)+' мин';card.appendChild(title);
+          const actions=document.createElement('div');actions.className='actions';
+          for(const choice of (Array.isArray(c.options)?c.options:[])){
+            if(!Object.hasOwn(labels,choice))continue;
+            const b=document.createElement('button');b.type='button';b.textContent=labels[choice];
+            if(choice==='allow')b.className='allow';
+            b.onclick=async()=>{
+              for(const x of actions.querySelectorAll('button'))x.disabled=true;
+              try{
+                const resp=await fetch('/live/decide',{method:'POST',credentials:'same-origin',headers:{'x-nexus-live':'1','content-type':'application/json'},body:JSON.stringify({consentId:c.consentId,decision:choice})});
+                if(!resp.ok)throw Error('HTTP '+resp.status);
+                completed=true;
+                await refreshAfterDecision();
+              }catch(e){status.textContent='Не удалось подтвердить: '+String(e.message||e);for(const x of actions.querySelectorAll('button'))x.disabled=false;}
+            };
+            actions.appendChild(b);
+          }
+          card.appendChild(actions);items.appendChild(card);
+        }
+      }catch(e){status.textContent='Нет связи с NEXUS: '+String(e.message||e);}
+      finally{busy=false;}
+    }
+    async function refreshAfterDecision(){busy=false;await refresh();}
+    document.getElementById('close').onclick=()=>{window.close();status.textContent='Закрой эту вкладку, если браузер её не закрыл.';};
+    document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')refresh();});
+    refresh();setInterval(refresh,4000);
+  })();
+  </script></body>`,{n});
+}
+
 /**
  * Routes under /live. `callHost(name, args)` → {ok:true, result} | {ok:false, reason, text}.
  */
@@ -174,19 +248,23 @@ export async function handleLive(request, env, {callHost, sha256hex}) {
     if (session) return viewerPage();
     return loginPage(await guard.issue({kind: 'live_login'}));
   }
+  if (p === '/live/approvals' && request.method === 'GET') {
+    return session ? approvalsPage() : loginPage(await guard.issue({kind:'live_login'}),'',200,'approvals');
+  }
   if (p === '/live/login' && request.method === 'POST') {
+    const approvalReturn=url.searchParams.get('return')==='approvals';
     const form = await request.formData();
     const n = String(form.get('nonce') || '');
-    if (!/^[a-f0-9]{64}$/.test(n)) return loginPage(await guard.issue({kind: 'live_login'}), 'Сессия входа недействительна.', 400);
+    if (!/^[a-f0-9]{64}$/.test(n)) return loginPage(await guard.issue({kind: 'live_login'}), 'Сессия входа недействительна.', 400, approvalReturn);
     const r = await guard.attempt({nonce: n, passphraseSha256: await sha256hex(String(form.get('passphrase') || '')), approve: true, expectedSha256: expected});
     if (r.status === 'ok' && r.auth?.kind === 'live_login') {
       console.log(JSON.stringify({nexus: 'live_login', ok: true}));
-      return new Response(null, {status: 303, headers: {...sec, location: '/live', 'set-cookie': cookieSet(await makeSession(env))}});
+      return new Response(null, {status: 303, headers: {...sec, location: approvalReturn ? '/live/approvals' : '/live', 'set-cookie': cookieSet(await makeSession(env))}});
     }
     console.log(JSON.stringify({nexus: 'live_login', ok: false, status: r.status}));
     const msg = r.status === 'locked' ? `Слишком много неверных попыток. Повтори через ${Math.ceil(r.retryAfterMs / 60000)} мин.` :
       r.status === 'bad_passphrase' ? `Неверный пароль. Осталось попыток: ${r.remaining}.` : 'Сессия входа истекла. Попробуй ещё раз.';
-    return loginPage(await guard.issue({kind: 'live_login'}), msg, r.status === 'locked' ? 429 : 403);
+    return loginPage(await guard.issue({kind: 'live_login'}), msg, r.status === 'locked' ? 429 : 403, approvalReturn);
   }
   if (!session) return jsonR(401, {error: 'unauthorized'});
   if (p === '/live/frame' && request.method === 'GET') {

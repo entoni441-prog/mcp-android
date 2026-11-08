@@ -10,12 +10,12 @@ test('Live 2.0: genuine opt-in, no touch before owner activation',()=>{
   assert.match(WIDGET_HTML,/touchCall\('mouse_action',\{action:'click'/);
   assert.match(WIDGET_HTML,/pointerStart/);
 });
-test('Live 2.0: popup follows nonsecret count only, passphrase stays direct to Gateway',()=>{
-  assert.match(WIDGET_HTML,/function showOwnerPopup\(count\)/);
-  assert.match(WIDGET_HTML,/function dismissOwnerPopup\(\)/);
+test('Live 7.1: only a compact out-of-frame link follows nonsecret consent count',()=>{
+  assert.match(WIDGET_HTML,/function showOwnerNotice\(count\)/);
+  assert.match(WIDGET_HTML,/function dismissOwnerNotice\(\)/);
   assert.match(WIDGET_HTML,/callTool\('host_diagnostics',\{\}\)/);
   assert.match(WIDGET_HTML,/pendingConsents/);
-  assert.match(WIDGET_HTML,/if \(ownerPopup\) dismissOwnerPopup\(\)/);
+  assert.match(WIDGET_HTML,/if\(count===0 && pendingCount!==0\)dismissOwnerNotice\(\)/);
   assert.match(WIDGET_HTML,/ownerPost\('\/live\/widget\/perform'/);
   assert.doesNotMatch(WIDGET_HTML,/callTool\('owner_decide'/);
   assert.doesNotMatch(WIDGET_HTML,/localStorage|sessionStorage/);
@@ -37,8 +37,8 @@ test('Live v3: mobile status and owner confirmations collapse by default',()=>{
   assert.match(WIDGET_HTML,/id="boot-toggle"[^>]*aria-expanded="false"/);
   assert.match(WIDGET_HTML,/id="owner-panel" hidden/);
   assert.match(WIDGET_HTML,/id="owner-toggle"[^>]*aria-expanded="false"/);
-  assert.match(WIDGET_HTML,/function dismissOwnerPopup\(\)/);
-  assert.match(WIDGET_HTML,/if \(count===0\) \{/);
+  assert.match(WIDGET_HTML,/function dismissOwnerNotice\(\)/);
+  assert.match(WIDGET_HTML,/if\(count===0 && pendingCount!==0\)/);
   assert.match(WIDGET_HTML,/ownerPanel\.hidden=true/);
   assert.match(WIDGET_HTML,/#owner-panel\[hidden\]/);
 });
@@ -50,9 +50,11 @@ test('Live v3: failed embedded owner fetch does not approve or hide recovery URL
   assert.doesNotMatch(WIDGET_HTML,/callTool\('owner_decide'/);
 });
 
-test('Live v3: STOP stays clickable above the approval overlay',()=>{
-  assert.match(WIDGET_HTML,/\.bar\{position:relative;z-index:110\}/);
-  assert.match(WIDGET_HTML,/\.owner\.is-popup\{position:fixed;inset:0;z-index:100/);
+test('Live 7.1: owner notice opens a separate page and never obscures Windows',()=>{
+  assert.match(WIDGET_HTML,/id="owner-container"[^>]*hidden/);
+  assert.match(WIDGET_HTML,/id="owner-launch"[^>]*href="https:\/\/nexus-gateway\.entoni441\.workers\.dev\/live\/approvals"[^>]*target="_blank"/);
+  assert.match(WIDGET_HTML,/\.owner\[hidden\]\{display:none!important\}/);
+  assert.doesNotMatch(WIDGET_HTML,/\.owner\.is-popup/);
   assert.match(WIDGET_HTML,/id="stop" class="stop"/);
 });
 
@@ -87,4 +89,12 @@ test('Live v4: Samsung keyboard is a native mobile input inside a popup',()=>{
   assert.match(WIDGET_HTML,/\$\('touch-text'\)\.focus/);
   assert.match(WIDGET_HTML,/function hideComposer\(\)/);
   assert.match(WIDGET_HTML,/if \(!touchEnabled\) hideComposer\(\)/);
+});
+
+test('Live 7.1: Samsung text entry is independent of the Windows frame',()=>{
+  assert.match(WIDGET_HTML,/\.touch-tools\{position:relative;inset:auto/);
+  assert.doesNotMatch(WIDGET_HTML,/\.touch-tools\{position:fixed;inset:0/);
+  assert.match(WIDGET_HTML,/id="touch-open"[^>]*hidden[^>]*>Ввести текст/);
+  assert.match(WIDGET_HTML,/\$\('touch-open'\)\.hidden=true/);
+  assert.match(WIDGET_HTML,/if\(result\?\.done===true\)\{el\.value='';hideComposer\(\);\}/);
 });

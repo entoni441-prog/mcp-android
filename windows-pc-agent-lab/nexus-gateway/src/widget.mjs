@@ -32,33 +32,31 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
 .foot{color:var(--mut);font-size:11px;padding:4px 8px}
 .owner{border-top:1px solid var(--line);padding:8px;display:grid;gap:8px}.owner-head{display:flex;align-items:center;gap:8px;justify-content:space-between}.owner form{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.owner input{min-width:120px;flex:1;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--fg);padding:8px;font:inherit}.owner-entry{border:1px solid var(--line);padding:7px;border-radius:6px;overflow-wrap:anywhere}.owner-entry p{margin:2px 0 8px}.owner-actions{display:flex;gap:6px;flex-wrap:wrap}.owner-status{font-size:12px;color:var(--mut)}.owner button:disabled{opacity:.55;cursor:wait}.owner button.allow{border-color:var(--green);color:var(--green)}.boot{border-top:1px solid var(--line);padding:8px;display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}.boot b{white-space:nowrap}.boot span{color:var(--mut)}
 
-/* The approval surface appears above Live itself; the existing inline panel is the fallback. */
-.bar{position:relative;z-index:110} /* STOP remains available even while approval overlay is open */
-.owner.is-popup{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.88);padding:12px;display:flex;flex-direction:column;justify-content:center;align-items:stretch;max-width:100vw}
-.owner.is-popup .owner-head,.owner.is-popup #owner-panel{width:min(440px,100%);margin:0 auto;background:var(--bg);padding:10px;border:1px solid var(--line)}
-.owner.is-popup .owner-head{border-radius:10px 10px 0 0}.owner.is-popup #owner-panel{max-height:75vh;overflow-y:auto;border-top:none;border-radius:0 0 10px 10px}
-.owner.is-popup #owner-panel[hidden],.touch-tools[hidden]{display:none}
-.owner.is-popup #owner-secret{font-size:16px;min-height:42px}
+/* Owner approvals show as an independent link, never an overlay on Windows. */
+.owner[hidden]{display:none!important}
+.owner-head{flex-wrap:wrap}
+.owner-head a#owner-launch{display:inline-flex;align-items:center;border:1px solid var(--amber);color:var(--amber);border-radius:6px;padding:5px 9px;text-decoration:none;font-weight:600;min-height:32px}
+.owner-head a#owner-launch[hidden]{display:none!important}
 /* Keep both NEXUS status sections short unless explicitly expanded. */
-.boot,.owner:not(.is-popup){padding:5px 8px;gap:4px}
+.boot,.owner{padding:5px 8px;gap:4px}
 .boot-head,.owner-head{display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:30px}
 .boot-head b,.owner-head b{white-space:nowrap;font-size:12px}
 .boot-head #boot-state{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--mut);min-width:0}
 .boot-head button,.owner-head button{flex:none;font-size:12px;padding:2px 7px;min-height:26px}
 #boot-hint:not([hidden]){display:block;padding:3px 0 6px;font-size:11px;color:var(--mut)}
 #boot-hint[hidden],#owner-panel[hidden],#owner-fallback[hidden]{display:none!important}
-.owner:not(.is-popup) #owner-panel{max-height:min(45vh,300px);overflow:auto;padding:6px 0}
+.owner #owner-panel{max-height:min(45vh,300px);overflow:auto;padding:6px 0}
 #owner-mini{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px;color:var(--mut)}
-.owner.is-popup #owner-mini{display:none}
+
 #owner-fallback{display:inline-block;font-size:12px;color:var(--fg);padding:5px 0;text-decoration:underline}
 
 .touch-tools{border-top:1px solid var(--line);padding:8px;display:grid;gap:7px}
 .touch-tools form{display:flex;gap:6px}.touch-tools input{flex:1;min-width:0;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;font:16px system-ui}
 .touch-tools .keys{display:flex;flex-wrap:wrap;gap:6px}.touch-tools .notice{font-size:11px;color:var(--amber)}
 #img.touchable{cursor:crosshair;touch-action:manipulation}
-.touch-tools{position:fixed;inset:0;z-index:105;background:rgba(0,0,0,.70);display:flex;align-items:flex-end;justify-content:center;padding:12px}
+.touch-tools{position:relative;inset:auto;z-index:auto;background:var(--bg);display:flex;align-items:stretch;justify-content:center;padding:8px;border-top:1px solid var(--line)}
 .touch-tools[hidden]{display:none!important}
-.touch-card{width:min(460px,100%);background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px;max-height:65vh;overflow:auto;box-shadow:0 12px 40px #0009}
+.touch-card{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:10px;max-height:none;overflow:auto;box-shadow:none}
 .touch-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .touch-tools input{min-height:44px}
 #touch-mini[hidden]{display:none!important}
@@ -79,7 +77,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   <span class="dot" aria-hidden="true"></span><span class="st" id="st">NEXUS · подключение…</span>
   <button id="pp" title="Пауза / продолжить">⏸</button>
   <button id="touch-toggle" type="button" aria-pressed="false" title="Прямое управление экраном, только по команде владельца">Управление: выкл.</button>
-  <button id="touch-open" type="button" hidden aria-label="Открыть клавиатуру Samsung для ввода текста">⌨</button>
+  <button id="touch-open" type="button" hidden aria-label="Открыть отдельную форму ввода текста">Ввести текст ↗</button>
   <button id="extra-toggle" type="button" aria-expanded="false" title="Резервные функции Live">⋯</button>
   <button id="private-view" type="button" hidden aria-pressed="false" title="Резервный приватный просмотр">Личные окна 🔒</button>
   <button id="window-open" type="button" hidden aria-expanded="false" title="Резервное сворачивание выбранного окна">Окна ▾</button>
@@ -123,8 +121,8 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   <div class="boot-head"><b>Доступ после запуска</b><span id="boot-state" role="status">Проверка…</span><button id="boot-toggle" type="button" aria-expanded="false">Подробнее</button></div>
   <span id="boot-hint" hidden>Защищённый дистанционный вход до Windows пока не настроен. Пароль Windows сюда не вводи.</span>
 </div>
-<div class="owner" id="owner-container" aria-label="Подтверждения владельца NEXUS">
-  <div class="owner-head"><b>Подтверждения владельца</b><span id="owner-mini">Скрыто</span><button id="owner-toggle" type="button" aria-expanded="false">Показать</button></div>
+<div class="owner" id="owner-container" aria-label="Подтверждения владельца NEXUS" hidden>
+  <div class="owner-head"><b>Подтверждения</b><span id="owner-mini">Новая заявка</span><a id="owner-launch" href="https://nexus-gateway.entoni441.workers.dev/live/approvals" target="_blank" rel="noopener noreferrer">Открыть отдельно ↗</a><button id="owner-toggle" type="button" aria-expanded="false" title="Резервная форма">⋯</button></div>
   <div id="owner-panel" hidden>
     <p class="owner-status">Пароль <b>владельца NEXUS</b> нужен отдельно для каждой операции. Это не PIN и не пароль Windows. Данные передаются напрямую в NEXUS Gateway, не через инструменты модели.</p>
     <form id="owner-form" autocomplete="off"><input id="owner-secret" type="password" autocomplete="off" required aria-label="Пароль владельца NEXUS" placeholder="Пароль владельца NEXUS"><button id="owner-refresh" type="submit">Проверить заявки</button></form>
@@ -192,7 +190,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   const hide = () => { $('msg').hidden = true; };
   function onStatus(s) {
     if (!s || typeof s !== 'object') return;
-    if (s.state === 'off') { stopped = true; closeWindowManager(); stopPrivate(); frameGeometry=null; touchConsent=null; resetTouch(); if (ownerPopup) dismissOwnerPopup(); halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
+    if (s.state === 'off') { stopped = true; closeWindowManager(); stopPrivate(); frameGeometry=null; touchConsent=null; resetTouch(); dismissOwnerNotice(); halt(); setState('offline', 'NEXUS · Live View выключен'); show('Live View выключен', 'Трансляция включается только по твоей просьбе в чате.', true); }
   }
   let readySince = 0;
   function halt() { clearTimeout(timer); timer = null; }
@@ -376,7 +374,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   }
   $('window-open').onclick=()=>{
     if(stopped){touchMessage('Трансляция остановлена; окна недоступны.');return;}
-    if(ownerPopup){touchMessage('Сначала закрой запрос подтверждения владельца.');return;}
+
     if(!$('window-panel').hidden){closeWindowManager();return;}
     $('window-panel').hidden=false;
     $('window-open').setAttribute('aria-expanded','true');
@@ -386,7 +384,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   $('window-close').onclick=closeWindowManager;
   $('window-refresh').onclick=refreshWindowManager;
   $('window-minimize').onclick=async()=>{
-    if(windowMinBusy||windowListBusy||stopped||ownerPopup)return;
+    if(windowMinBusy||windowListBusy||stopped)return;
     if(!touchEnabled){windowStatus('Сначала включи «Управление» в Live.');return;}
     const raw=$('window-select').value,index=Number(raw);
     if(!/^\\d+$/.test(raw)||!Number.isSafeInteger(index)||index<0||index>=windowCandidates.length){
@@ -462,58 +460,51 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   // TLS POST goes directly to our owned Cloudflare gateway from this iframe.
   const OWNER_ORIGIN = 'https://nexus-gateway.entoni441.workers.dev';
   let ownerEntries = [], ownerBusy = false;
-  let ownerAlertTimer=null, ownerAlertBusy=false, seenPending=0, pendingCount=0, snoozeOwnerUntil=0, ownerPopup=false;
+  let ownerAlertTimer=null, ownerAlertBusy=false, pendingCount=0;
   const ownerPanel = $('owner-panel'), ownerSecret = $('owner-secret'), ownerContainer = $('owner-container');
-  function dismissOwnerPopup() {
-    ownerPopup=false;
-    ownerContainer.classList.remove('is-popup');
-    $('owner-mini').textContent= pendingCount>0 ? 'Есть заявки: '+pendingCount : 'Нет заявок';
+  function dismissOwnerNotice() {
+    ownerContainer.hidden=true;
     ownerPanel.hidden=true;
     ownerSecret.value='';
-    $('owner-toggle').textContent='Показать';
+    $('owner-toggle').textContent='⋯';
     $('owner-toggle').setAttribute('aria-expanded','false');
-    snoozeOwnerUntil=Date.now()+120000;
     size();
   }
-  function showOwnerPopup(count) {
-    if (ownerPopup || !ownerPanel.hidden || stopped) return;
-    ownerPopup=true;
-    $('owner-mini').textContent='Запросов: '+count;
-    clearTap(); hideComposer();
-    ownerContainer.classList.add('is-popup');
-    ownerPanel.hidden=false;
-    $('owner-toggle').textContent='Скрыть';
-    $('owner-toggle').setAttribute('aria-expanded','true');
-    ownerMessage('Новых запросов: ' + count + '. Введи пароль владельца NEXUS для просмотра. Windows PIN не подходит.');
-    size();
+  function showOwnerNotice(count) {
+    const changed=ownerContainer.hidden||pendingCount!==count;
+    ownerContainer.hidden=false;
+    $('owner-mini').textContent='Заявок: '+count;
+    if(changed)size();
   }
   async function checkOwnerAlerts() {
-    if (ownerAlertBusy || document.visibilityState === 'hidden' || stopped) return;
+    if(ownerAlertBusy||document.visibilityState==='hidden'||stopped)return;
     ownerAlertBusy=true;
-    try {
-      // Read only the COUNT through the existing OAuth MCP connection.
-      // Targets and decisions still require direct reauthentication at Gateway.
+    try{
       const r=await callTool('host_diagnostics',{});
       const count=Number(r?.structuredContent?.pendingConsents);
-      if (r?.isError || !Number.isSafeInteger(count) || count<0) return;
+      if(r?.isError||!Number.isSafeInteger(count)||count<0)return;
+      if(count===0 && pendingCount!==0)dismissOwnerNotice();
+      else if(count>0)showOwnerNotice(count);
       pendingCount=count;
-      $('owner-mini').textContent=count>0?'Запросов: '+count:'Нет заявок';
-      if (count===0) {
-        snoozeOwnerUntil=0;
-        if (ownerPopup) dismissOwnerPopup();
+      // Only complete this widget's exact prior gesture after the OWNER's
+      // signed approval; Host rejects absent/denied/mismatched decisions.
+      if(count===0 && touchConsent && !touchBusy){
+        const prior=touchConsent;touchConsent=null;
+        try{
+          const done=await callTool('confirm_action',{consentId:prior.consentId,decision:'allow',target:prior.target});
+          const verdict=String(done?.structuredContent?.status||'');
+          if(done?.isError||/pending|denied|expired|refused/i.test(verdict))
+            touchMessage('Действие не разрешено или запрос истёк.');
+          else touchMessage('Подтверждённое действие передано Windows.');
+        }catch(e){touchMessage('Подтверждение не применилось. Не повторяю действие автоматически.');}
       }
-      if (count>0 && (seenPending===0 || count>seenPending || Date.now()>snoozeOwnerUntil) &&
-          !ownerPopup && ownerPanel.hidden && (Date.now()>snoozeOwnerUntil || count>seenPending)) showOwnerPopup(count);
-      seenPending=count;
-    } catch { /* no change: manual approval panel remains available */ }
-    finally { ownerAlertBusy=false; }
+    }catch{}finally{ownerAlertBusy=false;}
   }
   function scheduleOwnerAlerts() {
     clearTimeout(ownerAlertTimer);
     if (!stopped) ownerAlertTimer=setTimeout(async()=>{await checkOwnerAlerts();scheduleOwnerAlerts();},8000);
   }
   $('owner-toggle').onclick = () => {
-    if (ownerPopup) return dismissOwnerPopup();
     ownerPanel.hidden = !ownerPanel.hidden;
     $('owner-toggle').textContent = ownerPanel.hidden ? 'Показать' : 'Скрыть';
     $('owner-toggle').setAttribute('aria-expanded', String(!ownerPanel.hidden));
@@ -569,7 +560,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     if (!ownerEntries.length) {
       ownerMessage('Заявок на подтверждение сейчас нет.');
       $('owner-mini').textContent='Нет заявок';
-      dismissOwnerPopup();
+      dismissOwnerNotice();
       return;
     }
     ownerMessage('Ожидающие запросы: ' + ownerEntries.length);
@@ -600,7 +591,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
               touchMessage('Решение передано Host. Проверь экран Windows.');
             } catch(e) {touchMessage('Подтверждение принято, но исполнение не подтверждено: '+String(e.message||e));}
           }
-          dismissOwnerPopup();
+          dismissOwnerNotice();
         };
         actions.appendChild(b);
       }
@@ -628,10 +619,11 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   function hideComposer() {
     $('touch-tools').hidden=true;
     $('touch-text').blur();
+    $('touch-open').hidden=true;
     size();
   }
   function showComposer() {
-    if (!touchEnabled || paused || stopped || ownerPopup) return;
+    if (!touchEnabled || paused || stopped) return;
     $('touch-tools').hidden=false;
     size();
     // Real native Android keyboard is attached to this ordinary HTML input.
@@ -643,7 +635,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     $('img').classList.toggle('touchable',touchEnabled);
     $('touch-toggle').textContent=touchEnabled?'Управление: вкл.':'Управление: выкл.';
     $('touch-toggle').setAttribute('aria-pressed',String(touchEnabled));
-    $('touch-open').hidden=!touchEnabled;
+    $('touch-open').hidden=true;
     if (!touchEnabled) hideComposer();
     size();
   }
@@ -670,14 +662,14 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
     }
   }
   function touchReady() {
-    return touchEnabled && !paused && !stopped && !ownerPopup && !touchBusy &&
+    return touchEnabled && !paused && !stopped && !touchBusy &&
       document.visibilityState!=='hidden' && frameGeometry &&
       lastAt>0 && Date.now()-lastAt<5000 && !!$('img').getAttribute('src');
   }
   const toolFailure = r => r?.isError ? String(r.content?.[0]?.text||'Host отклонил действие') : '';
   const staleRefusal = msg => isPreExecutionStale(msg);
   async function reobserveFreshFrame(geometry, gestureAt) {
-    if (!touchEnabled || stopped || paused || ownerPopup || Date.now()-gestureAt>8000) throw Error('Касание устарело. Ничего не отправлено.');
+    if (!touchEnabled || stopped || paused || Date.now()-gestureAt>8000) throw Error('Касание устарело. Ничего не отправлено.');
     const w=await callTool('list_windows',{includeTitles:false});
     if (!w || toolFailure(w)) throw Error('Не удалось обновить окна. Действие отменено.');
     const f=await getViewFrame(mode==='fullscreen'?1600:960);
@@ -688,7 +680,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
       if(f.isBlob&&f.url)URL.revokeObjectURL(f.url);
       throw Error('Экран изменился или недоступен. Действие отменено.');
     }
-    if(!touchEnabled||stopped||paused||ownerPopup||Date.now()-gestureAt>8000){
+    if(!touchEnabled||stopped||paused||Date.now()-gestureAt>8000){
       if(f.isBlob)URL.revokeObjectURL(f.url);
       throw Error('Касание устарело. Действие отменено.');
     }
@@ -719,7 +711,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
         touchConsent=/^[a-f0-9]{12}$/.test(String(sc.consentId||''))&&typeof sc.target==='string'
           ? {consentId:sc.consentId,target:sc.target}:null;
         touchMessage('Требуется разрешение владельца.');
-        showOwnerPopup(Math.max(1,pendingCount));
+        showOwnerNotice(Math.max(1,pendingCount));
         return sc;
       }
       if (sc.done===true) {
@@ -727,7 +719,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
         if (name==='mouse_action' && sc.action==='click' && touchEnabled && sc.target?.isPassword===false &&
             /(?:Edit|Document|ComboBox)/i.test(String(sc.target?.control||'')) &&
             !/(?:password|пароль|pin|код безопасности|otp|cvv)/i.test(String(sc.target?.name||'')))
-          showComposer();
+          {$('touch-open').hidden=false;touchMessage('Для ввода нажми «Ввести текст».');size();}
         return sc;
       }
       touchMessage(status?'Ответ NEXUS: '+status:'Действие ещё не подтверждено.');
@@ -818,7 +810,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   $('pip').onclick = () => displayMode('pip');
   $('full').onclick = () => displayMode(mode === 'fullscreen' ? 'inline' : 'fullscreen');
   $('stop').onclick = async () => {
-    stopped = true;closeWindowManager();stopPrivate(); frameGeometry=null; touchConsent=null; resetTouch(); clearTimeout(leaseTimer); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); dismissOwnerPopup(); $('img').removeAttribute('src');
+    stopped = true;closeWindowManager();stopPrivate(); frameGeometry=null; touchConsent=null; resetTouch(); clearTimeout(leaseTimer); halt(); clearTimeout(bootTimer); clearTimeout(ownerAlertTimer); dismissOwnerNotice(); $('img').removeAttribute('src');
     setState('offline', 'STOP…');
     try { await callTool('live_control', {action: 'stop'}); setState('offline', 'NEXUS · остановлено'); show('Трансляция остановлена на ПК', 'live_view выключен. Включить снова можно только просьбой в чате.', true); }
     catch (e) { show('STOP не дошёл до ПК', String(e.message || e) + ' — закрой окно NEXUS Host на ПК, это выключает всё.'); }
