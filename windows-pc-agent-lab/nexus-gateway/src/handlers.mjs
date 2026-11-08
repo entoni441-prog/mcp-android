@@ -6,7 +6,7 @@
  * Bindings: OAUTH_KV (KV: OAuth library + tunnel URL), CONSENT_GUARD (Durable Object: atomic lockout + single-use consent).
  * OAUTH_PROVIDER is injected by workers-oauth-provider.
  */
-import {TOOLS, PROTOCOL_VERSIONS, SERVER_INFO, LIVE_UI, LIVE_V4_UI, LIVE_V3_UI, PREVIOUS_LIVE_UI, LEGACY_LIVE_UI} from './catalog.mjs';
+import {TOOLS, PROTOCOL_VERSIONS, SERVER_INFO, LIVE_UI, LIVE_V5_UI, LIVE_V4_UI, LIVE_V3_UI, PREVIOUS_LIVE_UI, LEGACY_LIVE_UI} from './catalog.mjs';
 import {WIDGET_RESOURCE, widgetContents} from './widget.mjs';
 import {handleLive, ownerKey, signDecision, signOwnerFrame} from './live-page.mjs';
 import {handlePrivateFrame} from './private-frame.mjs';
@@ -188,9 +188,9 @@ export async function handleMcp(request, env, ctx, {fetcher = fetch} = {}) {
   if (method === 'ping') return rpcOk(id, {});
   if (method === 'tools/list') return rpcOk(id, {tools: TOOLS});
   // 0.5.0 MCP Apps: the Live View widget template is static and served by the gateway (works while the PC is offline).
-  if (method === 'resources/list') return rpcOk(id, {resources: [WIDGET_RESOURCE, {...WIDGET_RESOURCE, uri: LIVE_V4_UI, name: 'NEXUS Live View (v4)'}, {...WIDGET_RESOURCE, uri: LIVE_V3_UI, name: 'NEXUS Live View (v3)'}, {...WIDGET_RESOURCE, uri: PREVIOUS_LIVE_UI, name: 'NEXUS Live View (v2)'}, {...WIDGET_RESOURCE, uri: LEGACY_LIVE_UI, name: 'NEXUS Live View (legacy v1)'}]});
+  if (method === 'resources/list') return rpcOk(id, {resources: [WIDGET_RESOURCE, {...WIDGET_RESOURCE, uri: LIVE_V5_UI, name: 'NEXUS Live View (v5)'}, {...WIDGET_RESOURCE, uri: LIVE_V4_UI, name: 'NEXUS Live View (v4)'}, {...WIDGET_RESOURCE, uri: LIVE_V3_UI, name: 'NEXUS Live View (v3)'}, {...WIDGET_RESOURCE, uri: PREVIOUS_LIVE_UI, name: 'NEXUS Live View (v2)'}, {...WIDGET_RESOURCE, uri: LEGACY_LIVE_UI, name: 'NEXUS Live View (legacy v1)'}]});
   if (method === 'resources/templates/list') return rpcOk(id, {resourceTemplates: []});
-  if (method === 'resources/read') return [LIVE_UI, LIVE_V4_UI, LIVE_V3_UI, PREVIOUS_LIVE_UI, LEGACY_LIVE_UI].includes(params?.uri) ? rpcOk(id, {contents: widgetContents(params.uri)}) : rpcErr(id, -32002, 'resource_not_found');
+  if (method === 'resources/read') return [LIVE_UI, LIVE_V5_UI, LIVE_V4_UI, LIVE_V3_UI, PREVIOUS_LIVE_UI, LEGACY_LIVE_UI].includes(params?.uri) ? rpcOk(id, {contents: widgetContents(params.uri)}) : rpcErr(id, -32002, 'resource_not_found');
   if (method !== 'tools/call') return rpcErr(id, -32601, 'method_not_found');
   if (!TOOLS.some(t => t.name === params?.name)) return rpcErr(id, -32602, 'unknown_tool');
 
