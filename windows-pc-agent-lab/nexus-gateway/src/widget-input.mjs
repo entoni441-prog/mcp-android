@@ -48,6 +48,6 @@ export function clampZoomPan(scale, panX, panY, imgW, imgH, viewW, viewH) {
       scale<1 || imgW<=0 || imgH<=0 || viewW<=0 || viewH<=0) return null;
   const maxX=Math.max(0,(imgW*scale-viewW)/2);
   const maxY=Math.max(0,(imgH*scale-viewH)/2);
-  return {panX:Math.max(-maxX,Math.min(maxX,panX)),
-          panY:Math.max(-maxY,Math.min(maxY,panY))};
+  return {panX:maxX===0?0:Math.max(-maxX,Math.min(maxX,panX)),
+          panY:maxY===0?0:Math.max(-maxY,Math.min(maxY,panY))};
 }
