@@ -752,7 +752,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       for (const [x, y] of pts) {
         const m = mapping(inf, rootCache); if (!m) throw Error('coordinate_mapping_failed');
         const u = m.toUia(x, y);
-        const at = await uia({mode: 'at', x: u.x, y: u.y, nativeHitTest: args.action === 'click'});
+        const at = await uia({mode: 'at', x: u.x, y: u.y, nativeHitTest: args.action === 'click' || args.action === 'drag'});
         if (JSON.stringify(at.root) !== JSON.stringify(rootCache)) { rootCache = at.root; infoCache = null; throw Error('screen_changed_retry'); }
         // A precisely identified caption MINIMIZE button is not application input.
         // Route by verified top-level HWND directly to WindowPattern and retain the
@@ -774,6 +774,35 @@ export function createGui({caps, home, workspace, platform = process.platform, r
           return {done:true,action:'minimize',pid:Number(win.pid),hwnd:Number(win.hwnd),
             verified:true,shellInputSent:false};
         }
+        // Live owner long-press + drag on a real native titlebar is a WINDOW
+        // operation, not terminal input. A second native verification in UIA
+        // checks the exact HWND+PID and HTCAPTION BEFORE moving anything.
+        const move=at.at?.nativeCaptionDrag;
+        const nativeMove=args.action==='drag' && x===pts[0][0] && y===pts[0][1] &&
+          move?.verified===true && hit?.ok===true &&
+          Number(move.pid)===Number(hit.pid) && Number(move.hwnd)===Number(hit.hwnd) &&
+          allowedWindowProcess(move.process);
+        if(nativeMove){
+          await ownerGuard();
+          const end=m.toUia(args.x2,args.y2);
+          const effect=await uia({mode:'move_caption',pid:Number(move.pid),hwnd:Number(move.hwnd),
+            fromX:u.x,fromY:u.y,dx:end.x-u.x,dy:end.y-u.y});
+          if(effect?.verified!==true || Number(effect.pid)!==Number(move.pid) ||
+             Number(effect.hwnd)!==Number(move.hwnd) ||
+             String(effect.process||'').replace(/\\.exe$/i,'').toLowerCase()!==
+               String(move.process||'').replace(/\\.exe$/i,'').toLowerCase())
+            throw Error('titlebar_move_not_verified: no mouse or shell input was sent');
+          return {done:true,action:'window_move',pid:Number(move.pid),hwnd:Number(move.hwnd),
+            verified:true,shellInputSent:false};
+        }
+        // For a terminal caption that cannot be proven, REFUSE instead of
+        // creating a sticky shell-command handoff on an innocent titlebar tap.
+        const w=at.at?.window;
+        if((args.action==='click'||args.action==='drag') &&
+           String(w?.process||'').replace(/\\.exe$/i,'').toLowerCase()==='windowsterminal' &&
+           w?.rect && Number.isFinite(w.rect.y) && Number.isFinite(w.rect.h) &&
+           u.y>=w.rect.y && u.y<w.rect.y+Math.min(70,w.rect.h*0.13))
+          throw Error('terminal_caption_unverified: safe window action not recognized; no shell input or handoff');
         const ide = appGate(caps, at.at?.process, {title: at.at?.window?.name, mode: 'input'}).cls === 'ide' ? classifyIdeClick(at.at?.elem) : null;
         // 0.5.2 R-01: deleting/erasing data inside any app needs consent; an unrecognised button in an «Are you sure» dialog is refused.
         const dz = x === pts[0][0] && y === pts[0][1] ? classifyDestructiveClick(at.at, args.action) : null;
