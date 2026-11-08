@@ -11,21 +11,21 @@ import {createGui} from './gui.mjs';
 import {validateCapabilities} from './capabilities.mjs';
 
 test('owner list is exactly: money, sending/deleting on his behalf, secrets, irreversible deletion, Windows security, lifting his ban', () => {
-  assert.deepEqual([...OWNER_WHATS].sort(), ['browser_financial', 'browser_irreversible', 'destructive_action', 'destructive_command', 'owner_unban',
-    'protected_app', 'protected_file', 'secret_access', 'security_command', 'security_page']);
+  assert.deepEqual([...OWNER_WHATS].sort(), ['browser_financial', 'browser_irreversible', 'destructive_action', 'destructive_command', 'logon_channel_attestation', 'owner_unban',
+    'protected_app', 'protected_file', 'secret_access', 'security_command', 'security_page', 'system_power']);
 });
 
 test('autonomy: an ordinary grant runs at once (no consentId), audited auto_approved, journaled', async () => {
   const log = [], ops = [];
   const c = createConsent({autonomy: true, audit: e => log.push(e), journal: {keyFor: () => 'k1', alreadyDone: () => null, record: r => ops.push(r)}});
   let ran = 0;
-  for (const what of ['app_access', 'file_outside_scope', 'arbitrary_command', 'software_change', 'command_plan', 'system_power', 'executor_file_write', 'system_tool']) {
+  for (const what of ['app_access', 'file_outside_scope', 'arbitrary_command', 'software_change', 'command_plan', 'executor_file_write', 'system_tool']) {
     const r = await c.requestGrant({what, target: 't-' + what, apply: async () => { ran++; return {ok: what}; }});
     assert.deepEqual(r, {ok: what}, what);
   }
-  assert.equal(ran, 8); assert.equal(c.pendingCount(), 0);
-  assert.equal(log.filter(e => e.event === 'auto_approved').length, 8);
-  assert.equal(ops.length, 8); assert.ok(ops.every(o => o.ok === true && o.key === 'k1'));
+  assert.equal(ran, 7); assert.equal(c.pendingCount(), 0);
+  assert.equal(log.filter(e => e.event === 'auto_approved').length, 7);
+  assert.equal(ops.length, 7); assert.ok(ops.every(o => o.ok === true && o.key === 'k1'));
 });
 
 test('autonomy: a repeat of an external operation that already ran is never silent', async () => {
