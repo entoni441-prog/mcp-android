@@ -62,7 +62,7 @@ test('native launcher compiles on Windows and rejects developer, non-admin execu
     assert.equal(fs.existsSync(exe),true);
     const output=spawnSync(exe,[],{windowsHide:true,encoding:'utf8',timeout:15000,maxBuffer:1024,
       env:{...process.env,NODE_OPTIONS:'--no-warnings'}});
-    assert.equal(output.status,41,'dev executable must refuse before starting elevated Node');
+    assert.equal(output.status,41,'dev executable must refuse before starting elevated Node: '+JSON.stringify({error:output.error?.code,message:output.error?.message,signal:output.signal}));
     assert.equal(output.stdout,'');
     const probe=spawnSync(exe,['--verify-acl'],{windowsHide:true,encoding:'utf8',timeout:10000});
     assert.equal(probe.status,41,'developer copy cannot claim protected ACL');
