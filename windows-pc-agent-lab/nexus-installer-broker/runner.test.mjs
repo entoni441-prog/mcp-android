@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {fixedRunnerIsProvisioned} from './run-once.mjs';
-import {BROKER_RUNNER} from './task-xml.mjs';
+import {BROKER_RUNNER,BROKER_LAUNCHER} from './task-xml.mjs';
 import {createWindowsInstallerIo} from './windows-io.mjs';
 import {fixedInstallCommand} from './broker.mjs';
 import {ALLOWED_INSTALLS} from './contract.mjs';
@@ -33,7 +33,9 @@ test('Windows I/O only launches the fixed MSI command without arbitrary flags', 
   assert.equal(seen.length,1);
 });
 
-test('elevated task script path is not in a user-writable workspace',()=>{
+test('elevated script and native launcher paths are not user-writable workspace',()=>{
   assert.equal(path.win32.normalize(BROKER_RUNNER),
     path.win32.join('C:\\Program Files','NEXUS','InstallerBroker','run-once.mjs'));
+  assert.equal(path.win32.normalize(BROKER_LAUNCHER),
+    path.win32.join('C:\\Program Files','NEXUS','InstallerBroker','NEXUS-Broker-Launcher.exe'));
 });
