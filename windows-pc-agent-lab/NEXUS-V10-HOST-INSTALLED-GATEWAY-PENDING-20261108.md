@@ -68,3 +68,10 @@ This section supersedes all above "Gateway pending" statements. Do not repeat th
 6. Do not reset prior handoff automatically; current Host has restarted with `ownerAction:null`. No further Host/production changes without a separate cause and permission.
 
 Claude's role: independent reviewer for difficult/security-critical failures; ChatGPT remains primary worker.
+
+
+## ADDENDUM — actual Samsung v10 acceptance FAIL, Claude review requested
+
+Real Samsung feedback ~11:54 Italy: pinch zoom PASS, touch on WindowsTerminal minimize '−' FAIL. Read-only Host audit: `mouse_action click (864,419)` first returned stale_args (10:53:28 UTC), then triggered `shell_command` owner handoff `h-ed2c76b294` at 10:53:32 UTC. All later clicks near caption `(1064,44)`, `(1056,43)`, etc. were refused `owner_handoff_active`. Thus titlebar visual hit-test was **not re-evaluated** while the sticky handoff remained, and exact caption root cause is not proven.
+
+Focused independent Claude review: [NEXUS-V10-SAMSUNG-MINIMIZE-FAIL-CLAUDE-REVIEW-20261108.md](NEXUS-V10-SAMSUNG-MINIMIZE-FAIL-CLAUDE-REVIEW-20261108.md). Status **OPEN / FAIL actual minimize**. No new production code or security changes, no automatic handoff resume. ChatGPT remains primary implementer.
