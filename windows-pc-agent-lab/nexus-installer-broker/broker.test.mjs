@@ -23,7 +23,7 @@ const permit=(channel='chat',extra={})=>createSignedTestApproval({
 });
 const make=(options={})=>{
   const journal=createMemoryJournal(),calls=[],audit=[];
-  let count=0;
+  let count=0, stopChecks=0;
   const io={
     readVerifiedSource:async()=>({...artifact,...options.source}),
     copyToProtectedStage:async()=>({path:options.stagePath??staged}),
@@ -36,7 +36,7 @@ const make=(options={})=>{
   };
   return {broker:createInstallerBroker({keys,now:()=>t,journal,io,
       audit:e=>audit.push(e),privilegedReady:()=>options.elevated??true,
-      stopRequested:()=>options.stopped??false}),calls,journal,audit,
+      stopRequested:()=>options.stopped===true || (options.stopAtCall!==undefined && (++stopChecks)>=options.stopAtCall)}),calls,journal,audit,
     count:()=>count};
 };
 test('A: chat-owner signed approval independently installs exact allowlisted package',async()=>{
@@ -127,4 +127,12 @@ test('even a failed MSI exit is journaled and never automatically re-run',async(
 test('installed service post-check is mandatory for PASS',async()=>{
   const s=make({verifyInstalled:false});
   assert.equal((await s.broker.install(permit())).status,'installed_not_verified');
+});
+
+test('owner STOP arriving after durable claim blocks MSI before launch',async()=>{
+  const s=make({stopAtCall:4}),g=permit('live');
+  assert.equal((await s.broker.install(g)).status,'stopped_before_launch');
+  assert.equal(s.count(),0);
+  assert.equal(s.journal.inspect(g.payload.requestId).state,'outcome_unknown');
+  await assert.rejects(s.broker.install(g),/approval_replay_refused|broker_stopped/);
 });
