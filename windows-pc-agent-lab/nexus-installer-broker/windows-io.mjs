@@ -10,18 +10,34 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {ALLOWED_INSTALLS} from './contract.mjs';
 import {fixedInstallCommand,SECURE_STAGE} from './broker.mjs';
-import {inspectSignedGoogleMsi,trustedSourcePath,trustedStagePath} from './windows-package.mjs';
+import {trustedSourcePath,trustedStagePath} from './windows-package.mjs';
+import {BROKER_LAUNCHER} from './task-xml.mjs';
 
 const pkg=ALLOWED_INSTALLS['chrome-remote-desktop-host-157'];
 const isSame=(a,b)=>typeof a==='string'&&typeof b==='string'&&
   path.win32.normalize(a).toLowerCase()===path.win32.normalize(b).toLowerCase();
 
+/**
+ * Native C# launcher's IsInRole(Admin) check, not PowerShell modules.
+ * It refuses a developer copy and a medium-integrity process.
+ */
 export function windowsIsElevated({spawn=spawnSync}={}){
   if(process.platform!=='win32')return false;
-  const code=`$p=New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent());if($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 0}else{exit 7}`;
-  const r=spawn('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',['-NoProfile','-NonInteractive','-Command',code],
+  const r=spawn(BROKER_LAUNCHER,['--is-elevated'],
     {encoding:'utf8',timeout:10000,windowsHide:true,maxBuffer:1024});
   return r.status===0&&!r.error;
+}
+/** The SHA is allowlisted from an independently Authenticode-verified Google
+ * MSI. Byte-exact hash revalidation here avoids launching PowerShell elevated.
+ */
+function verifyPinnedMsi(file){
+  const st=fs.lstatSync(file);
+  if(!st.isFile()||st.isSymbolicLink()||st.size!==pkg.bytes)
+    throw Error('msi_size_or_type_mismatch');
+  const sha=crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  if(sha!==pkg.sha256)throw Error('msi_pinned_sha_mismatch');
+  return Object.freeze({kind:'msi',sha256:sha,bytes:st.size,
+    signatureValid:true,publisher:pkg.publisher,path:file});
 }
 export function createWindowsInstallerIo({sourceHome=os.homedir(),spawn=spawnSync}={}){
   if(process.platform!=='win32')throw Error('windows_only');
@@ -30,7 +46,7 @@ export function createWindowsInstallerIo({sourceHome=os.homedir(),spawn=spawnSyn
     async readVerifiedSource(packageId,p){
       if(packageId!=='chrome-remote-desktop-host-157'||p!==pkg)
         throw Error('package_not_allowlisted');
-      return inspectSignedGoogleMsi(source,{home:sourceHome,spawn});
+      return verifyPinnedMsi(source);
     },
     async copyToProtectedStage(meta,p,root){
       if(p!==pkg||root!==SECURE_STAGE||!isSame(meta?.path,source))
@@ -47,7 +63,7 @@ export function createWindowsInstallerIo({sourceHome=os.homedir(),spawn=spawnSyn
     },
     async readVerifiedStage(file,p){
       if(p!==pkg||!isSame(file,stage))throw Error('staged_path_untrusted');
-      return inspectSignedGoogleMsi(stage,{home:sourceHome,spawn});
+      return verifyPinnedMsi(stage);
     },
     async runFixedInstaller(cmd){
       const fixed=fixedInstallCommand(stage,pkg.sha256);
