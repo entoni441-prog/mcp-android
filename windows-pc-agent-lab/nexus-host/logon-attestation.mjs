@@ -48,7 +48,7 @@ export function createLogonAttestation({store, consent, diag, audit = () => {}})
       if(!exact(args,['action']) || !['status','request','revoke'].includes(args.action))
         throw Error('invalid_args');
       if(args.action==='revoke') {
-        const r=store.recordLogonAttestation(false);
+        const r=store.recordLogonAttestation(false,'owner_revoked');
         audit({event:'logon_attestation_revoked',channel:CRD_CHANNEL});
         return {verified:false,revoked:true,changed:r.changed};
       }
