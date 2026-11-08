@@ -11,6 +11,7 @@ import {WIDGET_RESOURCE, widgetContents, LIVE_UI as WIDGET_LIVE_UI} from './widg
 
 // Gateway presentation only: preserve byte-for-byte Host/Gateway tool catalog
 // while publishing a fresh widget URI to bypass stale ChatGPT MCP Apps templates.
+const LIVE_V9_URI = 'ui://nexus/live-view-v9.html';
 const LIVE_V8_URI = 'ui://nexus/live-view-v8.html';
 const TOOLS_WITH_LIVE_WIDGET = TOOLS.map(tool => {
   const meta = tool._meta;
@@ -200,9 +201,9 @@ export async function handleMcp(request, env, ctx, {fetcher = fetch} = {}) {
   if (method === 'ping') return rpcOk(id, {});
   if (method === 'tools/list') return rpcOk(id, {tools: TOOLS_WITH_LIVE_WIDGET});
   // 0.5.0 MCP Apps: the Live View widget template is static and served by the gateway (works while the PC is offline).
-  if (method === 'resources/list') return rpcOk(id, {resources: [WIDGET_RESOURCE, {...WIDGET_RESOURCE, uri: LIVE_V8_URI, name: 'NEXUS Live View (v8)'}, {...WIDGET_RESOURCE, uri: LIVE_UI, name: 'NEXUS Live View (v7)'}, {...WIDGET_RESOURCE, uri: LIVE_V6_UI, name: 'NEXUS Live View (v6)'}, {...WIDGET_RESOURCE, uri: LIVE_V5_UI, name: 'NEXUS Live View (v5)'}, {...WIDGET_RESOURCE, uri: LIVE_V4_UI, name: 'NEXUS Live View (v4)'}, {...WIDGET_RESOURCE, uri: LIVE_V3_UI, name: 'NEXUS Live View (v3)'}, {...WIDGET_RESOURCE, uri: PREVIOUS_LIVE_UI, name: 'NEXUS Live View (v2)'}, {...WIDGET_RESOURCE, uri: LEGACY_LIVE_UI, name: 'NEXUS Live View (legacy v1)'}]});
+  if (method === 'resources/list') return rpcOk(id, {resources: [WIDGET_RESOURCE, {...WIDGET_RESOURCE, uri: LIVE_V9_URI, name: 'NEXUS Live View (v9)'}, {...WIDGET_RESOURCE, uri: LIVE_V8_URI, name: 'NEXUS Live View (v8)'}, {...WIDGET_RESOURCE, uri: LIVE_UI, name: 'NEXUS Live View (v7)'}, {...WIDGET_RESOURCE, uri: LIVE_V6_UI, name: 'NEXUS Live View (v6)'}, {...WIDGET_RESOURCE, uri: LIVE_V5_UI, name: 'NEXUS Live View (v5)'}, {...WIDGET_RESOURCE, uri: LIVE_V4_UI, name: 'NEXUS Live View (v4)'}, {...WIDGET_RESOURCE, uri: LIVE_V3_UI, name: 'NEXUS Live View (v3)'}, {...WIDGET_RESOURCE, uri: PREVIOUS_LIVE_UI, name: 'NEXUS Live View (v2)'}, {...WIDGET_RESOURCE, uri: LEGACY_LIVE_UI, name: 'NEXUS Live View (legacy v1)'}]});
   if (method === 'resources/templates/list') return rpcOk(id, {resourceTemplates: []});
-  if (method === 'resources/read') return [WIDGET_LIVE_UI, LIVE_V8_URI, LIVE_UI, LIVE_V6_UI, LIVE_V5_UI, LIVE_V4_UI, LIVE_V3_UI, PREVIOUS_LIVE_UI, LEGACY_LIVE_UI].includes(params?.uri) ? rpcOk(id, {contents: widgetContents(params.uri)}) : rpcErr(id, -32002, 'resource_not_found');
+  if (method === 'resources/read') return [WIDGET_LIVE_UI, LIVE_V9_URI, LIVE_V8_URI, LIVE_UI, LIVE_V6_UI, LIVE_V5_UI, LIVE_V4_UI, LIVE_V3_UI, PREVIOUS_LIVE_UI, LEGACY_LIVE_UI].includes(params?.uri) ? rpcOk(id, {contents: widgetContents(params.uri)}) : rpcErr(id, -32002, 'resource_not_found');
   if (method !== 'tools/call') return rpcErr(id, -32601, 'method_not_found');
   if (!TOOLS.some(t => t.name === params?.name)) return rpcErr(id, -32602, 'unknown_tool');
 
