@@ -4,6 +4,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {generateTaskXml,BROKER_LAUNCHER} from './task-xml.mjs';
 import {createProtectedJournal} from './journal.mjs';
 import {inspectSignedGoogleMsi,trustedSourcePath} from './windows-package.mjs';
@@ -45,4 +47,26 @@ test('read-only Authenticode integration: Google MSI only, verified size and SHA
   assert.equal(rec.publisher,'Google LLC');
   assert.ok(rec.sha256.length===64);
   assert.throws(()=>inspectSignedGoogleMsi('C:\\Windows\\System32\\cmd.exe'),/untrusted_msi_path/);
+});
+
+test('native launcher compiles on Windows and rejects developer, non-admin execution', {skip:process.platform!=='win32'},()=>{
+  const compiler='C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
+  if(!fs.existsSync(compiler))throw Error('trusted_native_compiler_missing');
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'nexus-guarded-launcher-'));
+  const source=path.join(path.dirname(fileURLToPath(import.meta.url)),'BrokerLauncher.cs');
+  const exe=path.join(folder,'broker-test.exe');
+  try{
+    const build=spawnSync(compiler,['/nologo','/target:exe','/platform:x64','/out:'+exe,source],
+      {windowsHide:true,encoding:'utf8',timeout:30000,maxBuffer:8000});
+    assert.equal(build.status,0,'C# build failed: '+build.stdout+' '+build.stderr);
+    assert.equal(fs.existsSync(exe),true);
+    const output=spawnSync(exe,[],{windowsHide:true,encoding:'utf8',timeout:15000,maxBuffer:1024,
+      env:{...process.env,NODE_OPTIONS:'--no-warnings'}});
+    assert.equal(output.status,41,'dev executable must refuse before starting elevated Node');
+    assert.equal(output.stdout,'');
+    const probe=spawnSync(exe,['--verify-acl'],{windowsHide:true,encoding:'utf8',timeout:10000});
+    assert.equal(probe.status,41,'developer copy cannot claim protected ACL');
+  }finally{
+    fs.rmSync(folder,{recursive:true,force:true});
+  }
 });
