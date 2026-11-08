@@ -52,8 +52,9 @@ test('read-only Authenticode integration: Google MSI only, verified size and SHA
 test('native launcher compiles on Windows and rejects developer, non-admin execution', {skip:process.platform!=='win32'},()=>{
   const compiler='C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
   if(!fs.existsSync(compiler))throw Error('trusted_native_compiler_missing');
-  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'nexus-guarded-launcher-'));
   const source=path.join(path.dirname(fileURLToPath(import.meta.url)),'BrokerLauncher.cs');
+  const folder=fs.mkdtempSync(path.join(path.dirname(source),'_nexus_broker_smoke_'));
+
   const exe=path.join(folder,'broker-test.exe');
   try{
     const build=spawnSync(compiler,['/nologo','/target:exe','/platform:x64','/out:'+exe,source],
