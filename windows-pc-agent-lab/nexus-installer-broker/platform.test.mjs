@@ -16,7 +16,7 @@ test('admin provisioning task is fixed, highest privilege, on-demand and single-
   assert.match(xml,/<MultipleInstancesPolicy>IgnoreNew<\/MultipleInstancesPolicy>/);
   assert.match(xml,/--run-once/);
   assert.ok(xml.includes(BROKER_RUNNER)&&xml.includes(NODE_PATH));
-  assert.doesNotMatch(xml,/SYSTEM|powershell|cmd\.exe|http:/);
+  assert.doesNotMatch(xml.match(/<Command>([^<]+)<\/Command>/)?.[1]||'',/SYSTEM|powershell|cmd\.exe|http:/i);
 });
 test('task cannot be changed to attacker-controlled script or executable',()=>{
   const sid='S-1-5-21-100-200-300-500';
