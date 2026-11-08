@@ -26,7 +26,7 @@ test('Windows: native caption proof compiles and rejects a synthetic non-window'
       encoding:'utf8',timeout:25000
     });
     assert.equal(r.status,0,(r.stderr||'').slice(-2000));
-    assert.equal(JSON.parse(readFileSync(out,'utf8')).mode,'focused');
+    assert.equal(JSON.parse(readFileSync(out,'utf8').replace(/^\\uFEFF/,'')).mode,'focused');
   }finally{rmSync(temp,{recursive:true,force:true});}
 });
 
