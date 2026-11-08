@@ -16,7 +16,7 @@ export function generateTaskXml({ownerSid,launcher=BROKER_LAUNCHER}={}){
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Description>NEXUS Installer Broker: one owner-UAC-provisioned, allowlisted installer action. Never model shell.</Description></RegistrationInfo>
-  <Triggers><TimeTrigger><StartBoundary>2035-01-01T00:00:00</StartBoundary><Enabled>true</Enabled></TimeTrigger></Triggers>
+  <Triggers/>
   <Principals><Principal id="Owner"><UserId>${xmlEscape(ownerSid)}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
   <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><StartWhenAvailable>false</StartWhenAvailable><AllowStartOnDemand>true</AllowStartOnDemand><ExecutionTimeLimit>PT6M</ExecutionTimeLimit><Enabled>true</Enabled></Settings>
   <Actions Context="Owner"><Exec><Command>${xmlEscape(launcher)}</Command><WorkingDirectory>${xmlEscape(BROKER_ROOT)}</WorkingDirectory></Exec></Actions>
