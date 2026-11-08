@@ -3,7 +3,7 @@
  * Preflight: node <thisfile> --check (safe direct run)
  * Activation: node <thisfile> --deploy ONLY through a standalone Windows Scheduler task.
  * Direct execution from NEXUS Host is rejected by parent-process-chain verification.
- * Changes ONLY three verified Host source files. Never changes system security settings.
+ * Changes ONLY four verified Host source files. Never changes system security settings.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -28,12 +28,14 @@ const ARM=path.join(ROOT,'_natural_touch_os_owned_armed.json');
 const OLD={
   'gui.mjs':'d85973088923880376a5ea85f4eca104c6806db2e08bc31bf8789339ca6adfdf',
   'live.mjs':'69fc34347ffc6344fdb327f4ca348af4038701e9ccbd4ce9e6b50edde507399e',
-  'uia-script.mjs':'0e0b097c5a927e7f8496aaaa6543b98b82ac51f17724a7fbd2d9aa20e01968b9'
+  'uia-script.mjs':'0e0b097c5a927e7f8496aaaa6543b98b82ac51f17724a7fbd2d9aa20e01968b9',
+  'catalog.mjs':'83273998eb78048d5469a9b7e5d4ceb77d370da13c8ad2a680a855df6211cc05'
 };
 const NEW={
   'gui.mjs':'3b487cfb1b4b3451e8339d7c7a0e515acd76cd87a91a2ffbc9c467d85bb1f0f5',
   'live.mjs':'15a5c43c47fa8a4facb0da985f4d211d0894758c025948f71e21ec9b0eebe32b',
-  'uia-script.mjs':'02044e8c74c778995a30ddab71245772bff5972ff4bf81a573fc9e6f90571d8e'
+  'uia-script.mjs':'02044e8c74c778995a30ddab71245772bff5972ff4bf81a573fc9e6f90571d8e',
+  'catalog.mjs':'e29fa92e76f53d3aab01aaed6fdd4fd57af99c8e9375d323f50c1147dd933890'
 };
 const FILES=Object.keys(OLD);
 const data={phase:'created',at:new Date().toISOString(),backup:BACKUP,source:SOURCE,changed:FILES,events:[]};
