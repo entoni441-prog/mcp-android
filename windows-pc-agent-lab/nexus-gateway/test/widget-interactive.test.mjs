@@ -24,7 +24,7 @@ test('Live 7.1: only a compact out-of-frame link follows nonsecret consent count
 test('Live 2.0: text is manual, explicitly nonsecret, and no credentials recorded',()=>{
   assert.match(WIDGET_HTML,/id="touch-text"[^>]*type="text"/);
   assert.match(WIDGET_HTML,/if\(editable\)showComposer\(\)/);
-  assert.match(WIDGET_HTML,/const result=await touchCall\\('keyboard_action',op\\)/);
+  assert.ok(WIDGET_HTML.includes("const result=await touchCall('keyboard_action',op)"));
   assert.match(WIDGET_HTML,/Не вводи PIN, пароль/);
   const src=WIDGET_HTML.match(/<script>([\s\S]*?)<\/script>/)?.[1];
   assert.ok(src);
