@@ -774,7 +774,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
             /(?:Edit|Document|ComboBox)/i.test(String(sc.target?.control||'')) &&
             !/(?:password|пароль|pin|код безопасности|otp|cvv)/i.test(String(sc.target?.name||''));
           if(editable)showComposer();
-          else if(imeActive)hideComposer();
+          else hideComposer(); // a password, unknown field or other target disarms the IME
         }
         return sc;
       }
