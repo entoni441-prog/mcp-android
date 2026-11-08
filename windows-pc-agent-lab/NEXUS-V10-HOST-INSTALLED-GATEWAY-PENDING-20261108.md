@@ -42,3 +42,29 @@ Recorded 2026-11-08 ~10:45Z. This checkpoint supersedes the deployment-pending n
 - Do not call implementation complete until real Samsung E2E confirms no shell commands and no accidental mouse actions.
 
 No main changes, no permanent security policy change, no subscription/payment. Claude remains independent reviewer; ChatGPT main implementer.
+
+
+## UPDATE — Gateway v10 deployed successfully (08.11.2026, 10:49 UTC)
+
+This section supersedes all above "Gateway pending" statements. Do not repeat this deployment.
+
+- Owner confirmed the exact one-time NEXUS `wrangler deploy` approval in chat.
+- Consent `562e322fa3ec` used once; `confirm_action` replied `confirmed:true`, command exitCode **0**.
+- `wrangler 4.158.0` uploaded the candidate Worker and deployed its triggers successfully.
+- **Current production Worker version:** `38a2f14b-724d-4686-8e90-c17b2dfa978e`.
+- **Independent Cloudflare API verification:** latest deployment `c60dd66f-6e3a-4264-bad1-bacd9ca5ef0a`, version above serves **100%**, timestamp `2026-11-08T10:48:49.085645Z`. Previous version `bc2f1b64-3afa-4bdf-93db-bee657769507` preserved in deployment history for rollback.
+- Host post-deploy `connection_status`: Gateway ok, tunnel HTTP **200**, Host `0.6.1-next` reachable PID 23324; Host diagnostics online.
+- Fresh `watch_nexus` called; `state:active`, `streaming:true`, new app Live inserted in current ChatGPT conversation. Unique MCP resource template `ui://nexus/live-view-v10.html`.
+- Other curl HTTP checks were blocked by protective `consent_required` for repetition, **not executed**; do not approve or repeat them merely for diagnostics. This does not affect the directly verified Cloudflare 100% deployment and tunnel HTTP 200.
+- **Status:** Host INSTALL PASS; Gateway DEPLOY PASS; **real Samsung E2E for window movement/minimize still PENDING**.
+
+### Samsung acceptance, next action only
+
+1. View the **new** NEXUS Live card, not older v9 in chat history.
+2. If Host window hidden, open it normally from taskbar (do not trigger shell actions).
+3. Pinch zoom as needed (v9 zoom and visual pan previously owner-verified).
+4. On a **blank caption strip** of an ordinary visible window, hold finger ~500 ms until grab, slide, release. Check that the actual Windows window moves (not just the picture); Host audit must say `window_move`, `verified:true`, `shellInputSent:false`.
+5. Separately tap the Windows window titlebar **minimize** button '−'. Expected `action:'minimize', verified:true`, no sticky `owner_handoff_active`. If Host cannot verify native caption, expect fail-closed rather than a shell command.
+6. Do not reset prior handoff automatically; current Host has restarted with `ownerAction:null`. No further Host/production changes without a separate cause and permission.
+
+Claude's role: independent reviewer for difficult/security-critical failures; ChatGPT remains primary worker.
