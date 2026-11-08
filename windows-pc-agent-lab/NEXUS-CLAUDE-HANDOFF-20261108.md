@@ -159,3 +159,18 @@
 **Обновление критериев приёмки:** браузерный Google Flow сценарий и cleanup Edge — отдельные обязательные E2E критерии наряду с минимизацией окон и независимыми подтверждениями. Нельзя считать общую приёмку NEXUS завершённой, пока этот инструмент не работает (или не зафиксирован конкретный внешний блокер).
 
 **Ограничения:** не повторять неработающий Google login внутри заблокированного embedded browser; не обходить защиту Google; не вмешиваться в параллельную сессию; не менять main/production без разрешения.
+
+
+## 12. Live v8 — конкретный FAIL касания по NEXUS Host/WindowsTerminal (08.11.2026)
+
+**Реальный Samsung E2E:** виджет v8 работает и показывает Windows 960×540 без прежней полноэкранной формы подтверждений. Владелец вручную разворачивает окно «NEXUS Host» через панель задач, но обратно касанием в Live свернуть не может. Внизу виджета сообщение `NEXUS working | mouse_action | ERROR owner_handoff_active`. До этого несколько касаний по обычному Explorer были успешны.
+
+**Результат инструментальной проверки (не гипотеза):** `list_windows(includeTitles=true)` вернул `WindowsTerminal`, title `NEXUS Host`, PID `444`. `get_capabilities` показал heldFor `handoff:h-eaf7feeb27`, task `waiting_owner`. Аудит: `mouse_action click (1186,182)` инициировал `handoff_requested` с reason `shell_command` (09:35:46 UTC); последующие клики `(1177,170)`, `(1192,183)` отказаны с `owner_handoff_active`. Это означает, что текущий touch path не доказал нажатие именно кнопки Minimize и отдал действие на обычную защиту terminal shell. Не считать эти координаты доказательством того, где была кнопка — точный hit-test отсутствует.
+
+**Проверенное безопасное решение одного действия:** `minimize_window({pid:444,title:'NEXUS Host',ownerRequested:true})` возвращает `{status:'minimized',process:'WindowsTerminal',pid:444,hwnd:66252,verified:true,shellInputSent:false}`. Окно действительно свёрнуто без клавиш, команд или закрытия Host. **Это PASS отдельного tool, но НЕ PASS прямого касания.** `inspect_ui(pid:444)` и `window_info(pid:444)` отказали `app_not_allowed: owner_handoff_required hard_deny` — ожидаемая граница защиты terminal.
+
+**Существующий код, который следует диагностировать:** `nexus-host/gui.mjs` `mouse_action` строки около 755–777 — независимые `isTitlebarMinimizeTouch` / `nativeCaptionMinimize` и ранняя ветка `uia(mode:'minimize')`; иначе `policy()` превращает действие в shell handoff. `policy.mjs` `isTitlebarMinimizeTouch` около 468–479. `uia-script.mjs` `NxCaptionMinimizeAt` около 252–310. Путь формально реализован, но **на реальной WindowsTerminal кнопка не была распознана либо была нажата не она — причина НЕ установлена**. Исторические unit-тесты `natural-touch.test.mjs`/ `universal-minimize.test.mjs` не доказывают пользовательский E2E.
+
+**Приёмка исправления:** 1) через новый Live на Samsung открыть окно Host из панели задач; 2) одним реальным касанием именно по Minimize свернуть его; 3) проверить Host audit `done:true,action:'minimize',verified:true,shellInputSent:false`; 4) убедиться, что `owner_handoff_active` не возникает, терминальный ввод и security policy остаются закрытыми; 5) дополнительно проверить, что нажатия Close/Terminal client area НЕ интерпретируются как Minimize. Не менять production/main/Host без разрешения и независимой проверки; не сбрасывать sticky handoff без явного указания владельца «продолжай».
+
+**Статус:** стандартное сворачивание через tool PASS; direct-touch minimize WindowsTerminal FAIL; причина распознавания требует адресной диагностики. Никаких новых изменений Host/production в этом этапе не производилось.
