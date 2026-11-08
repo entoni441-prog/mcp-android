@@ -8,8 +8,8 @@
  * which switches live_view off at the source. Owner touch/text are opt-in and remain subject to Host policy.
  */
 // Gateway-only cache key. Host/Gateway shared tool catalog stays byte-identical.
-export const LIVE_UI = 'ui://nexus/live-view-v10.html';
-import {framePointToScreen,isPreExecutionStale,callOnceAfterStale,anchoredZoomPan,clampZoomPan} from './widget-input.mjs';
+export const LIVE_UI = 'ui://nexus/live-view-v11.html';
+import {framePointToScreen,isPreExecutionStale,callOnceAfterStale,anchoredZoomPan,clampZoomPan,planImeSuffixEdit} from './widget-input.mjs';
 
 export const WIDGET_MIME = 'text/html;profile=mcp-app';
 
@@ -80,7 +80,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
   <button id="pp" title="Пауза / продолжить">⏸</button>
   <button id="touch-toggle" type="button" aria-pressed="false" title="Прямое управление экраном, только по команде владельца">Управление: выкл.</button>
   <button id="zoom-reset" type="button" hidden title="Сбросить масштаб Live до 1×" aria-label="Сбросить приближение Live">1.0× ↺</button>
-  <button id="touch-open" type="button" hidden aria-label="Открыть отдельную форму ввода текста">Ввести текст ↗</button>
+  <button id="touch-open" type="button" hidden aria-label="Показать клавиатуру Samsung для обычного текстового поля">⌨ Клавиатура</button>
   <button id="extra-toggle" type="button" aria-expanded="false" title="Резервные функции Live">⋯</button>
   <button id="private-view" type="button" hidden aria-pressed="false" title="Резервный приватный просмотр">Личные окна 🔒</button>
   <button id="window-open" type="button" hidden aria-expanded="false" title="Резервное сворачивание выбранного окна">Окна ▾</button>
@@ -113,9 +113,9 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
 </div>
 <div class="touch-tools" id="touch-tools" hidden role="dialog" aria-label="Ввод текста в Windows">
   <div class="touch-card">
-    <div class="touch-head"><b>Текст в Windows</b><button id="touch-close" type="button" aria-label="Скрыть клавиатуру">Скрыть</button></div>
+    <div class="touch-head"><b>Клавиатура Samsung → Windows</b><button id="touch-close" type="button" aria-label="Скрыть клавиатуру">Скрыть</button></div>
     <span class="notice">Только обычный текст. Не вводи PIN, пароль, код, токен или платёжные данные.</span>
-    <form id="touch-form" autocomplete="off"><input id="touch-text" type="text" inputmode="text" enterkeyhint="send" maxlength="500" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Ввод через клавиатуру Samsung" placeholder="Нажми сюда для клавиатуры Samsung"><button type="submit">Отправить</button></form>
+    <form id="touch-form" autocomplete="off"><input id="touch-text" type="text" inputmode="text" enterkeyhint="enter" maxlength="500" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Прямой ввод с клавиатуры Samsung в Windows" placeholder="Пиши здесь — сразу в Windows"><button type="submit">↵</button></form>
     <div class="keys"><button data-touch-key="enter" type="button">Enter</button><button data-touch-key="tab" type="button">Tab</button><button data-touch-key="backspace" type="button">⌫</button><button data-touch-key="esc" type="button">Esc</button></div>
   </div>
 </div>
@@ -141,6 +141,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
   const framePointToScreen = ${framePointToScreen.toString()};
   const anchoredZoomPan = ${anchoredZoomPan.toString()};
   const clampZoomPan = ${clampZoomPan.toString()};
+  const planImeSuffixEdit = ${planImeSuffixEdit.toString()};
   const isPreExecutionStale = ${isPreExecutionStale.toString()};
   const callOnceAfterStale = ${callOnceAfterStale.toString()};
   let seq = 0, pending = new Map(), host = null, modes = [], mode = 'inline';
@@ -149,6 +150,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
   let lastTap=null, tapTimer=null, lastStatusTimer=null;
   let zoomScale=1, zoomPanX=0, zoomPanY=0, pinchOrigin=null, gestureUsed=false;
   let windowHoldTimer=null;
+  let imeActive=false,imeBlocked=false,imeComposing=false,imeMirror='',imeQueue=[],imeRunning=false,imeTimer=null,imeLastEmptyDelete=0;
   const activePointers=new Map();
   const legacy = () => typeof window.openai === 'object' && window.openai && typeof window.openai.callTool === 'function';
 
@@ -625,19 +627,26 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
     lastStatusTimer=setTimeout(()=>{if(!touchBusy)el.hidden=true;},6000);
     size();
   }
+
   function hideComposer() {
+    imeActive=false;imeBlocked=false;imeComposing=false;imeMirror='';
+    clearTimeout(imeTimer);imeTimer=null;imeQueue=[];
     $('touch-tools').hidden=true;
     $('touch-text').blur();
     $('touch-open').hidden=true;
     size();
   }
   function showComposer() {
-    if (!touchEnabled || paused || stopped) return;
+    if(!touchEnabled||paused||stopped)return;
+    // HTML input is an Android IME bridge. No Windows document text is read.
+    imeActive=true;imeBlocked=false;imeComposing=false;imeMirror='';
+    clearTimeout(imeTimer);imeTimer=null;imeQueue=[];
+    $('touch-text').value='';
     $('touch-tools').hidden=false;
+    $('touch-open').hidden=false; // Android may require a fresh user gesture
     size();
-    // Real native Android keyboard is attached to this ordinary HTML input.
-    // If Android requires a fresh user gesture, tapping the field will open it.
-    try {$('touch-text').focus({preventScroll:true});}catch{}
+    try{$('touch-text').focus({preventScroll:true});}catch{}
+    touchMessage('Набирай текст: отправляется прямо в Windows.');
   }
   function setTouchVisual(enabled) {
     touchEnabled=enabled===true;
@@ -759,10 +768,14 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
       }
       if (sc.done===true) {
         touchMessage('Выполнено на ПК.');
-        if (name==='mouse_action' && sc.action==='click' && touchEnabled && sc.target?.isPassword===false &&
+
+        if(name==='mouse_action'&&(sc.action==='click'||sc.action==='double_click')){
+          const editable=touchEnabled && sc.target?.isPassword===false &&
             /(?:Edit|Document|ComboBox)/i.test(String(sc.target?.control||'')) &&
-            !/(?:password|пароль|pin|код безопасности|otp|cvv)/i.test(String(sc.target?.name||'')))
-          {$('touch-open').hidden=false;touchMessage('Для ввода нажми «Ввести текст».');size();}
+            !/(?:password|пароль|pin|код безопасности|otp|cvv)/i.test(String(sc.target?.name||''));
+          if(editable)showComposer();
+          else if(imeActive)hideComposer();
+        }
         return sc;
       }
       touchMessage(status?'Ответ NEXUS: '+status:'Действие ещё не подтверждено.');
@@ -948,7 +961,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
   (async () => {
     try {
       const init = await Promise.race([
-        rpc('ui/initialize', {appInfo: {name: 'nexus-live-view', version: '10.0.0-titlebar-gesture'}, appCapabilities: {availableDisplayModes: ['inline', 'pip', 'fullscreen']}, protocolVersion: '2026-01-26'}),
+        rpc('ui/initialize', {appInfo: {name: 'nexus-live-view', version: '11.0.0-samsung-ime'}, appCapabilities: {availableDisplayModes: ['inline', 'pip', 'fullscreen']}, protocolVersion: '2026-01-26'}),
         new Promise((_, rej) => setTimeout(() => rej(new Error('no_mcp_apps_host')), 4000)),
       ]);
       host = init || {}; notify('ui/notifications/initialized', {});
