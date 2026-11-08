@@ -57,3 +57,19 @@ All signing keys/owner passphrase/PIN remain outside repository and model-visibl
 - Independent `connection_status` after delay: at 2026-11-08T20:37:09Z and 20:37:54Z Cloudflare Gateway `ok` but tunnel HTTP 530 `tunnel_unavailable`. This is consistent with reboot and the NEXUS Host being user-session-bound, **not yet proof that Windows successfully rebooted or that Chrome Remote Desktop is available at the login screen**.
 - Next checkpoint needs OWNER to connect to `Antoni-ChatGPT` from Samsung via independent Chrome Remote Desktop and sign in with his private Windows PIN. Then model runs `connection_status`, `system_info(os)` to verify **lastBoot changed** and confirms NEXUS Host recovered; inspect signed CRD service running and auto. If CRD is not visible, diagnose separately instead of falsely claiming recovery.
 - Windows reboot and logon trial NOT yet PASS as of this checkpoint. Do not resend restart command. No automatic pending remote work.
+
+## Final recovery acceptance — 2026-11-08 21:41 Europe/Rome: PASS
+
+**This section supersedes the earlier 'reboot trial pending owner confirmation' checkpoint.**
+
+- Owner confirmed: **«Вошёл»** — personally connected from Samsung via Chrome Remote Desktop after the test Windows restart and entered his own Windows PIN. Neither PIN nor credentials were sent through model-mediated NEXUS tools.
+- `system_info(os)`, collected **2026-11-08T21:41:01+01:00**, confirms **OS lastBoot = 2026-11-08 21:37:21.500 Europe/Rome** (CIM value `/Date(1794170241500)/`), `uptimeMin:4`, Windows 11 Pro build 26200. Previous recorded boot was `/Date(1793863121451)/`, with uptime 5118 min before restart. **A real system reboot took place.**
+- `system_info(session)` confirms `consoleUser:true`, `logonUi:false`, `lockApp:false`, `explorerSessions:[1]`, and `quser` user `krado` on console session ID 1 Active, login recorded at **08.11.2026 21:40**.
+- `connection_status`, checked **2026-11-08T20:41:00.590Z**, returned `verdict:online`, Gateway `ok`, tunnel probe HTTP **200**, Host `reachable`, `version:0.6.1-next`, `uptimeSec:48`; new tunnel registration **2026-11-08T20:40:19.618Z**, new reconnect **20:40:19.620Z**. Independent logon CRD succeeded first; NEXUS recovered automatically after owner sign-in.
+- `system_info(services,filter:'chromoting')` returned `Name:chromoting`, `State:Running`, `StartMode:Auto`, `StartName:LocalSystem`.
+- `system_info(autostart_nexus)`: `NEXUS-Host-Logon` Ready, LogonTrigger, `lastResult:0`; `NEXUS-Host-Run` Running; `NEXUS-Guardian-Preboot-Watch` Running; `NEXUS-Recovery-Independent` Ready, LogonTrigger, lastResult 0. User session ID changed from pre-restart 3 to post-restart 1.
+- `get_capabilities`: protected config parses with `fileError:null`, no `ownerBans`, `logonChannelVerified:false` as designed for the *one-shot consumed* attestation; session idle.
+
+**Acceptance verdict:** Reboot initiated with a separately signed owner decision, Windows actually rebooted, Chrome Remote Desktop offered independent pre-user-logon access, owner successfully signed in from Samsung, NEXUS Host / Gateway recovered automatically, independent CRD Windows service remains Auto/Running: **PASS**.
+
+**Limits:** This verifies a Windows restart followed by owner logon, **not** unattended NEXUS availability at Windows pre-login (Host is explicitly a per-user process), not wake from full power-off without a wake-capable independent device. Do not re-run completed tests; do not confuse consumed `logonChannelVerified:false` with a failed test. No second restart, changes to main, Windows security policy or cloud billing.
