@@ -9,14 +9,15 @@ import path from 'node:path';
 const ROOT='C:\\Program Files\\NEXUS\\InstallerBroker';
 const DATA='C:\\ProgramData\\NEXUS\\InstallerBroker';
 const FILES=Object.freeze([
-  'run-once.mjs','broker.mjs','contract.mjs','journal.mjs',
+  'NEXUS-Broker-Launcher.exe','run-once.mjs','broker.mjs','contract.mjs','journal.mjs',
   'windows-io.mjs','windows-package.mjs','acl-check.mjs','task-xml.mjs','trust.json'
 ]);
 const EXPECTED=Object.freeze([
+  'C:\\Program Files','C:\\Program Files\\nodejs','C:\\Program Files\\nodejs\\node.exe',
   'C:\\Program Files\\NEXUS',
   ROOT,
   ...FILES.map(n=>path.win32.join(ROOT,n)),
-  DATA,path.win32.join(DATA,'staging'),path.win32.join(DATA,'journal')
+  'C:\\ProgramData\\NEXUS',DATA,path.win32.join(DATA,'staging'),path.win32.join(DATA,'journal')
 ]);
 const quote=s=>"'"+s.replaceAll("'","''")+"'";
 export function verifyProtectedAcls({spawn=spawnSync,paths=EXPECTED}={}){
@@ -49,7 +50,7 @@ foreach($f in $paths){
 }
 exit 0
 `;
-  const r=spawn('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],
+  const r=spawn('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',['-NoProfile','-NonInteractive','-Command',script],
     {timeout:20000,windowsHide:true,encoding:'utf8',maxBuffer:1024});
   return !r.error&&r.status===0;
 }
