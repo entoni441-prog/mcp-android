@@ -26,8 +26,8 @@ test('NX-TM-01: terminal input stays guarded; only verified visual window modes 
   assert.match(UIA_SCRIPT,/NxTopOf \$w/);
   assert.match(UIA_SCRIPT,/\$res\.hwnd\s*=\s*\[int64\]\$a\.hwnd/);
   assert.match(UIA_SCRIPT, /NxPName .* -notin/);
-  assert.match(UIA_SCRIPT, /'move_caption'\\s*\\{/);
-  assert.match(UIA_SCRIPT, /MoveCaption\\(\\$res\\.hwnd,\\$res\\.pid/);
+  assert.ok(UIA_SCRIPT.includes("'move_caption' {"));
+  assert.ok(UIA_SCRIPT.includes('MoveCaption($res.hwnd,$res.pid'));
   const op=UIA_SCRIPT.slice(UIA_SCRIPT.indexOf("  'minimize' {"),
     UIA_SCRIPT.indexOf("  'activate' {"));
   assert.ok(!/AppActivate|SendKeys|Invoke-Expression|Start-Process|SetFocus|WScript\.Shell|(?:\s|^)cmd\.exe/.test(op));
