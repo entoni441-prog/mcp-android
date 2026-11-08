@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import {fixedRunnerIsProvisioned} from './run-once.mjs';
+import {fixedRunnerIsProvisioned,isOwnerStopped} from './run-once.mjs';
 import {BROKER_RUNNER,BROKER_LAUNCHER} from './task-xml.mjs';
 import {createWindowsInstallerIo} from './windows-io.mjs';
 import {fixedInstallCommand} from './broker.mjs';
@@ -38,4 +38,15 @@ test('elevated script and native launcher paths are not user-writable workspace'
     path.win32.join('C:\\Program Files','NEXUS','InstallerBroker','run-once.mjs'));
   assert.equal(path.win32.normalize(BROKER_LAUNCHER),
     path.win32.join('C:\\Program Files','NEXUS','InstallerBroker','NEXUS-Broker-Launcher.exe'));
+});
+
+test('persisted owner STOP is a deny-only signal and corrupt state fails closed',()=>{
+  const mock=(record)=>({
+    existsSync(p){return p.endsWith('owner-stop.json');},
+    readFileSync(){return record;}
+  });
+  assert.equal(isOwnerStopped({home:'C:\\Users\\krado',fsImpl:mock('{"stopped":true}')}),true);
+  assert.equal(isOwnerStopped({home:'C:\\Users\\krado',fsImpl:mock('{"stopped":false}')}),false);
+  assert.equal(isOwnerStopped({home:'C:\\Users\\krado',fsImpl:mock('{malformed')}),true);
+  assert.equal(isOwnerStopped({home:'C:\\Users\\krado',fsImpl:{existsSync:()=>false}}),false);
 });
