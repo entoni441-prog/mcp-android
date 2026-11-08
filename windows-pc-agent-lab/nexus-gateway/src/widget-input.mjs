@@ -69,7 +69,7 @@ export function planImeSuffixEdit(before, after, selectionAtEnd = true) {
   while(prefix<before.length && prefix<after.length &&
         before[prefix]===after[prefix])prefix++;
   const remove=before.length-prefix, insert=after.slice(prefix);
-  if(remove>80 || insert.length>500) return null;
+  if(remove>80 || insert.length>2000) return null;
   return [
     ...Array.from({length:remove},()=>({keys:'backspace'})),
     ...(insert.length?[{text:insert}]:[])
