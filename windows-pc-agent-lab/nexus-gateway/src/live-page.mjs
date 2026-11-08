@@ -140,10 +140,12 @@ function viewerPage() {
       if (r.status === 401) { location.href = '/live'; return; }
       const j = r.ok ? await r.json() : {pending: []};
       const box = $('cq'); box.textContent = '';
-      for (const c of (j.pending || []).filter(c => !c.decided)) {
+      for (const c of (j.pending || [])) {
         const d = document.createElement('div'); d.className = 'ci';
-        const t = document.createElement('p'); t.textContent = '⚠ Ждёт твоего решения: ' + c.target + ' (' + Math.ceil(c.expiresInSec / 60) + ' мин)'; d.appendChild(t);
-        for (const o of c.options) { const b = document.createElement('button'); b.textContent = LBL[o] || o; if (o !== 'cancel') b.className = 'ok';
+        const t = document.createElement('p'); t.textContent = c.decided
+          ? ((c.decided==='cancel'?'Отклонено — ':'Разрешено — ждёт выполнения ChatGPT: ') + c.target)
+          : ('⚠ Ждёт твоего решения: ' + c.target + ' (' + Math.ceil(c.expiresInSec / 60) + ' мин)'); d.appendChild(t);
+        for (const o of (c.decided?[]:c.options)) { const b = document.createElement('button'); b.textContent = LBL[o] || o; if (o !== 'cancel') b.className = 'ok';
           b.onclick = async () => { b.disabled = true; const q = await fetch('/live/decide', {method: 'POST', credentials: 'same-origin',
             headers: {'x-nexus-live': '1', 'content-type': 'application/json'}, body: JSON.stringify({consentId: c.consentId, decision: o})}).catch(() => null);
             t.textContent = q && q.ok ? (o === 'cancel' ? 'Отклонено.' : 'Разрешено. ChatGPT выполнит это действие.') : 'Не дошло — попробуй ещё раз.'; if (q && q.ok) [...d.querySelectorAll('button')].forEach(x => x.remove()); else b.disabled = false; };
@@ -177,33 +179,30 @@ function approvalsPage() {
   </main><script nonce="${n}">
   (() => {
     const items=document.getElementById('items'), status=document.getElementById('status');
-    let busy=false,completed=false,closing=false;
+    let busy=false,completed=false;
     const labels={allow:'Разрешить',cancel:'Отклонить',close_save:'Сохранить и закрыть',close_discard:'Закрыть без сохранения'};
-    function closeAfterSuccess(){
-      if(closing)return;
-      closing=true;
-      status.textContent='Решение принято. Окно закрывается.';
-      setTimeout(()=>{window.close();status.textContent='Готово. Если вкладка осталась открытой, закрой её вручную.';},450);
-    }
     async function refresh(){
-      if(busy || document.visibilityState==='hidden' || closing) return;
+      if(busy || document.visibilityState==='hidden') return;
       busy=true;
       try {
         const r=await fetch('/live/consents',{cache:'no-store',credentials:'same-origin'});
         if(r.status===401){location.href='/live/approvals';return;}
         if(!r.ok) throw Error('HTTP '+r.status);
         const data=await r.json();
-        const list=Array.isArray(data.pending)?data.pending.filter(x=>!x.decided):[];
+        const list=Array.isArray(data.pending)?data.pending:[];
+        const waiting=list.filter(x=>!x.decided), decided=list.filter(x=>!!x.decided);
         items.replaceChildren();
         if(!list.length){
-          if(completed)closeAfterSuccess();
-          else status.textContent='Нет ожидающих запросов.';
+          status.textContent=completed?'Решение обработано. Активных запросов больше нет.':'Нет активных запросов.';
           return;
         }
-        status.textContent='Ожидающие запросы: '+list.length;
+        status.textContent=waiting.length
+          ? 'Ждут твоего подтверждения: '+waiting.length+(decided.length?'; обработаны владельцем: '+decided.length:'')
+          : 'Не нужно ничего подтверждать: решение уже принято. Ожидается выполнение ChatGPT.';
         for(const c of list){
           const card=document.createElement('div');card.className='ci';
           const title=document.createElement('p');title.textContent=String(c.target||'Операция NEXUS')+' · '+Math.ceil(Number(c.expiresInSec||0)/60)+' мин';card.appendChild(title);
+          if(c.decided){const p=document.createElement('p');p.textContent=c.decided==='cancel'?'Отклонено владельцем; ожидается фиксация отказа.':'Разрешено владельцем; ожидается выполнение ChatGPT. Повторное подтверждение не требуется.';card.appendChild(p);items.appendChild(card);continue;}
           const actions=document.createElement('div');actions.className='actions';
           for(const choice of (Array.isArray(c.options)?c.options:[])){
             if(!Object.hasOwn(labels,choice))continue;
