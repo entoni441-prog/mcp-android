@@ -12,7 +12,7 @@ test('IME suffix planner: unicode, autocorrect, backspace, and unsafe mid-edit r
   ]);
   assert.deepEqual(planImeSuffixEdit('x','x'),[]);
   assert.equal(planImeSuffixEdit('hello','world',false),null);
-  assert.equal(planImeSuffixEdit('','x'.repeat(501)),null);
+  assert.equal(planImeSuffixEdit('','x'.repeat(2001)),null);
   assert.equal(planImeSuffixEdit('x'.repeat(100),'y'),null);
 });
 
