@@ -150,7 +150,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
   let lastTap=null, tapTimer=null, lastStatusTimer=null;
   let zoomScale=1, zoomPanX=0, zoomPanY=0, pinchOrigin=null, gestureUsed=false;
   let windowHoldTimer=null;
-  let imeActive=false,imeBlocked=false,imeComposing=false,imeMirror='',imeQueue=[],imeRunning=false,imeTimer=null,imeLastEmptyDelete=0;
+  let imeActive=false,imeBlocked=false,imeComposing=false,imeMirror='',imeQueue=[],imeRunning=false,imeTimer=null,imeLastEmptyDelete=0,imeLastEnter=0;
   const activePointers=new Map();
   const legacy = () => typeof window.openai === 'object' && window.openai && typeof window.openai.callTool === 'function';
 
@@ -767,7 +767,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
         return sc;
       }
       if (sc.done===true) {
-        touchMessage('Выполнено на ПК.');
+        if(name!=='keyboard_action'||!imeActive)touchMessage('Выполнено на ПК.');
 
         if(name==='mouse_action'&&(sc.action==='click'||sc.action==='double_click')){
           const editable=touchEnabled && sc.target?.isPassword===false &&
@@ -961,6 +961,11 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain;transform-or
   }
   function imeSpecialKey(key){
     if(!imeActive||imeBlocked)return;
+    if(key==='enter'){
+      const now=Date.now();
+      if(now-imeLastEnter<100)return; // keydown and submit can describe one Enter
+      imeLastEnter=now;
+    }
     queueIme({keys:key});
     if(['enter','tab','left','right','home','end','esc'].includes(key)){
       imeMirror='';$('touch-text').value='';
