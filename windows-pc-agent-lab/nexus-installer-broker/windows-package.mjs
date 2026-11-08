@@ -35,7 +35,7 @@ export function inspectSignedGoogleMsi(file,{home=os.homedir(),spawn=spawnSync}=
   // A fixed script with a tightly constrained literal path; no shell input
   // from owner messages, model tools, package name or remote web content.
   const command=`$ErrorActionPreference='Stop';$s=Get-AuthenticodeSignature -LiteralPath ${safeQuote(file)};[PSCustomObject]@{State=$s.Status.ToString();Subject=$s.SignerCertificate.Subject}|ConvertTo-Json -Compress`;
-  const r=spawn('powershell.exe',['-NoProfile','-NonInteractive','-Command',command],
+  const r=spawn('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',['-NoProfile','-NonInteractive','-Command',command],
     {encoding:'utf8',timeout:15000,windowsHide:true,maxBuffer:4096});
   if(r.error||r.status!==0)throw Error('msi_signer_probe_failed');
   let sig;
