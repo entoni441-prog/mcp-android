@@ -8,7 +8,8 @@
  * Modes:
  *  focused                     → foreground info (focused element process) + calibration rect
  *  at        {x,y}             → process under the point (UIA coordinate space) + focused
- *  minimize  {pid,hwnd}        → ONLY validated WindowsTerminal WindowPattern visual state; no mouse/key/commands
+ *  minimize  {pid,hwnd}        → verified WindowPattern visual state; no mouse/key/commands
+ *  move_caption {pid,hwnd,fromX,fromY,dx,dy} → verified native HTCAPTION / Win32 move, no mouse/key/commands
  *  activate  {pid,title?}      → WScript.Shell.AppActivate(pid), fallback AppActivate(title); result re-read from UIA
  *  windows   {pid}             → top-level windows owned by pid (or ApplicationFrameHost frames hosting it)
  *  tree      {pid,depth,max}   → control tree of those windows (bounded)
@@ -269,6 +270,14 @@ public struct TBINFO {
 private static extern uint GetWindowThreadProcessId(System.IntPtr hwnd, out uint pid);
 [System.Runtime.InteropServices.DllImport("user32.dll")]
 private static extern bool IsWindowVisible(System.IntPtr hwnd);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+private static extern bool IsZoomed(System.IntPtr hwnd);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+private static extern bool GetWindowRect(System.IntPtr hwnd, out RECT r);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+private static extern bool SetWindowPos(System.IntPtr hwnd, System.IntPtr after, int x, int y, int width, int height, uint flags);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+private static extern int GetSystemMetrics(int index);
 [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
 private static extern System.IntPtr MsgInfo(System.IntPtr hwnd, uint msg, System.UIntPtr wp, ref TBINFO lparam, uint flags, uint timeout, out System.UIntPtr result);
 [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
@@ -300,10 +309,49 @@ public static bool IsMinButton(long hwnd, int pid, int x, int y) {
       hit.ToUInt64() == 8;
   } catch { return false; }
 }
+public static bool IsMoveCaption(long hwnd, int pid, int x, int y) {
+  if (hwnd<=0 || pid<=0) return false;
+  var h = new System.IntPtr(hwnd); uint realPid=0;
+  GetWindowThreadProcessId(h,out realPid);
+  if(realPid!=(uint)pid || !IsWindowVisible(h) || IsZoomed(h))return false;
+  System.UIntPtr hit;
+  var point = new System.IntPtr((long)(ushort)x | ((long)(ushort)y << 16));
+  return MsgHit(h,0x0084,System.UIntPtr.Zero,point,0x0002,150,out hit)!=System.IntPtr.Zero &&
+    hit.ToUInt64()==2; // HTCAPTION only, NEVER client, shell text, close or caption buttons.
+}
+public static bool MoveCaption(long hwnd,int pid,int fromX,int fromY,int dx,int dy) {
+  if(!IsMoveCaption(hwnd,pid,fromX,fromY) ||
+     (dx==0&&dy==0) || System.Math.Abs(dx)>4000 || System.Math.Abs(dy)>4000)return false;
+  var h=new System.IntPtr(hwnd); RECT before, after;
+  if(!GetWindowRect(h,out before))return false;
+  int w=before.right-before.left, ht=before.bottom-before.top;
+  int screenW=GetSystemMetrics(0),screenH=GetSystemMetrics(1);
+  if(w<100||ht<50||screenW<320||screenH<200)return false;
+  int nx=System.Math.Max(80-w,System.Math.Min(screenW-80,before.left+dx));
+  int ny=System.Math.Max(0,System.Math.Min(screenH-55,before.top+dy));
+  if(nx==before.left && ny==before.top)return false;
+  // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER.
+  if(!SetWindowPos(h,System.IntPtr.Zero,nx,ny,0,0,0x0215))return false;
+  if(!GetWindowRect(h,out after))return false;
+  uint pidAfter=0;GetWindowThreadProcessId(h,out pidAfter);
+  return pidAfter==(uint)pid && after.left==nx && after.top==ny &&
+     after.right-after.left==w && after.bottom-after.top==ht;
+}
 '@
     }
     if ([NxCaption.Proof]::IsMinButton([int64]$native.hwnd, [int]$native.pid, [int]$x, [int]$y)) {
       return @{ verified = $true; hwnd = [int64]$native.hwnd; pid = [int]$native.pid; process = (NxPName ([int]$native.pid)) }
+    }
+  } catch { }
+  return $null
+}
+function NxCaptionDragAt($native, $x, $y) {
+  if ($null -eq $native -or $native.ok -ne $true) { return $null }
+  try {
+    # Reuse the same validated C# class as the minimize proof.
+    [void](NxCaptionMinimizeAt $native $x $y)
+    if ([NxCaption.Proof]::IsMoveCaption([int64]$native.hwnd,[int]$native.pid,[int]$x,[int]$y)) {
+      return @{ verified=$true; hwnd=[int64]$native.hwnd; pid=[int]$native.pid; process=(NxPName ([int]$native.pid)) }
     }
   } catch { }
   return $null
@@ -324,12 +372,39 @@ switch ($a.mode) {
     if ($a.nativeHitTest -eq $true) {
       $res.at.nativeHit = Nx26NativeHit ([int]$a.x) ([int]$a.y)
       $res.at.nativeCaptionMinimize = NxCaptionMinimizeAt $res.at.nativeHit ([int]$a.x) ([int]$a.y)
+      $res.at.nativeCaptionDrag = NxCaptionDragAt $res.at.nativeHit ([int]$a.x) ([int]$a.y)
     }
     try { $p = $TW.GetParent($e); if ($null -ne $p) { $res.at.parentType = (NxType $p); $res.at.parent = @{ name = (NxStr $p.Current.Name 200); className = $p.Current.ClassName; hwnd = [int64]$p.Current.NativeWindowHandle } } } catch { }
     $proof = NxEdgeTranslateBubble $e $top $epid
     if ($null -ne $proof) { $res.at.nativeBubble = $proof }
     try { $res.at.dialog = NxDlg $top } catch { }
     $res.focused = NxFocused
+  }
+  'move_caption' {
+    # Only move a verified live top-level window if the ORIGINAL point is
+    # proven HTCAPTION. Never sends mouse/button/keystrokes to app content.
+    $res.pid=[int]$a.pid; $res.hwnd=[int64]$a.hwnd
+    $res.verified=$false; $res.shellInputSent=$false
+    if ($res.pid -gt 0 -and $res.hwnd -gt 0 -and
+        [Math]::Abs([int]$a.dx) -le 4000 -and [Math]::Abs([int]$a.dy) -le 4000) {
+      try {
+        $w=$AE::FromHandle([IntPtr]$res.hwnd)
+        if ($null -ne $w -and [int]$w.Current.ProcessId -eq $res.pid -and
+            [int64]$w.Current.NativeWindowHandle -eq $res.hwnd -and
+            (NxPName $res.pid) -notin @('consent','LogonUI','winlogon','CredentialUIBroker','lsass','System','dwm') -and
+            (NxTopOf $w).Current.NativeWindowHandle -eq $res.hwnd) {
+          $hit=Nx26NativeHit ([int]$a.fromX) ([int]$a.fromY)
+          if($hit.ok -eq $true -and [int]$hit.pid -eq $res.pid -and [int64]$hit.hwnd -eq $res.hwnd) {
+            $proof=NxCaptionDragAt $hit ([int]$a.fromX) ([int]$a.fromY)
+            if($proof.verified -eq $true) {
+              $res.verified=[NxCaption.Proof]::MoveCaption($res.hwnd,$res.pid,
+                [int]$a.fromX,[int]$a.fromY,[int]$a.dx,[int]$a.dy)
+              if($res.verified){$res.process=NxPName $res.pid}
+            }
+          }
+        }
+      }catch{$res.error='MOVE_CAPTION_UNVERIFIED'}
+    }
   }
   'minimize' {
     # Universal top-level WindowPattern minimization ONLY. No shell/application text,
