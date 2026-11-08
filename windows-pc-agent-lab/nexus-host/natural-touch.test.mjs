@@ -5,6 +5,7 @@ import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {UIA_SCRIPT} from './uia-script.mjs';
+import {UIA_BOOTSTRAP,UIA_ENV_CHUNKS} from './gui.mjs';
 import {createLive} from './live.mjs';
 
 test('native caption proof requires exact minimize index, ownership and never sends input',()=>{
@@ -20,9 +21,14 @@ test('Windows: native caption proof compiles and rejects a synthetic non-window'
   const temp=mkdtempSync(path.join(os.tmpdir(),'nexus-caption-'));
   try{
     const out=path.join(temp,'uia.json');
-    const script=UIA_SCRIPT+"\n$null = NxCaptionMinimizeAt @{ok=$true;hwnd=1;pid=1} 50 50; if(-not ('NxCaption.Proof' -as [type])) { throw 'native_caption_compile_failed' }";
-    const r=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{
-      env:{...process.env,NEXUS_UIA_ARGS:JSON.stringify({mode:'focused'}),NEXUS_UIA_OUT:out},
+    const proof="\n$null = NxCaptionMinimizeAt @{ok=$true;hwnd=1;pid=1} 50 50; if(-not ('NxCaption.Proof' -as [type])) { throw 'native_caption_compile_failed' }";
+    assert.equal(UIA_ENV_CHUNKS.join(''),UIA_SCRIPT);
+    assert.ok(UIA_ENV_CHUNKS.every(s=>s.length<32767));
+    const r=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',
+      Buffer.from(UIA_BOOTSTRAP,'utf16le').toString('base64')],{
+      env:{...process.env,NEXUS_UIA_PS:UIA_ENV_CHUNKS[0],
+        NEXUS_UIA_PS_2:UIA_ENV_CHUNKS[1]+proof,
+        NEXUS_UIA_ARGS:JSON.stringify({mode:'focused'}),NEXUS_UIA_OUT:out},
       encoding:'utf8',timeout:25000
     });
     assert.equal(r.status,0,(r.stderr||'').slice(-2000));
