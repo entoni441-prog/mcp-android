@@ -279,6 +279,11 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     if (!g.allow && !g.consent) {
       // 0.5.2 N-03: an action only the owner may do (UAC, credential prompt, shell command) → Owner Handoff, not a dead end.
       const spec = g.error === 'owner_handoff_required' && mode !== 'read' && typeof handoff === 'function' ? handoffSpec(proc, g.reason, title) : null;
+      // v10.1: a mouse click/drag inside a terminal is not command entry. A shell_command handoff pauses ALL
+      // input for 10 min (verify:'none' never auto-completes), which then blocked verified caption minimize/move.
+      // Refuse that click instead; keyboard input into shells still gets the owner handoff.
+      if (spec && tool === 'mouse_action' && spec.reason === 'shell_command')
+        throw Error('terminal_content_refused: NEXUS does not click inside a terminal window; nothing was sent and no handoff was created. Window caption actions (minimize, drag) stay available.');
       if (spec) return handoff(spec);
       throw Error(`${legacy}: ${g.error}${g.reason ? ' ' + g.reason : ''}`);
     }

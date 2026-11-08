@@ -88,3 +88,19 @@ test('Win32 move requires HTCAPTION and revalidates live HWND/PID',()=>{
   assert.match(UIA_SCRIPT,/\$hit=Nx26NativeHit/);
   assert.doesNotMatch(UIA_SCRIPT,/PostMessage|WM_CLOSE/);
 });
+
+// v10.1 — Samsung 08.11 audit: click (864,419) in terminal content created shell_command handoff h-ed2c76b294,
+// and every later caption tap failed with owner_handoff_active.
+test('v10.1: click inside terminal content is refused with NO handoff; later caption minimize still works',async()=>{
+  const content={controlType:'ControlType.Text',elem:{name:'',id:'',isPassword:false},nativeCaptionDrag:null,
+    window:{pid:PID,process:PROC,hwnd:HWND,name:'NEXUS Host',rect:{x:0,y:0,w:1100,h:600}}};
+  const x=mock({atOverrides:content});
+  await assert.rejects(x.gui.mouse_action({action:'click',x:864,y:419}),/terminal_content_refused/);
+  assert.equal(x.handoffs.length,0);
+  assert.equal(x.robotOps.some(c=>/^(?:click|drag|key|paste)/.test(c)),false);
+  const y=mock({atOverrides:{nativeCaptionDrag:null,
+    nativeCaptionMinimize:{verified:true,pid:PID,hwnd:HWND,process:PROC}}});
+  const r=await y.gui.mouse_action({action:'click',x:1062,y:44});
+  assert.deepEqual([r.action,r.verified,r.shellInputSent],['minimize',true,false]);
+  assert.equal(y.handoffs.length,0);
+});
