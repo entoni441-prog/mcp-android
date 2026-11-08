@@ -80,8 +80,9 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   <button id="pp" title="Пауза / продолжить">⏸</button>
   <button id="touch-toggle" type="button" aria-pressed="false" title="Прямое управление экраном, только по команде владельца">Управление: выкл.</button>
   <button id="touch-open" type="button" hidden aria-label="Открыть клавиатуру Samsung для ввода текста">⌨</button>
-  <button id="private-view" type="button" aria-pressed="false" title="Показать свои документы только тебе после пароля владельца">Личные окна 🔒</button>
-  <button id="window-open" type="button" aria-expanded="false" title="Безопасно свернуть выбранное окно Windows, включая NEXUS Host">Окна ▾</button>
+  <button id="extra-toggle" type="button" aria-expanded="false" title="Резервные функции Live">⋯</button>
+  <button id="private-view" type="button" hidden aria-pressed="false" title="Резервный приватный просмотр">Личные окна 🔒</button>
+  <button id="window-open" type="button" hidden aria-expanded="false" title="Резервное сворачивание выбранного окна">Окна ▾</button>
   <select id="fps" title="Кадров в секунду" aria-label="Кадров в секунду"><option value="0.5">0.5 к/с</option><option value="1">1 к/с</option><option value="2" selected>2 к/с</option><option value="4">4 к/с</option></select>
   <button id="pip" hidden title="Картинка в картинке">⧉</button><button id="full" hidden title="Во весь экран">⛶</button>
   <button id="stop" class="stop" title="Остановить трансляцию на ПК">■ STOP</button>
@@ -316,6 +317,16 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   }
 
 
+
+  // Daily use: tap the Windows screen itself. The old window list and
+  // extra-passphrase private preview are fallback tools only, behind ⋯.
+  $('extra-toggle').onclick=()=>{
+    const showing=!$('window-open').hidden;
+    $('window-open').hidden=showing;
+    $('private-view').hidden=showing;
+    $('extra-toggle').setAttribute('aria-expanded',String(!showing));
+    size();
+  };
 
   // ── OWNER WINDOW MANAGEMENT: verified, non-input WindowPattern only ──
   // This intentionally does NOT click the taskbar/titlebar, send shell keys,
@@ -822,7 +833,7 @@ img{max-width:100%;max-height:100%;display:block;object-fit:contain}
   (async () => {
     try {
       const init = await Promise.race([
-        rpc('ui/initialize', {appInfo: {name: 'nexus-live-view', version: '6.0.0-window-manager'}, appCapabilities: {availableDisplayModes: ['inline', 'pip', 'fullscreen']}, protocolVersion: '2026-01-26'}),
+        rpc('ui/initialize', {appInfo: {name: 'nexus-live-view', version: '7.0.0-natural-touch'}, appCapabilities: {availableDisplayModes: ['inline', 'pip', 'fullscreen']}, protocolVersion: '2026-01-26'}),
         new Promise((_, rej) => setTimeout(() => rej(new Error('no_mcp_apps_host')), 4000)),
       ]);
       host = init || {}; notify('ui/notifications/initialized', {});
