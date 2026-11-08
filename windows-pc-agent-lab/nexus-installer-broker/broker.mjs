@@ -64,6 +64,12 @@ export function createInstallerBroker({keys,now=()=>Date.now(),journal,io,audit=
       audit({event:'install_claimed',requestId:grant.id,channel:grant.channel,
         packageId:grant.packageId});
       try{
+        // Recheck STOP after durable claim, immediately before MSI execution.
+        // Once an MSI transaction starts we never auto-retry or re-enter it.
+        if(stopRequested()){
+          journal.mark(grant.id,'outcome_unknown');
+          return {status:'stopped_before_launch',requestId:grant.id};
+        }
         journal.mark(grant.id,'executing');
         const result=await io.runFixedInstaller(command);
         if(result?.exitCode!==0){
