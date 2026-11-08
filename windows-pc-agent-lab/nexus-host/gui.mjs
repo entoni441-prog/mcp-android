@@ -752,14 +752,19 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       for (const [x, y] of pts) {
         const m = mapping(inf, rootCache); if (!m) throw Error('coordinate_mapping_failed');
         const u = m.toUia(x, y);
-        const at = await uia({mode: 'at', x: u.x, y: u.y});
+        const at = await uia({mode: 'at', x: u.x, y: u.y, nativeHitTest: args.action === 'click'});
         if (JSON.stringify(at.root) !== JSON.stringify(rootCache)) { rootCache = at.root; infoCache = null; throw Error('screen_changed_retry'); }
         // A precisely identified caption MINIMIZE button is not application input.
         // Route by verified top-level HWND directly to WindowPattern and retain the
         // strict application policy for all other clicks, including terminal text.
-        if(isTitlebarMinimizeTouch(at.at,args.action)){
+        const cap=at.at?.nativeCaptionMinimize;
+        const hit=at.at?.nativeHit;
+        const nativeMin= args.action==='click' && cap?.verified===true &&
+          hit?.ok===true && Number(cap.pid)===Number(hit.pid) &&
+          Number(cap.hwnd)===Number(hit.hwnd) && allowedWindowProcess(cap.process);
+        if(isTitlebarMinimizeTouch(at.at,args.action) || nativeMin){
           await ownerGuard();
-          const win=at.at.window;
+          const win=nativeMin ? cap : at.at.window;
           const effect=await uia({mode:'minimize',pid:Number(win.pid),hwnd:Number(win.hwnd)});
           if(effect?.verified!==true||effect.isMinimizedAfter!==true||
              Number(effect.pid)!==Number(win.pid)||String(effect.hwnd)!==String(win.hwnd)||
