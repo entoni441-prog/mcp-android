@@ -18,9 +18,7 @@ export const LIVE_V3_UI = 'ui://nexus/live-view-v3.html';
 export const LIVE_V4_UI = 'ui://nexus/live-view-v4.html';
 export const LIVE_V5_UI = 'ui://nexus/live-view-v5.html';
 export const LIVE_V6_UI = 'ui://nexus/live-view-v6.html';
-export const LIVE_V7_UI = 'ui://nexus/live-view-v7.html';
-// v8: same live widget, new URI. ChatGPT caches widget templates by URI, so v7.1 HTML (83b5df5) never reached cached clients.
-export const LIVE_UI = 'ui://nexus/live-view-v8.html';
+export const LIVE_UI = 'ui://nexus/live-view-v7.html';
 const UI = (visibility) => ({ui: {resourceUri: LIVE_UI, visibility}, 'openai/outputTemplate': LIVE_UI, 'openai/widgetAccessible': true, ...(visibility.includes('model') ? {} : {'openai/visibility': 'private'})});
 
 export const TOOLS = [
