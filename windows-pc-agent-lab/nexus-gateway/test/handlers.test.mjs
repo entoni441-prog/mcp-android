@@ -148,7 +148,7 @@ test('PC offline: initialize, notifications, ping and tools/list still work (con
   const list = await (await handleMcp(rpc('tools/list', 3), m.env, ctx, {fetcher})).json();
   assert.deepEqual(list.result.tools.map(t => t.name), TOOLS.map(t => t.name));
   assert.equal(forwarded, 0, 'nothing forwarded to the PC');
-  assert.deepEqual((await (await handleMcp(rpc('resources/list', 4), m.env, ctx)).json()).result.resources.map(x => x.uri), ['ui://nexus/live-view-v6.html','ui://nexus/live-view-v5.html','ui://nexus/live-view-v4.html','ui://nexus/live-view-v3.html','ui://nexus/live-view-v2.html','ui://nexus/live-view-v1.html']);
+  assert.deepEqual((await (await handleMcp(rpc('resources/list', 4), m.env, ctx)).json()).result.resources.map(x => x.uri), ['ui://nexus/live-view-v7.html','ui://nexus/live-view-v6.html','ui://nexus/live-view-v5.html','ui://nexus/live-view-v4.html','ui://nexus/live-view-v3.html','ui://nexus/live-view-v2.html','ui://nexus/live-view-v1.html']);
   assert.equal((await (await handleMcp(rpc('prompts/list', 4), m.env, ctx)).json()).error.code, -32601);
   assert.equal((await (await handleMcp(rpc('tools/call', 5, {name: 'run_shell', arguments: {}}), m.env, ctx)).json()).error.message, 'unknown_tool');
   assert.equal((await handleMcp(new Request(BASE + '/mcp', {method: 'POST', body: '{bad'}), m.env, ctx)).status, 400);
