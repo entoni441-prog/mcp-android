@@ -63,7 +63,7 @@ export function clampZoomPan(scale, panX, panY, imgW, imgH, viewW, viewH) {
  */
 export function planImeSuffixEdit(before, after, selectionAtEnd = true) {
   if (typeof before !== 'string' || typeof after !== 'string' ||
-      after.length > 500 || before.length > 500 || !selectionAtEnd) return null;
+      after.length > 2000 || before.length > 2000 || !selectionAtEnd) return null;
   if (before === after) return [];
   let prefix=0;
   while(prefix<before.length && prefix<after.length &&
