@@ -4,6 +4,10 @@ on:
     branches: [experiment/nexus-live-window-manager-20261107]
     paths:
       - 'windows-pc-agent-lab/nexus-gateway/src/widget.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/src/catalog.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/src/handlers.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/test/live050.test.mjs'
+      - 'windows-pc-agent-lab/nexus-gateway/test/handlers.test.mjs'
       - 'windows-pc-agent-lab/nexus-gateway/test/widget-window-manager.test.mjs'
       - '.github/workflows/nexus-live-window-manager-ci.yml'
   workflow_dispatch:
