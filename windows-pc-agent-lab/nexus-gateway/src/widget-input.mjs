@@ -51,3 +51,27 @@ export function clampZoomPan(scale, panX, panY, imgW, imgH, viewW, viewH) {
   return {panX:maxX===0?0:Math.max(-maxX,Math.min(maxX,panX)),
           panY:maxY===0?0:Math.max(-maxY,Math.min(maxY,panY))};
 }
+
+/**
+ * Android IME edits are mirrored to the remote caret without replacing an
+ * existing Windows document. The local input contains only text entered since
+ * the last verified remote field click, NEVER a copy of the Windows document.
+ *
+ * A suffix edit can be replayed using backspaces + inserted Unicode text.
+ * Editing inside the local proxy is refused: its selection is not the Windows
+ * document's selection. The user can reposition the real caret by touching it.
+ */
+export function planImeSuffixEdit(before, after, selectionAtEnd = true) {
+  if (typeof before !== 'string' || typeof after !== 'string' ||
+      after.length > 500 || before.length > 500 || !selectionAtEnd) return null;
+  if (before === after) return [];
+  let prefix=0;
+  while(prefix<before.length && prefix<after.length &&
+        before[prefix]===after[prefix])prefix++;
+  const remove=before.length-prefix, insert=after.slice(prefix);
+  if(remove>80 || insert.length>500) return null;
+  return [
+    ...Array.from({length:remove},()=>({keys:'backspace'})),
+    ...(insert.length?[{text:insert}]:[])
+  ];
+}
