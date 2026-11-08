@@ -31,7 +31,7 @@ const ps = script => [sys('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfi
  * facts(): {autostartVerified, logonChannelVerified, wakeDevice, unsavedOwnerDocs:[...], sleepStates:[...]} — gathered
  * by the runtime (diagnostics + capabilities); injected for tests.
  */
-export function createPower({caps, consent = null, audit = () => {}, platform = process.platform, exec = defaultExec, facts = async () => ({}), onLock = () => {}}) {
+export function createPower({caps, consent = null, audit = () => {}, platform = process.platform, exec = defaultExec, facts = async () => ({}), onLock = () => {}, onBeforeRestart = () => {}}) {
   async function plan(action) {
     const f = await facts();
     const pre = {};
@@ -73,7 +73,13 @@ export function createPower({caps, consent = null, audit = () => {}, platform = 
       const p = await plan(a);
       if (args.dryRun !== false) return {...p, dryRun: true, next: p.blockers.length ? `BLOCKED until: ${p.blockers.join(', ')}` : 'Preconditions met. To execute: power_action with dryRun:false → owner consent for exactly this action.'};
       if (p.blockers.length) return {...p, status: 'BLOCKED', executed: false};
-      if (consented) return execute(a);
+      if (consented) {
+        // Owner has separately signed both the channel attestation and the
+        // restart permission. Consume the first BEFORE scheduling Windows:
+        // no second unattended reboot can reuse a stale owner assertion.
+        if (a === 'restart') await onBeforeRestart();
+        return execute(a);
+      }
       return consent.requestGrant({what: 'system_power', target: `${{restart: 'перезагрузка', shutdown: 'выключение', sleep: 'сон', hibernate: 'гибернация'}[a]} Windows через 60 с (${p.consequences})`, apply: () => this.power_action(args, {consented: true})});
     },
   };
