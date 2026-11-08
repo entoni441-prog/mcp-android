@@ -24,7 +24,7 @@ test('Live 7.1: only a compact out-of-frame link follows nonsecret consent count
 test('Live 2.0: text is manual, explicitly nonsecret, and no credentials recorded',()=>{
   assert.match(WIDGET_HTML,/id="touch-text"[^>]*type="text"/);
   assert.match(WIDGET_HTML,/if\(result\?\.done===true\)\{el\.value='';hideComposer\(\);\}/);
-  assert.match(WIDGET_HTML,/touchCall\('keyboard_action',\{text:value\}\)/);
+  assert.match(WIDGET_HTML,/const result=await touchCall\\('keyboard_action',op\\)/);
   assert.match(WIDGET_HTML,/Не вводи PIN, пароль/);
   const src=WIDGET_HTML.match(/<script>([\s\S]*?)<\/script>/)?.[1];
   assert.ok(src);
@@ -94,7 +94,7 @@ test('Live v4: Samsung keyboard is a native mobile input inside a popup',()=>{
 test('Live 7.1: Samsung text entry is independent of the Windows frame',()=>{
   assert.match(WIDGET_HTML,/\.touch-tools\{position:relative;inset:auto/);
   assert.doesNotMatch(WIDGET_HTML,/\.touch-tools\{position:fixed;inset:0/);
-  assert.match(WIDGET_HTML,/id="touch-open"[^>]*hidden[^>]*>Ввести текст/);
+  assert.match(WIDGET_HTML,/id="touch-open"[^>]*hidden[^>]*>⌨ Клавиатура/);
   assert.match(WIDGET_HTML,/\$\('touch-open'\)\.hidden=true/);
   assert.match(WIDGET_HTML,/if\(result\?\.done===true\)\{el\.value='';hideComposer\(\);\}/);
 });
