@@ -31,30 +31,29 @@ Read-only source: workspace root nexus-livev11-pre-attest-power-20261108.mjs, fu
 - Previous issue NEXUS-LOCK-LOGIN-RECOVERY-CHECKPOINT-20261107.md requires real proof before setting logonChannelVerified=true for REMOTE login. Preserve that rule unchanged for remotely autonomous restart.
 - Also preserve separate known defect: lock dryRun:true may actually execute LockWorkStation. Do not combine that fix with the shutdown mode without tests.
 
-## Required fix (design, not deployed)
-Introduce one explicit, distinct mode for owner-authorized LOCAL-MANUAL-POWER-ON shutdown, e.g.
-power_action({action:"shutdown",returnMode:"owner_manual_power_on",dryRun:true|false}).
-Do not silently reinterpret ordinary shutdown or automatically extend this exception to sleep/hibernate/restart. Existing default mode stays fail-closed.
+## CORRECTION FROM OWNER (2026-11-17): direct shutdown must not require remote recovery
+**This section supersedes the previous extra "owner_manual_power_on" mode and its additional approval requirements.** The owner explicitly rejects restrictions they never requested. During this conversation the owner used their own remote-control software and shut Windows down successfully. The PC was OFF at the time of this correction (owner-reported, not remotely verified).
 
-Admission rules:
-1. Owner explicitly requested *shut down this Windows PC now*, acknowledged remote access will disappear, and said they will manually power it on later. Consent is single-action, session-bound, non-reusable and auditable. Input from page/file/agent cannot impersonate owner.
-2. Preflight: no unsaved user documents, no owner work at risk, no active tasks or pending critical background operations; no forced close. Keep NEXUS task-end cleanup as needed, but do NOT erase user windows or files.
-3. For manual physical recovery, remote wake and remote pre-logon login are NOT prerequisites; remote access must be declared OFFLINE until owner physically boots and signs into Windows. Do NOT claim NEXUS reconnects autonomously before login.
-4. Require explicit high-impact shutdown action consent in power_action (or stronger owner-only approval if current host contract demands). A general "continue", an old approval, an app button or a CLI command may NOT substitute.
-5. Use orderly Windows shutdown, 60s grace, WITHOUT /f, with supported cancel_shutdown (/a). Log owner approval, mode, start, Windows request acceptance and the loss of connection. Distinguish accepted versus OS shutdown verified and remote wake unavailability.
-6. Enforce the same policy at all entry points: power_action, arbitrary run_command invoking shutdown, shell/GUI Start menu, task/plan and any other route. The correct repair is to authorize this distinct safe mode, NOT to slip past the gate with a timer, cursor, scripts or another executable.
-7. Do NOT touch the user-prohibited power path to Shelly/PWR_SW. Independent PC S3/S4/S5 sensor remains unverified. Never assume relay OFF means PC off.
+**Root design error:** The developer/assistant imposed a requirement for remote wake and a separately verified remote login channel on the **shutdown action**. Those conditions are relevant to guaranteeing an autonomous return online; they are NOT required to obey a direct authenticated owner request to shut Windows down. Their unconditional enforcement was an unjustified restriction of owner control. Do not call it a Windows limitation.
 
-## Acceptance criteria (future staging work)
-- Default mode with logonChannelVerified=false and wakeDevice=false still BLOCKED.
-- Explicit manual-power-on mode: dryRun is a truly side-effect-free plan; shows loss of remote access, no autopower, and exact safeguards.
-- Without current owner one-shot approval => BLOCKED. With approval, no unsaved docs, no active work and safe state => may schedule orderly /s /t 60; no /f.
-- Presence of unsaved docs/active critical work, stale approval, false owner intent, or an interrupted execution => fail closed.
-- After request: record exact Windows acceptance; independent Windows EventLog 1074+6006 can confirm clean shutdown only after reconnection. No false "turned off" claim from mere command acceptance.
-- cancel_shutdown before timeout works. User returning and powering on locally restores NEXUS only after normal Windows sign-in / Host startup.
-- Unit and real staging acceptance tests; production/main and installed Host untouched until reviewed and explicitly authorized.
-- Also regression-test lock dryRun behavior separately.
+### Correct required behaviour (future staging implementation)
+1. A direct authenticated user instruction such as "выключи компьютер" **IS the owner authorization** to perform ordinary Windows shutdown. No extra owner-phone approval, special shutdown mode, remote-wake requirement or pre-logon verification is required unless the owner explicitly configures such a restriction later. The assistant should not force the owner to supply repetitive confirmations for the same action.
+2. NEXUS power_action({action:"shutdown",dryRun:false}) should perform ordinary, NON-FORCED Windows shutdown when the owner explicitly requested it, even when logonChannelVerified=false and independentWakeDevice=false. These flags must remain truthful and are NOT set or overridden.
+3. Default dryRun:true remains strictly non-mutating and explains the loss of remote connectivity; if the owner already requested shutdown, a direct dryRun:false may follow preflight without another confirmation. Preserve a reasonable cancellable 60-second standard shutdown timer, with no /f; Windows itself may surface save-work prompts.
+4. Check for unsaved user work and active critical processes; do not silently discard files, force terminate apps, reboot, wipe, or mutate security configuration. If there is a real evidence-based risk of data loss, stop or ask about that specific risk — not a hypothetical inability to reconnect.
+5. State once that remote control will be unavailable until the owner physically turns the PC on and signs in. This is an informative consequence, **not a blocker**. The owner controls when to power on. No promise of unattended remote reconnect before login.
+6. Do not bypass a currently deployed gate by sneaking shutdown.exe through run_command, a GUI, encoded PowerShell, task scheduler or other route. Correct the gate in staging and test it first; deploy only in the owner's separately authorized release.
+7. Do not extend this shutdown exception to unattended autonomous restart, sleep/hibernate or physical PWR_SW without their own validated design. Shelly remains unrelated and disabled.
+
+### Tests and acceptance
+- With owner-requested ordinary shutdown, no unsaved work, and logonChannelVerified=false, independentWakeDevice=false => GO for Windows standard shutdown.
+- A second "manual return" mode or additional phone consent is NOT necessary; reusing an old instruction for a different future shutdown is forbidden.
+- No owner shutdown request => BLOCKED. Unsaved work or other specific high-risk active task => defer/ask, not force.
+- dryRun:true sends no shutdown request, dryRun:false after valid user intent sends exactly one; no /f; 60 seconds to cancel with shutdown /a.
+- Report Windows API acceptance separately from OS's completed power transition. Verify with EventLog 1074/6006 when online again; owner-reported off state must be labeled as such.
+- No change to logonChannelVerified=false or the separate remote-login recovery requirement for unattended restart.
+- Unit tests in experiment and real staging acceptance before changing installed Host. Production and main remain untouched.
 
 ## Current state/checkpoint
 Only specification and evidence saved; NO shutdown requested/executed in this checkpoint, and no permission boundaries changed.
-Owner's PC remains on after 2026-11-17 blocked shutdown. Last project recovery checkpoint for Shelly remains in separate staging repository (5ff408f).
+Owner subsequently reported shutting Windows down successfully through another remote access method. This specification records that statement; the agent did not perform or independently verify that shutdown. Last Shelly staging checkpoint remains 5ff408f.
