@@ -140,6 +140,12 @@ function viewerPage() {
       if (r.status === 401) { location.href = '/live'; return; }
       const j = r.ok ? await r.json() : {pending: []};
       const box = $('cq'); box.textContent = '';
+      const chatOnly = Number.isSafeInteger(j.pendingChatConsents) && j.pendingChatConsents > 0 ? j.pendingChatConsents : 0;
+      if (chatOnly) {
+        const note = document.createElement('p'); note.className = 'w';
+        note.textContent = 'Запросов для согласования в чате ChatGPT: ' + chatOnly + '. Эта страница не может их подтвердить.';
+        box.appendChild(note);
+      }
       for (const c of (j.pending || [])) {
         const d = document.createElement('div'); d.className = 'ci';
         const t = document.createElement('p'); t.textContent = c.decided
@@ -192,8 +198,13 @@ function approvalsPage() {
         const list=Array.isArray(data.pending)?data.pending:[];
         const waiting=list.filter(x=>!x.decided), decided=list.filter(x=>!!x.decided);
         items.replaceChildren();
+        const chatOnly=Number.isSafeInteger(data.pendingChatConsents)&&data.pendingChatConsents>=0?data.pendingChatConsents:null;
         if(!list.length){
-          status.textContent=completed?'Решение обработано. Активных запросов больше нет.':'Нет активных запросов.';
+          status.textContent=chatOnly===null
+            ? 'Нет заявок для подтверждения здесь. Состояние запросов в чате недоступно.'
+            : chatOnly>0
+              ? 'Нет заявок для подтверждения здесь. Запросов для согласования в чате ChatGPT: '+chatOnly+'. Эта страница не может их подтвердить.'
+              : (completed?'Решение обработано. Активных запросов больше нет.':'Нет ожидающих запросов на этой странице.');
           return;
         }
         status.textContent=waiting.length
@@ -287,7 +298,15 @@ export async function handleLive(request, env, {callHost, sha256hex}) {
   if (p === '/live/consents' && request.method === 'GET') {
     const r = await callHost('owner_consents', {});
     if (!r.ok) return jsonR(503, {error: r.reason});
-    return jsonR(200, {pending: Array.isArray(r.result?.structuredContent?.pending) ? r.result.structuredContent.pending : []});
+    const pending = Array.isArray(r.result?.structuredContent?.pending) ? r.result.structuredContent.pending : [];
+    // Optional read-only diagnostics: chat-tier requests are not owner approvals.
+    // Never expose a chat-tier action through /live/decide.
+    const info = await callHost('host_diagnostics', {}).catch(() => null);
+    const d = info?.ok && !info?.result?.isError ? info.result?.structuredContent : null;
+    const count = Number.isSafeInteger(d?.pendingChatConsents) ? d.pendingChatConsents
+      : (Number.isSafeInteger(d?.pendingConsents) ? d.pendingConsents - pending.length : null);
+    const pendingChatConsents = count !== null && count >= 0 ? count : null;
+    return jsonR(200, {pending, pendingChatConsents});
   }
   if (p === '/live/decide' && request.method === 'POST') {
     if (request.headers.get('x-nexus-live') !== '1') return jsonR(403, {error: 'csrf'});
