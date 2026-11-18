@@ -12,7 +12,7 @@ import {validateCapabilities} from './capabilities.mjs';
 
 test('owner list is exactly: money, sending/deleting on his behalf, secrets, irreversible deletion, Windows security, lifting his ban', () => {
   assert.deepEqual([...OWNER_WHATS].sort(), ['browser_financial', 'browser_irreversible', 'destructive_action', 'destructive_command', 'owner_unban',
-    'protected_app', 'protected_file', 'secret_access', 'security_command', 'security_page']);
+    'logon_channel_attestation', 'protected_app', 'protected_file', 'secret_access', 'security_command', 'security_page', 'system_power']);
 });
 
 test('autonomy: an ordinary grant runs at once (no consentId), audited auto_approved, journaled', async () => {
