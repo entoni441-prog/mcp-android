@@ -21,3 +21,17 @@
 - ONLY corrected `power.mjs` is intended for actual live Host. Keep live `consent.mjs`, `server.mjs`, capabilities, supervisor and Gateway untouched.
 - Deploy only if live pre-image SHA still equals baseline; use atomic backup and require platform's approval if it asks.
 - After deployment the running Node Host still requires a controlled reload before the changed module is live. Verify new dryRun, verify tunnel and normal read-only tools. Do not put PC to sleep or shutdown just to test the fix.
+
+## LIVE rollout verified 2026-11-18
+- Selected exactly the active runtime `C:\Users\krado\Documents\NEXUS\nexus-host\power.mjs`; pre-image SHA matched `e8b0577f855a689f38d1f47891bfe1dc33c9601ebcf42e89e340ac52cd851b5c`.
+- Atomic write to active power.mjs only; deployed SHA `20654febd0b92434cef2431ff2374a8f95fde8008874cf905d75bc13ba87cc5a`.
+- Rollback backup: `C:\Users\krado\.nexus-host\backups\2026-11-18T12-03-34-166Z\power.mjs`.
+- Controlled Host PID 11448 stop (PID only, NOT process tree); separate NEXUS supervisor restored independent Host PID 9852. Connection_status: tunnel 200, online; Host 0.6.1-next.
+- Live power_action dryRun PASS:
+  - sleep → no blockers, recovery.mode=manual_owner_approval, signed approval required;
+  - hibernate → hibernateSupported=true from RU Windows, no blockers, signed approval required;
+  - shutdown → no blockers, signed approval required.
+- Live owner capabilities power=true, ownerBans empty; Windows no unsaved documents.
+- No actual sleep, hibernation, shutdown, restart, power relay, or PC wake command executed; all new results are read-only plans.
+- No live changes to consent.mjs, server.mjs, catalog.mjs, Cloudflare Gateway, capabilities or PC firmware. The NEXUS catalog description may still describe the old strict gate until a later metadata release; execution now follows deployed power.mjs.
+- IMPORTANT: A real request with dryRun:false triggers owner signed approval on Live View. Do not treat a dry run as power transition confirmation.
