@@ -1,3 +1,4 @@
+import {EventEmitter} from 'node:events';
 // NEXUS 0.4.2 — owner consent for closing, NEXUS-created ownership, focus fallback (fake UIA + fake Robot).
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -164,14 +165,14 @@ test('process_action close: allowlisted app NEXUS did not start → consent; kil
   const consent = createConsent();
   const calls = [];
   const exec = async (exe, args) => { calls.push(args); return {code: 0, out: '"Notepad.exe","50","Console","1","10 K"\r\n"Notepad.exe","51","Console","1","10 K"'}; };
-  const p = createProcs({caps: validateCapabilities({process_control: true}), cfg: {workspace: tmp, auditFile: path.join(tmp, 'a.log')}, platform: 'win32', systemRoot: 'C:\\Windows', exec, consent});
+  const p = createProcs({caps: validateCapabilities({process_control: true}), cfg: {workspace: tmp, auditFile: path.join(tmp, 'a.log')}, platform: 'win32', systemRoot: 'C:\\Windows', exec, consent, readIdentity: async pid=>({pid,startTime:'638000000000000000',process:'Notepad'}),actIdentity:async()=>({status:'requested',requested:true})});
   const r = await p.process_action({pid: 50, action: 'close'});
   assert.equal(r.status, 'consent_required'); assert.equal(r.target, 'Notepad (pid 50)');
   assert.equal(calls.filter(a => a[0] === '/pid').length, 0);
   const t = consent.take(r.consentId, 'close_discard', r.target);
   assert.equal((await p.process_action(t.replay.args, {consented: t})).requested, true);
   assert.equal((await p.process_action({pid: 51, action: 'close'})).status, 'consent_required'); // window PID alone no longer confers process ownership
-  p.registerOwned(51,'test-child');
+  await p.registerOwned(Object.assign(new EventEmitter(),{pid:51,exitCode:null,signalCode:null,killed:false,kill(){return true;}}),'test-child');
   assert.equal((await p.process_action({pid: 51, action: 'close'})).requested, true);
   await assert.rejects(p.process_action({pid: 50, action: 'kill'}), /process_not_allowed/);
 });
