@@ -57,12 +57,6 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
       }
     }
     const created = consent.recordCreated(before, after, source, opts);
-    // NX-052-21: register the exact launcher only after a verified owned descendant window.
-    // No process-name inference; failed snapshots / restored tabs keep 0.4.3 fail-closed ownership.
-    if (proc.toLowerCase() === 'steam' && Array.isArray(before) && before.length === 0 && Number.isInteger(opts.launchPid) &&
-        Array.isArray(after) && after.some(w => w.launchRootPid === opts.launchPid && consent.owned.windows.has(String(w.hwnd)))) {
-      consent.ownPid(opts.launchPid);
-    }
     return created;
   }
 
@@ -127,28 +121,13 @@ export function createApps({caps, store, consent, gui, handoff = null, workspace
           note: 'NEXUS opened its own scratch document. Only windows/tabs listed in createdByNexus may be closed without asking the owner.'};
       }
       if (args.app === 'calculator') {
-        // 0.5.1: Calculator is a UWP app — its visible window is an ApplicationFrameHost frame (the 'apps' snapshot now
-        // reports such frames under CalculatorApp). It also appears asynchronously: wait up to ~6 s, then keep
-        // watching in the background for up to ~10 s more and record the window when exactly one new one appears.
+        // Calculator can be hosted by ApplicationFrameHost and share an existing process.
+        // A generic unmarked window is NOT proof of exclusive ownership.
         const before = await gui.snapshotApp('CalculatorApp');
         const out = await executeJob('open_app', {app: 'calculator'}, {workspace, ...execDeps});
         const created = await settle('CalculatorApp', before, {}, 'open_app:calculator', 15);
-        if (!created.windows.length && Array.isArray(before)) {
-          created.pending = 'watching_async';
-          (async () => {
-            for (let i = 0; i < 10; i++) {
-              await wait(1000);
-              const now = await gui.snapshotApp('CalculatorApp');
-              if (!Array.isArray(now)) return;
-              const prev = new Set(before.map(w => String(w.hwnd)));
-              const fresh = now.filter(w => !prev.has(String(w.hwnd)));
-              if (fresh.length === 1) { consent.recordCreated(before, now, 'open_app:calculator:async'); return; }
-              if (fresh.length > 1) return; // ambiguous (owner opened another one too) → not owned
-            }
-          })().catch(() => {});
-        }
         return {...out, createdByNexus: created,
-          note: 'Only windows/tabs listed in createdByNexus may be closed without asking the owner.' + (created.pending ? ' The window was still opening; NEXUS keeps watching for ~10 s and will own it when it appears.' : '')};
+          note: 'Calculator may open asynchronously. Unmarked windows are not auto-owned; closing requires verified identity and applicable owner approval.'};
       }
       if (args.app === 'explorer' || args.app === 'file-explorer') {
         // 0.5.2 acceptance 02.11: Win11 «File Explorer» Start entry is a shell item (no .exe target) → discovery missed it.
