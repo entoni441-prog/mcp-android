@@ -1,47 +1,52 @@
-// Explicitly read-only acceptance probe. No app launch, focus, input, capture, close or dialog.
-// Only aggregate counts, timings and fixed status codes leave the test process.
+// Read-only acceptance probe using the exact guard shared by UIA close/dialog.
+// No launch, focus, capture, input or mutation. Output is aggregate metadata only.
 import {runUiaReal} from './gui.mjs';
 import {windowIdentity} from './window-identity.mjs';
-import {UIA_SCRIPT} from './uia-script.mjs';
-import {spawnSync} from 'node:child_process';
 import {performance} from 'node:perf_hooks';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-if(process.platform!=='win32') throw Error('windows_only');
-const tmpDir=fs.mkdtempSync(path.join(os.tmpdir(),'nexus-id-probe-'));
-const start=UIA_SCRIPT.indexOf('function NxNativeIdentity(');
-const end=UIA_SCRIPT.indexOf('function NxStart(',start);
-if(start<0||end<0)throw Error('native_function_missing');
-const nativeFn=UIA_SCRIPT.slice(start,end);
-const verify = nativeFn + String.raw`
-$ErrorActionPreference='Stop'
-$rows=@($env:NEXUS_PROBE_METADATA | ConvertFrom-Json)
-$matched=0
-$unavailable=0
-foreach($row in $rows){
-  $id=NxNativeIdentity ([int64]$row.hwnd)
-  if($null -eq $id){$unavailable++;continue}
-  if([int]$id.nativePid -eq [int]$row.nativePid -and [string]$id.nativeStart -ceq [string]$row.nativeStart){$matched++}
-}
-@{checked=$rows.Count;matched=$matched;unavailable=$unavailable}|ConvertTo-Json -Compress
-`;
-try {
-  for(const name of ['notepad','CalculatorApp','msedge','explorer']){
-    const t=performance.now();
-    try {
-      const r=await runUiaReal({mode:'apps',name},{tmpDir});
-      if(!Array.isArray(r.apps)) throw Error('snapshot_missing');
-      const wins=r.apps,valid=wins.map(windowIdentity).filter(Boolean);
-      const result={name,elapsedMs:Math.round(performance.now()-t),count:wins.length,completeIdentity:valid.length,hostedFrames:wins.filter(w=>w.frameHost===true).length,
-        hostedFramesValid:wins.filter(w=>w.frameHost===true&&windowIdentity(w)&&w.nativePid!==w.pid).length};
-      if(!wins.length){console.log(JSON.stringify({...result,status:'not_open'}));continue}
-      if(valid.length!==wins.length){console.log(JSON.stringify({...result,status:'identity_incomplete'}));continue}
-      const code=Buffer.from(verify,'utf16le').toString('base64');
-      const native=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',code],{env:{...process.env,NEXUS_PROBE_METADATA:JSON.stringify(valid.map(({hwnd,nativePid,nativeStart})=>({hwnd,nativePid,nativeStart})))},encoding:'utf8',windowsHide:true,timeout:15000});
-      if(native.status!==0||native.error){console.log(JSON.stringify({...result,status:'native_probe_failed'}));continue}
-      const n=JSON.parse(native.stdout.replace(/^\uFEFF/,''));
-      console.log(JSON.stringify({...result,native:n,status:n.checked===valid.length&&n.matched===valid.length&&n.unavailable===0?'pass':'native_mismatch'}));
-    }catch(e){console.log(JSON.stringify({name,status:'failed',reason:String(e.message).slice(0,120)}));}
+import {pathToFileURL} from 'node:url';
+
+export async function checkWindows(name, uia) {
+  const started=performance.now();
+  const r=await uia({mode:'apps',name});
+  if(!Array.isArray(r.apps)) throw Error('snapshot_missing');
+  const wins=r.apps, ids=wins.map(windowIdentity);
+  const result={name,snapshotMs:Math.round(performance.now()-started),count:wins.length,
+    completeIdentity:ids.filter(Boolean).length,hostedFrames:wins.filter(w=>w.frameHost===true).length};
+  if(!wins.length) return {...result,status:'not_open'};
+  if(ids.some(id=>!id)) return {...result,status:'identity_incomplete'};
+  let checked=0, matched=0, hostedFramesValid=0;
+  for(const [i,id] of ids.entries()){
+    const reply=await uia({mode:'identity_check',hwnd:Number(id.hwnd),identity:id});
+    checked++;
+    const c=reply?.identityCheck;
+    if(c?.available!==true||c?.same!==true) {
+      const reasons=['window_or_identity_unavailable','hwnd_mismatch','native_identity_unavailable','logical_identity_unavailable','identity_mismatch','identity_check_failed'];
+      return {...result,checked,matched,hostedFramesValid,status:c?.available===true?'native_mismatch':'native_unavailable',reason:reasons.includes(c?.reason)?c.reason:'invalid_check_reply'};
+    }
+    matched++;
+    if(wins[i].frameHost===true&&id.nativePid!==id.pid) hostedFramesValid++;
   }
-} finally {fs.rmSync(tmpDir,{recursive:true,force:true});}
+  return {...result,checked,matched,hostedFramesValid,elapsedMs:Math.round(performance.now()-started),status:'pass'};
+}
+async function main(){
+  if(process.platform!=='win32')throw Error('windows_only');
+  const tmpDir=fs.mkdtempSync(path.join(os.tmpdir(),'nexus-id-probe-'));
+  try{
+    let checked=0;
+    for(const name of ['msedge','explorer','CalculatorApp','notepad']){
+      try{
+        const result=await checkWindows(name,args=>runUiaReal(args,{tmpDir}));
+        console.log(JSON.stringify(result));
+        checked+=result.matched||0;
+        if(!['pass','not_open'].includes(result.status)){process.exitCode=1;break;}
+      }catch(e){
+        console.log(JSON.stringify({name,status:'failed',reason:String(e.message).slice(0,100)}));process.exitCode=1;break;
+      }
+    }
+    if(checked===0)process.exitCode=1;
+  }finally{fs.rmSync(tmpDir,{recursive:true,force:true});}
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await main();
