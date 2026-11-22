@@ -7,6 +7,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import {createGui, mapping, testPng, windowGeometry} from './gui.mjs';
 import {validateCapabilities} from './capabilities.mjs';
+import {fixtureIdentity} from './window-identity-fixture.mjs';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-gui-'));
 const ROOT = {x: 0, y: 0, w: 1920, h: 1080};            // UIA space (physical, 150 %)
@@ -21,9 +22,9 @@ function fakes({at = {pid: 50, process: 'Notepad'}, focused = {ok: true, pid: 50
     if (a.mode === 'context') return {...base, focused, elem: {controlType: 'Document', name: '', id: ''}, window: {hwnd: 500, pid: focused.pid, process: focused.process, name: 'Untitled - Notepad', tabs: []}};
     if (a.mode === 'apps') return {...base, apps: []};
     if (a.mode === 'at') return {...base, at: {...at, controlType: 'ControlType.Document'}, focused};
-    if (a.mode === 'windows') return {...base, target: {pid: a.pid, process: a.pid === 50 ? 'Notepad' : a.pid === 66 ? 'powershell' : a.pid === 99 ? 'WindowsTerminal' : 'Other'}, windows: [{name: a.pid === 99 ? 'C:\\Program Files\\nodejs\\node.exe' : 'Untitled - Notepad', className: 'Notepad', pid: a.pid, hwnd: 500, rect: {x: 300, y: 150, w: 900, h: 600}}], focused};
+    if (a.mode === 'windows') return {...base, target: {pid: a.pid, process: a.pid === 50 ? 'Notepad' : a.pid === 66 ? 'powershell' : a.pid === 99 ? 'WindowsTerminal' : 'Other'}, windows: [fixtureIdentity({process:a.pid===99?'WindowsTerminal':'Notepad',name: a.pid === 99 ? 'C:\\Program Files\\nodejs\\node.exe' : 'Untitled - Notepad', className: 'Notepad', pid: a.pid, hwnd: 500, rect: {x: 300, y: 150, w: 900, h: 600}})], focused};
     if (a.mode === 'minimize') return {...base, verified: true, pid: a.pid, process: 'WindowsTerminal', hwnd: a.hwnd, wasMinimized: false, isMinimizedAfter: true};
-    if (a.mode === 'activate') return {...base, target: {pid: a.pid, process: 'Notepad'}, appActivateByPid: true, windowFound: true, setFocus: true, focused: activateFocus ?? {ok: true, pid: a.pid, process: 'Notepad'}};
+    if (a.mode === 'activate') return {...base, target: {pid: a.pid, process: 'Notepad'}, appActivateByPid: false, windowFound: true, setFocus: true, focused: activateFocus ?? {ok: true, pid: a.pid, process: 'Notepad',topHwnd:a.hwnd}};
     if (a.mode === 'tree') return {...base, target: {pid: a.pid, process: a.pid === 50 ? 'Notepad' : 'cmd'}, nodes: 2, tree: [{type: 'Window', name: 'N', rect: {x: 300, y: 150, w: 900, h: 600}, children: [{type: 'Document', name: '', rect: {x: 330, y: 240, w: 840, h: 480}}]}]};
     throw Error('bad mode');
   };
@@ -243,7 +244,7 @@ test('focus_window: only allowlisted apps; success is confirmed by UIA, not by t
   const g2 = gui(fakes({focused: {ok: true, pid: 1, process: 'explorer'}, activateFocus: {ok: true, pid: 1, process: 'explorer'}}));
   const r = await g2.focus_window({pid: 50});
   assert.equal(r.focused, false);
-  assert.equal(r.attempts[0].method, 'UIA.SetFocus+AppActivate'); assert.equal(r.attempts[0].byPid, true);
+  assert.equal(r.attempts[0].method, 'UIA.SetFocus'); assert.equal(r.attempts[0].byPid, false);
   assert.equal(r.cause, 'titlebar_not_reachable');
 });
 
@@ -256,7 +257,7 @@ test('NX-26: occluded real-style charmap title bar is reported from matching UIA
   f.uia = async a => {
     if (a.mode === 'at') hitRequests.push(a);
     if (a.mode === 'windows') return {root: ROOT, target: {pid: a.pid, process: 'charmap'},
-      windows: [{name: 'Таблица символов', hwnd: 591374, rect: {x: 15, y: 63, w: 490, h: 425}}], focused: {pid: 9964, process: 'msinfo32'}};
+      windows: [fixtureIdentity({pid:a.pid,process:'charmap',name: 'Таблица символов', hwnd: 591374, rect: {x: 15, y: 63, w: 490, h: 425}})], focused: {pid: 9964, process: 'msinfo32'}};
     if (a.mode === 'at') return {root: ROOT, at: {pid: 9964, process: 'msinfo32',
       elem: {controlType: 'Window'}, window: {hwnd: 853450, pid: 9964},
       nativeHit: {ok: true, hwnd: 853450, pid: 9964}}};
@@ -294,7 +295,7 @@ test('NX-26: safe target titlebar click still works and only an actual failed cl
     activateFocus:{ok:true,pid:9964,process:'msinfo32'}});
   const old=f.uia;
   f.uia = async a => a.mode === 'at' ? {root:ROOT,at:{pid:50,process:'Notepad',
-    elem:{controlType:'Window'},window:{hwnd:500,pid:50},nativeHit:{ok:true,hwnd:500,pid:50}}}
+    elem:{controlType:'Window'},window:fixtureIdentity({hwnd:500,pid:50,process:'Notepad'}),nativeHit:{ok:true,hwnd:500,pid:50}}}
     : old(a);
   const out=await gui(f).focus_window({pid:50});
   assert.equal(out.focused,false);
@@ -378,7 +379,7 @@ test('off-screen window or ambiguous PID never activates or sends fallback input
  for(const ambiguous of [false,true]){
   const f=fakes({focused:{ok:true,pid:1,process:'explorer'}}),old=f.uia;
   const rc={x:2200,y:0,w:400,h:300};
-  f.uia=async a=>a.mode==='windows'?{root:ROOT,target:{pid:50,process:'Notepad'},windows:ambiguous?[{hwnd:11,rect:rc},{hwnd:12,rect:rc}]:[{hwnd:11,rect:rc}],focused:{ok:true,pid:1}}:old(a);
+  f.uia=async a=>a.mode==='windows'?{root:ROOT,target:{pid:50,process:'Notepad'},windows:(ambiguous?[11,12]:[11]).map(hwnd=>fixtureIdentity({hwnd,pid:50,process:'Notepad',rect:rc})),focused:{ok:true,pid:1}}:old(a);
   const g=gui(f);
   const out=await g.focus_window({pid:50});
   assert.equal(out.cause,ambiguous?'target_unknown':'out_of_screen');
@@ -392,5 +393,32 @@ test('mouse outside primary or drag ending outside never reaches UIA hit-test or
   await assert.rejects(gui(f).mouse_action(args),/out_of_screen/);
   assert.equal(f.uiaCalls.some(a=>a.mode==='at'),false);
   assert.equal(f.robotCmds.some(c=>/^(click|drag|move|key|paste) /.test(c)),false);
+ }
+});
+
+
+test('multi-window focus requires exact member HWND and verifies exact foreground',async()=>{
+ const f=fakes({focused:{ok:true,pid:50,process:'Notepad',topHwnd:500}}),old=f.uia;
+ f.uia=async a=>{
+  const r=await old(a);
+  if(a.mode==='windows') return {...r,windows:[r.windows[0],fixtureIdentity({...r.windows[0],hwnd:501,windowRid:'42.501'})]};
+  if(a.mode==='activate') {assert.equal(a.hwnd,501);assert.equal(a.identity.hwnd,'501');return {...r,focused:{ok:true,pid:50,topHwnd:501}};}
+  return r;
+ };
+ const g=gui(f);
+ assert.deepEqual((await g.window_info({pid:50})).windows.map(w=>w.hwnd),[500,501]);
+ assert.equal((await g.focus_window({pid:50})).cause,'target_unknown');
+ assert.equal((await g.focus_window({pid:50,hwnd:999})).cause,'target_unknown');
+ assert.equal(f.uiaCalls.filter(a=>a.mode==='activate').length,0);
+ assert.equal((await g.focus_window({pid:50,hwnd:501})).hwnd,501);
+ assert.equal(f.uiaCalls.filter(a=>a.mode==='activate').length,1);
+});
+test('same PID but wrong foreground HWND is not success; native refusal never falls back',async()=>{
+ for(const refused of [false,true]){
+  const f=fakes({focused:{ok:true,pid:50,topHwnd:777},activateFocus:{ok:true,pid:50,topHwnd:777}}),old=f.uia;
+  f.uia=async a=>{const r=await old(a);return a.mode==='activate'&&refused?{...r,error:'target_identity_changed'}:r;};
+  const r=await gui(f).focus_window({pid:50,hwnd:500});assert.equal(r.focused,false);
+  if(refused){assert.equal(r.cause,'target_identity_changed');assert.equal(f.uiaCalls.some(a=>a.mode==='at'),false);}
+  assert.equal(f.robotCmds.some(c=>c.startsWith('click')),false);
  }
 });
