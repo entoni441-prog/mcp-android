@@ -203,7 +203,7 @@ export function mapping(info, root) {
  *  wins  = apps('notepad') snapshot (null = snapshot failed → caller must refuse the capture: fail-closed);
  *  owned = consent.owned; toScreen = rect mapper (UIA → screen points) or null.
  *  mode 'capture' (one-shot, fresh snapshot): a window is shown only if its SELECTED tab (or, without tabs, the window
- *    itself) was created by NEXUS. mode 'live' (cached up to LIVE_MASK_TTL_MS): shown only if it holds NO foreign tab —
+ *    itself) was created by NEXUS. mode 'live' (fresh snapshot): shown only if it holds NO foreign tab —
  *    a tab switch between two cached snapshots can therefore never reveal an owner's document.
  * Returns {masks:[{x,y,w,h}], hidden:n} or null (cannot redact reliably → no image).
  */
@@ -223,7 +223,6 @@ export function notepadMasks(wins, consent, toScreen, mode = 'capture') {
   }
   return {masks, hidden: masks.length};
 }
-export const LIVE_MASK_TTL_MS = 1000;
 const maskArg = m => (m.length ? m.slice(0, 32).map(r => [r.x, r.y, r.w, r.h].join(',')).join(';') : '-');
 
 // ───────────── tiny PNG (image_selftest) ─────────────
@@ -324,22 +323,6 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     return !!res && res.hidden === 0;
   }
 
-  /** Press a prompt button that UIA could not Invoke: click its centre, only if UIA confirms the point is that button. */
-  async function clickPromptButton(rect, hwnd, pid, role) {
-    if (caps.gui_input !== true || !rect) return false;
-    const inf = await info(), root = (await uia({mode: 'focused'})).root, m = mapping(inf, root);
-    if (!m) return false;
-    const ux = Math.round(rect.x + rect.w / 2), uy = Math.round(rect.y + rect.h / 2);
-    const at = (await uia({mode: 'at', x: ux, y: uy})).at;
-    const re = {save: /^(save|сохранить)$/i, discard: /^(don.?t save|do not save|не сохранять)$/i, cancel: /^(cancel|отмена)$/i}[role];
-    if (!re?.test(at?.elem?.name || '')) return false;
-    // in-window prompt (same hwnd) or the app's own dialog window (same process as the target window)
-    if (!(String(at?.window?.hwnd) === String(hwnd) || (Number.isInteger(pid) && at?.pid === pid && at?.window?.pid === pid))) return false;
-    const sp = m.rectToScreen({x: ux, y: uy, w: 0, h: 0});
-    await getRobot().cmd(`click ${sp.x} ${sp.y} left 1`);
-    return true;
-  }
-
   /**
    * 0.5.1: close ONE window or tab by identity (hwnd + UIA runtime id), via UI Automation — no keystrokes, so nothing
    * can be typed into another window. Then handle a save prompt by `onPrompt`: 'save' | 'discard' | 'cancel'.
@@ -348,7 +331,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
   async function closeTarget({process, win, rid = null, onPrompt}) {
     const identity = windowIdentity(win);
     if (!identity) return {closed: false, method: 'identity_unavailable'};
-    const {hwnd, pid} = win;
+    const {hwnd} = win;
     const r = await uia({mode: 'close', hwnd: Number(hwnd), identity, expectedTitle: String(win.name || ''), expectedTabs: tabsOf(win).map(t => t.rid), ...(rid ? {rid} : {})});
     if (!r.found) return {closed: await gone(process, hwnd, rid), method: 'target_unavailable'};
     // A missing UIA close control must not degrade into an unguarded keyboard close.
@@ -371,31 +354,8 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       answered = onPrompt; r.pressed = pressed;
       await sleep(600);
     }
-    return {closed: await gone(process, hwnd, rid), method: r.method, prompt: prompt ? 'shown' : null, answered, ...(r.pressed ? {pressedBy: r.pressed} : {})};
-  }
-  /**
-   * 0.5.1 live fix (Win11 Notepad: tab_close_button_missing). Ctrl+W only after UIA proves, right before the key, that
-   * the target window is in the foreground AND the selected tab in it is exactly our tab (runtime id). Otherwise refuse:
-   * a keystroke must never land in another window or on the owner's tab.
-   */
-  async function closeTabByKey({process, hwnd, pid, rid, identity}) {
-    if (caps.gui_input !== true) return {ok: false, why: 'gui_input_off'};
-    // No synthetic key fallback unless the original identity is still verified.
-    const before = (await apps(process)).find(x => String(x.hwnd) === String(hwnd));
-    if (!sameWindowIdentity(identity, before)) return {ok: false, why: 'ownership_changed'};
-    // No activation of potentially reused HWND; require the intended tab already in front.
-    for (let i = 0; i < 3; i++) {
-      const f = (await uia({mode: 'focused'})).focused;
-      const w = (await apps(process)).find(x => String(x.hwnd) === String(hwnd));
-      if (!sameWindowIdentity(identity, w)) return {ok: false, why: 'ownership_changed'};
-      const sel = tabsOf(w).find(t => t.selected);
-      if (f?.ok && String(f.topHwnd) === String(hwnd) && f.pid === pid && sel?.rid === rid) {
-        await getRobot().cmd('key ctrl+w');
-        return {ok: true};
-      }
-      await sleep(300);
-    }
-    return {ok: false, why: 'focus_or_selection_not_verified'};
+    const closed = await gone(process, hwnd, rid);
+    return {closed, method: r.method, prompt: prompt ? 'shown' : closed ? null : 'unverified_or_separate_window', answered, ...(r.pressed ? {pressedBy: r.pressed} : {})};
   }
   async function gone(process, hwnd, rid) {
     let wins; try { wins = await apps(process); } catch { return false; }
@@ -470,9 +430,13 @@ export function createGui({caps, home, workspace, platform = process.platform, r
               // Re-read immediately before the close; a reused HWND or a changed tab set must not inherit ownership.
               const live = (await apps(proc)).find(x => String(x.hwnd) === String(w.hwnd));
               const tab = it.rid ? tabsOf(live).find(t => t.rid === it.rid) : null;
-              if (!sameWindowIdentity(windowIdentity(w), live) ||
-                  (it.rid ? !tab || !consent.isOwned({kind: 'tab'}, live, tab) : !consent.isOwned({kind: 'window'}, live, null))) {
+              if (!sameWindowIdentity(windowIdentity(w), live)) {
                 consent.forgetStale(w, it.rid); report.left.push({app: proc, why: 'ownership_changed'}); continue;
+              }
+              if (it.rid ? !tab || !consent.isOwned({kind:'tab'}, live, tab) : !consent.isOwned({kind:'window'}, live, null)) {
+                if (it.rid) consent.forgetStale(w, it.rid);
+                // A changed tab-set is not a different window. Keep verified scratch tab identities.
+                report.left.push({app:proc, why:'target_state_changed'}); continue;
               }
               r = await closeTarget({process: proc, win: live, rid: it.rid, onPrompt: it.scratch ? 'save' : 'cancel'});
               if (['native_identity_changed','identity_unavailable'].includes(r.method)) consent.forgetStale(w, it.rid);
@@ -797,7 +761,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
           lastAt.elem?.className === 'ImageButton' && /^(?:Закрыть|Close)$/i.test(lastAt.elem?.name || '')) {
         consent.noteNativeDismiss?.(lastAt.nativeBubble);
       }
-      if (c && consented && decision === 'close_discard') consent.armDiscard(lastAt.window);
+      if (c && c.kind !== 'discard' && consented && decision === 'close_discard') consent.armDiscard(lastAt.window);
       const after = await uia({mode: 'focused'});
       await afterInput(after.focused);
       return {done: true, action: args.action, target, foregroundAfter: after.focused?.process || null, ...(c ? {closeAction: c.kind, consented: !!consented} : {})};
@@ -846,7 +810,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         try { await typer(args.text); r = {clipboardRestored: true, clipboard: 'untouched', method: 'keys'}; }
         catch (e) { r = {...(await R.cmd('paste ' + Buffer.from(args.text, 'utf8').toString('base64'))), method: 'clipboard', keysError: String(e.message).slice(0, 60)}; }
       } else r = hasText ? {...(await R.cmd('paste ' + Buffer.from(args.text, 'utf8').toString('base64'))), method: 'clipboard'} : await R.cmd('key ' + args.keys);
-      if (c && consented && decision === 'close_discard') consent.armDiscard(before.window);
+      if (c && c.kind !== 'discard' && consented && decision === 'close_discard') consent.armDiscard(before.window);
       let created;
       if (creating) { await sleep(700); created = consent.recordCreated(snap, await apps(before.window.process).catch(() => null), 'keys:' + args.keys); }
       const after = await uia({mode: 'focused'});
