@@ -103,7 +103,7 @@ test('PowerShell artefact: tabs [[]] / [{}] for a window without tabs is treated
 
 test('consent expires after 120 s', () => {
   let t = 0; const c = createConsent({now: () => t});
-  const r = c.gate({kind: 'window', via: 'x'}, {hwnd: 1, process: 'Notepad', name: 'w', tabs: []}, null, {tool: 'keyboard_action', args: {keys: 'alt+f4'}});
+  const r = c.gate({kind: 'window', via: 'x'}, fixtureIdentity({hwnd: 1, pid: 50, process: 'Notepad', name: 'w', tabs: []}), null, {tool: 'keyboard_action', args: {keys: 'alt+f4'}});
   t = 121_000;
   assert.throws(() => c.take(r.consentId, 'close_discard', r.target), /consent_expired_or_unknown/);
 });
@@ -170,7 +170,6 @@ test('process_action close: allowlisted app NEXUS did not start → consent; kil
   assert.equal(calls.filter(a => a[0] === '/pid').length, 0);
   const t = consent.take(r.consentId, 'close_discard', r.target);
   assert.equal((await p.process_action(t.replay.args, {consented: t})).requested, true);
-  consent.ownPid(51);
   assert.equal((await p.process_action({pid: 51, action: 'close'})).status, 'consent_required'); // window PID alone no longer confers process ownership
   p.registerOwned(51,'test-child');
   assert.equal((await p.process_action({pid: 51, action: 'close'})).requested, true);
@@ -310,4 +309,20 @@ test('NX-052-13: local dismiss audits popup and owner HWND, never claims main wi
   assert.deepEqual([e.popupHwnd,e.mainHwnd,e.ownerHwnd,e.reason],
     [199162,461222,461222,'edge_translate_win32_owner_verified']);
   assert.equal(c.owned.windows.has('461222'),false);
+});
+
+
+test('explicit approval of discard does not rearm another discard',async()=>{
+  const st=desk({focusEl:{controlType:'Button',name:'Не сохранять'}}); const {g,consent}=mk(st);
+  const a=await g.keyboard_action({keys:'enter'});
+  assert.equal(a.status,'consent_required');
+  const p=consent.take(a.consentId,'close_discard',a.target);
+  assert.equal((await g.keyboard_action(p.replay.args,{consented:p,decision:'close_discard'})).done,true);
+  assert.equal((await g.keyboard_action({keys:'enter'})).status,'consent_required');
+});
+
+test('missing window identity refuses before creating pending consent',()=>{
+  const c=createConsent({autonomy:true});
+  const r=c.gate({kind:'window'}, {hwnd:9,pid:50,process:'Notepad'},null,{});
+  assert.equal(r.status,'identity_unavailable'); assert.equal(c.pendingCount(),0);
 });
