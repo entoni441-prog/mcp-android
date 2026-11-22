@@ -256,7 +256,7 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
     if (headless) args.unshift('--headless=new', '--no-sandbox');
     proc = spawnFn(exe, args, {stdio: 'ignore', windowsHide: false, detached: false});
     proc.once('exit', () => { proc = null; page?.close(); page = null; });
-    if (proc.pid) onOwnedPid(proc.pid);
+    if (proc.pid) await onOwnedPid(proc);
     let lines = null;
     for (let i = 0; i < 100 && !lines; i++) { await sleep(150); try { const t = fs.readFileSync(portFile, 'utf8').trim().split(/\r?\n/); if (t.length >= 2) lines = t; } catch { /* not yet */ } }
     if (!lines) throw Error('browser_start_timeout');
