@@ -8,6 +8,7 @@ import path from 'node:path';
 import {EventEmitter} from 'node:events';
 import {createGui} from './gui.mjs';
 import {createConsent} from './consent.mjs';
+import {fixtureIdentity} from './window-identity-fixture.mjs';
 import {createApps} from './apps.mjs';
 import {createBrowser, profilePids} from './browser.mjs';
 import {createProcs} from './procs.mjs';
@@ -20,7 +21,7 @@ const tab = (rid, name, dirty = false) => ({rid, name, selected: false, dirty});
 function desktop(wins) {
   const calls = [];
   let prompt = null; // {hwnd, rid}
-  const strip = w => ({hwnd: w.hwnd, pid: w.pid, process: w.process, name: w.name, tabs: w.tabs.map(({rid, name, selected}) => ({rid, name, selected}))});
+  const strip = w => fixtureIdentity({...w, tabs: w.tabs.map(({rid, name, selected}) => ({rid, name, selected}))});
   const uia = async a => {
     calls.push(a);
     const base = {mode: a.mode, root: ROOT};
@@ -63,6 +64,7 @@ function desktop(wins) {
 desktop.saved = [];
 
 function mk(wins, capsRaw = {gui_input: true}) {
+  for (const w of wins) Object.assign(w, fixtureIdentity(w));
   desktop.saved = [];
   const d = desktop(wins);
   const consent = createConsent();
@@ -84,7 +86,8 @@ test('cleanup: only NEXUS tabs/windows are closed; scratch prompt answered Save;
   wins[0].tabs.push(tab('nx', 'NEXUS-abc123.txt', true));
   const c1 = consent.recordCreated(before, [{...wins[0]}], 'open_app:notepad', {token: 'NEXUS-abc123'});
   assert.deepEqual(c1.tabs, ['NEXUS-abc123.txt']);
-  assert.equal(consent.recordCreated([], [wins[1]], 'open_app:calculator').windows.length, 1);
+  wins[1].name='NEXUS-calc-test';
+  assert.equal(consent.recordCreated([], [wins[1]], 'open_app:calculator', {token:'NEXUS-calc-test'}).windows.length, 1);
   assert.deepEqual([...consent.owned.apps].sort(), ['CalculatorApp', 'Notepad']);
 
   const r = await gui.cleanupOwned('finish_task');
@@ -100,7 +103,10 @@ test('cleanup: only NEXUS tabs/windows are closed; scratch prompt answered Save;
 test('cleanup: a NEXUS-opened non-scratch window with unsaved changes is left open (Cancel), owner decides', async () => {
   const wins = [{hwnd: 30, pid: 4, process: 'mspaint', name: 'Untitled - Paint', tabs: [], dirty: true}];
   const {consent, gui} = mk(wins, {gui_input: true, inputApps: ['Notepad', 'CalculatorApp', 'mspaint']});
-  consent.recordCreated([], wins, 'open_app:paint');
+  wins[0].name='NEXUS-paint-test';
+  // Own a specific tabbed window, not a generic untitled document.
+  wins[0].tabs=[tab('nx-paint','NEXUS scratch',true)];
+  consent.recordCreated([{...wins[0],hwnd:999,tabs:[]}], wins, 'test');
   const r = await gui.cleanupOwned('lease_expired');
   assert.equal(r.closed.length, 0);
   assert.equal(r.left[0].why, 'unsaved_changes_owner_decides');
@@ -111,11 +117,12 @@ test('cleanup: a NEXUS-opened non-scratch window with unsaved changes is left op
 test('cleanup: a window the owner already closed is pruned; a failed snapshot never drops ownership', async () => {
   const wins = [{hwnd: 40, pid: 9, process: 'CalculatorApp', name: 'Calculator', tabs: []}];
   const {consent, gui} = mk(wins);
-  consent.recordCreated([], wins, 't');
+  wins[0].name='NEXUS-calc-test';
+  consent.recordCreated([], wins, 't',{token:'NEXUS-calc-test'});
   wins.length = 0;
   assert.deepEqual(await gui.cleanupOwned('x'), {closed: [], left: []});
   assert.equal(consent.owned.windows.size, 0);
-  const c2 = createConsent(); c2.recordCreated([], [{hwnd: 41, pid: 9, process: 'CalculatorApp', name: 'C', tabs: []}], 't');
+  const c2 = createConsent(); c2.recordCreated([], [fixtureIdentity({hwnd:41,pid:9,process:'CalculatorApp',name:'NEXUS-calc-test',tabs:[]})], 't',{token:'NEXUS-calc-test'});
   const g2 = createGui({caps: validateCapabilities({gui_input: true}), home: os.tmpdir(), workspace: os.tmpdir(), platform: 'win32', consent: c2, sleep: async () => {},
     runUia: async a => { if (a.mode === 'apps') throw Error('uia_failed'); return {root: ROOT}; }});
   const r = await g2.cleanupOwned('x');
@@ -163,16 +170,16 @@ test('D5 close_window: ambiguous target → ask which one, nothing closed; confi
   assert.deepEqual(w.map(x => x.hwnd), [10]);
 });
 
-test('Calculator: UWP frame reported under CalculatorApp is owned (fix for createdByNexus.windows=[])', async () => {
+test('Calculator: UWP frame without unique title is not falsely marked owned', async () => {
   const wins = [];
   const consent = createConsent();
   let n = 0;
-  const gui = {snapshotApp: async () => { n++; return n > 3 ? [{hwnd: 777, pid: 55, process: 'CalculatorApp', name: 'Calculator', tabs: [], frameHost: true}] : []; }};
+  const gui = {snapshotApp: async () => { n++; return n > 3 ? [fixtureIdentity({hwnd:777,pid:55,process:'CalculatorApp',name:'Calculator',tabs:[],frameHost:true,nativePid:56})] : []; }};
   const apps = createApps({caps: validateCapabilities({}), store: null, consent, gui, workspace: os.tmpdir(), platform: 'win32', wait: async () => {},
     execDeps: {platform: 'win32', systemRoot: 'C:\\Windows', launcher: () => { const e = new EventEmitter(); e.pid = 1; e.unref = () => {}; setImmediate(() => e.emit('spawn')); return e; }}});
   const r = await apps.open_app({app: 'calculator'});
-  assert.deepEqual(r.createdByNexus.windows, ['Calculator']);
-  assert.ok(consent.owned.windows.has('777')); assert.ok(consent.owned.apps.has('CalculatorApp'));
+  assert.deepEqual(r.createdByNexus.windows, []);
+  assert.equal(consent.owned.windows.has('777'),false);
   void wins;
 });
 
@@ -235,6 +242,7 @@ function notepadNoButton({selectWorks = true, foreground = 10} = {}) {
   wins[0].tabs[0].selected = true;
   const keys = [];
   let fg = foreground;
+  for (const w of wins) Object.assign(w,fixtureIdentity(w));
   const d = desktop(wins);
   const uia = async a => {
     if (a.mode === 'close' && a.rid) {
@@ -256,13 +264,13 @@ function notepadNoButton({selectWorks = true, foreground = 10} = {}) {
   return {wins, keys, gui, consent};
 }
 
-test('Win11 Notepad: no close button → Ctrl+W only after foreground+selected tab verified; owner window and tabs stay', async () => {
+test('Win11 Notepad: missing close button → no keyboard fallback; all tabs stay', async () => {
   const {wins, keys, gui, consent} = notepadNoButton();
   const r = await gui.cleanupOwned('finish_task');
-  assert.deepEqual(keys, ['key ctrl+w']);
-  assert.equal(r.closed.length, 1); assert.equal(r.closed[0].method, 'ctrl_w_verified'); assert.equal(r.closed[0].kind, 'tab');
-  assert.deepEqual(wins.map(w => [w.hwnd, w.tabs.map(t => t.rid)]), [[10, ['o1', 'o2']]], 'window kept, only our tab gone');
-  assert.equal(consent.owned.tabs.size, 0);
+  assert.deepEqual(keys, []);
+  assert.equal(r.closed.length,0); assert.equal(r.left[0].method,'tab_close_button_missing');
+  assert.deepEqual(wins.map(w => [w.hwnd,w.tabs.map(t=>t.rid)]),[[10,['o1','o2','nx']]]);
+  assert.equal(consent.owned.tabs.size,1);
 });
 
 test('Win11 Notepad: if our tab is not the selected one, or another window is in front — no keystroke, reported', async () => {
@@ -271,17 +279,17 @@ test('Win11 Notepad: if our tab is not the selected one, or another window is in
     const r = await gui.cleanupOwned('finish_task');
     assert.deepEqual(keys, [], JSON.stringify(o));
     assert.equal(r.closed.length, 0);
-    assert.equal(r.left[0].fallback, 'focus_or_selection_not_verified');
+    assert.equal(r.left[0].method,'tab_close_button_missing');
     assert.equal(wins[0].tabs.length, 3, 'nothing closed');
   }
 });
 
 
 test('cleanup refuses reused HWND before dispatch when PID changes after initial snapshot', async () => {
-  const original = {hwnd: 72, pid: 9, process: 'CalculatorApp', name: 'NEXUS window', tabs: []};
+  const original = fixtureIdentity({hwnd:72,pid:9,process:'CalculatorApp',name:'NEXUS-calc-test',tabs:[]});
   const replacement = {...original, pid: 94, name: 'owner window'};
   const consent = createConsent();
-  consent.recordCreated([], [original], 'test');
+  consent.recordCreated([], [original], 'test',{token:'NEXUS-calc-test'});
   let reads = 0; const calls = [];
   const gui = createGui({caps: validateCapabilities({gui_input: true}),
     home: os.tmpdir(), workspace: os.tmpdir(), platform: 'win32', consent, sleep: async () => {},
@@ -297,10 +305,10 @@ test('cleanup refuses reused HWND before dispatch when PID changes after initial
 });
 
 test('cleanup refuses whole window if an owner tab appears after initial snapshot', async () => {
-  const original = {hwnd: 73, pid: 9, process: 'CalculatorApp', name: 'NEXUS window', tabs: []};
+  const original = fixtureIdentity({hwnd:73,pid:9,process:'CalculatorApp',name:'NEXUS-calc-test',tabs:[]});
   const changed = {...original, tabs: [tab('owner-doc', 'owner document', true)]};
   const consent = createConsent();
-  consent.recordCreated([], [original], 'test');
+  consent.recordCreated([], [original], 'test',{token:'NEXUS-calc-test'});
   let reads = 0; const calls = [];
   const gui = createGui({caps: validateCapabilities({gui_input: true}),
     home: os.tmpdir(), workspace: os.tmpdir(), platform: 'win32', consent, sleep: async () => {},
