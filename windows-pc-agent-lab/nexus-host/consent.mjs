@@ -153,7 +153,6 @@ export function createConsent({audit = () => {}, now = () => Date.now(), journal
   return {
     owned,
     ownsWindow, ownsTab, forgetStale,
-    forgetWhole(w) { forgetWindow(w.hwnd); audit({event:'ownership_changed',kind:'window_state'}); },
     matchesConsent: (record, win) => sameWindowIdentity(record?.identity, win),
     isScratch: (win, tab) => tab ? ownsTab(win, tab) && owned.scratch.has(tab.rid) : ownsWindow(win) && owned.scratch.has(String(win.hwnd)),
     noteNativeDismiss: bubble => {
@@ -218,7 +217,7 @@ export function createConsent({audit = () => {}, now = () => Date.now(), journal
     /** Drop owned windows/tabs that no longer exist (closed by the owner or by the app). `wins` = fresh snapshots. */
     prune(wins) {
       const current = new Map(wins.map(w => [String(w.hwnd), w]));
-      for (const h of [...owned.windows]) if (!ownsWindow(current.get(h))) forgetStale({hwnd: h});
+      for (const h of [...owned.windows]) if (!sameWindowIdentity(windowIdentities.get(h), current.get(h))) forgetStale({hwnd:h});
       for (const r of [...owned.tabs]) { const record = tabIdentities.get(r); const w = current.get(record?.identity.hwnd); if (!w || !tabsOf(w).some(t => t.rid === r && ownsTab(w,t))) { if (record) forgetStale({hwnd: record.identity.hwnd},r); else forgetTab(r); } }
     },
     isOwned,
