@@ -103,3 +103,19 @@ test('job helper C# compiles to a disposable experiment artifact (never executed
   assert.equal(result.error,undefined);assert.equal(result.status,0,String(result.stdout)+' '+String(result.stderr));assert.ok(fs.statSync(target).size>0);
  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
+
+test('job owned process kill stops only its retained verified job, never a looked-up PID',async()=>{
+ const f=fakeJob(),h=f.launch(),log=[];
+ f.start();await h.ready;
+ const p=createProcs({caps:validateCapabilities({process_control:true}),cfg:{workspace:os.tmpdir(),auditFile:'unused'},
+ platform:'win32',systemRoot:'C:\\Windows',audit:e=>log.push(e),
+ readIdentity:async pid=>({pid,process:'whoami',startTime:A}),
+ exec:async(exe,args)=>{assert.match(exe,/tasklist\.exe$/i);return {code:0,out:'"whoami.exe","80","Console","1","10 K"'};}
+ });
+ assert.equal(await p.registerOwned(h.child,'job',h),true);
+ f.child.stdin.once('end',()=>{f.frame('EMPTY 1');f.end();});
+ const result=await p.process_action({pid:80,action:'kill'});
+ assert.equal(result.termination.confirmedEmpty,true);
+ assert.ok(log.some(e=>e.event==='process_job_stop'&&e.confirmedEmpty));
+ await assert.rejects(p.process_action({pid:80,action:'kill'}),/process_not_allowed/);
+});
