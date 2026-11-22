@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
+import {spawnSync} from 'node:child_process';
 import {createProcs,processIdentity,sameProcessIdentity,lifetimeScript} from './procs.mjs';
 import {createConsent} from './consent.mjs';
 import {validateCapabilities} from './capabilities.mjs';
@@ -86,4 +87,27 @@ test('lifetime: native source uses held handle and time check before object acti
  assert.match(kill,/\$p\.Kill\(\)/);assert.match(close,/\$p\.CloseMainWindow\(\)/);
  assert.doesNotMatch(read,/\.Kill\(|CloseMainWindow/);
  assert.throws(()=>lifetimeScript(80,'kill',{...id,startTime:'1; invalid'}),/invalid_args/);
+});
+
+test('lifetime: native PowerShell sources parse without running any action',{skip:process.platform!=='win32'},()=>{
+ const parse="$source=[Console]::In.ReadToEnd(); $tokens=$null; $errors=$null; [void][System.Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors); if($errors.Count -gt 0){ $errors | ForEach-Object { $_.Message }; exit 1 }; Write-Output PARSE_OK";
+ for(const action of ['read','close','kill']){
+  const src=lifetimeScript(80,action,{pid:80,process:'notepad',startTime:A});
+  const r=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',parse],{input:src,encoding:'utf8',windowsHide:true,timeout:15000});
+  assert.equal(r.error,undefined);assert.equal(r.status,0,String(r.stdout)+' '+String(r.stderr));assert.match(r.stdout,/PARSE_OK/);
+ }
+});
+test('lifetime: cancel and STOP use original synthetic child handle, not a new PID or process tree',async()=>{
+ const children=[],calls=[];
+ const spawnFn=()=>{
+  const c=child(80+children.length);c.kill=function(){calls.push(this);this.killed=true;this.exitCode=0;this.emit('exit',0);return true;};
+  children.push(c);setImmediate(()=>c.emit('spawn'));return c;
+ };
+ const p=createProcs({caps:validateCapabilities({run_task:true,tasks:{probe:{exe:process.execPath,args:[],timeoutSec:90}}}),
+  cfg:{workspace:'.',auditFile:'unused'},platform:'win32',systemRoot:'C:\\Windows',spawnFn,
+  readIdentity:async pid=>({pid,process:'node',startTime:A}),exec:async()=>{throw Error('unexpected external process action');}});
+ const a=await p.run_task({task:'probe'});assert.equal((await p.task_cancel({id:a.id})).state,'cancelled');
+ const b=await p.run_task({task:'probe'});const d=await p.cancelSession('synthetic',{startedAt:0});assert.deepEqual(d.cancelled.map(x=>x.id),[b.id]);
+ await p.run_task({task:'probe'});p.stopAll();
+ assert.deepEqual(calls,children);
 });
