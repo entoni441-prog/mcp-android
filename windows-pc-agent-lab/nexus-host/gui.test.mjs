@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import {createGui, mapping, testPng} from './gui.mjs';
+import {createGui, mapping, testPng, windowGeometry} from './gui.mjs';
 import {validateCapabilities} from './capabilities.mjs';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-gui-'));
@@ -359,4 +359,38 @@ test('0.5.2 N-03: input into a shell / credential prompt → Owner Handoff (no k
   // without a handoff dependency → the 0.5.1 refusal is unchanged
   const f2 = fakes({focused: {ok: true, pid: 77, process: 'cmd'}});
   await assert.rejects(gui(f2).keyboard_action({text: 'dir'}), /focus_not_allowed/);
+});
+
+test('geometry distinguishes off-screen, secondary, partial and unknown without inferring occlusion',()=>{
+  const m=mapping(INFO,ROOT);
+  assert.equal(windowGeometry({x:1920,y:0,w:100,h:100},INFO,m).status,'out_of_screen');
+  assert.equal(windowGeometry({x:-80,y:10,w:100,h:50},INFO,m).status,'partly_on_primary');
+  assert.equal(windowGeometry({x:10,y:10,w:100,h:100},INFO,m).status,'on_primary');
+  assert.equal(windowGeometry(null,INFO,m).status,'unknown');
+  assert.equal(windowGeometry({x:0,y:0,w:0,h:100},INFO,m).status,'unknown');
+  const multi={...INFO,screens:2,monitors:[{...INFO,scale:1.5,primary:true},{x:-1280,y:0,w:1280,h:720,scale:1.5,primary:false}]};
+  assert.equal(windowGeometry({x:-1500,y:0,w:500,h:500},multi,mapping(multi,ROOT)).status,'secondary_monitor');
+  assert.equal(windowGeometry({x:-2500,y:0,w:100,h:100},multi,mapping(multi,ROOT)).status,'out_of_screen');
+  const mixed={...multi,monitors:[multi.monitors[0],{...multi.monitors[1],scale:1}]};
+  assert.equal(windowGeometry({x:-1500,y:0,w:500,h:500},mixed,mapping(mixed,ROOT)).status,'unknown');
+});
+test('off-screen window or ambiguous PID never activates or sends fallback input',async()=>{
+ for(const ambiguous of [false,true]){
+  const f=fakes({focused:{ok:true,pid:1,process:'explorer'}}),old=f.uia;
+  const rc={x:2200,y:0,w:400,h:300};
+  f.uia=async a=>a.mode==='windows'?{root:ROOT,target:{pid:50,process:'Notepad'},windows:ambiguous?[{hwnd:11,rect:rc},{hwnd:12,rect:rc}]:[{hwnd:11,rect:rc}],focused:{ok:true,pid:1}}:old(a);
+  const g=gui(f);
+  const out=await g.focus_window({pid:50});
+  assert.equal(out.cause,ambiguous?'target_unknown':'out_of_screen');
+  assert.equal(f.uiaCalls.some(a=>a.mode==='activate'||a.mode==='at'),false);
+  assert.equal(f.robotCmds.some(c=>/^(click|drag|move|key|paste) /.test(c)),false);
+ }
+});
+test('mouse outside primary or drag ending outside never reaches UIA hit-test or Robot',async()=>{
+ for(const args of [{action:'click',x:1280,y:10},{action:'drag',x:10,y:10,x2:10,y2:720}]){
+  const f=fakes();
+  await assert.rejects(gui(f).mouse_action(args),/out_of_screen/);
+  assert.equal(f.uiaCalls.some(a=>a.mode==='at'),false);
+  assert.equal(f.robotCmds.some(c=>/^(click|drag|move|key|paste) /.test(c)),false);
+ }
 });
