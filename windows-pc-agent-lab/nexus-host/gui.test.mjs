@@ -422,3 +422,13 @@ test('same PID but wrong foreground HWND is not success; native refusal never fa
   assert.equal(f.robotCmds.some(c=>c.startsWith('click')),false);
  }
 });
+
+
+test('focus policy owner handoff is returned without activation or fallback',async()=>{
+ const f=fakes();
+ const g=createGui({caps:caps(),home:tmp,workspace:tmp,platform:'win32',runUia:f.uia,robot:f.robot,handoff:spec=>({status:'owner_action_required',reason:spec.reason})});
+ const result=await g.focus_window({pid:66});
+ assert.equal(result.status,'owner_action_required');
+ assert.equal(f.uiaCalls.some(a=>a.mode==='activate'||a.mode==='at'),false);
+ assert.equal(f.robotCmds.some(c=>/^(click|drag|move|key|paste) /.test(c)),false);
+});
