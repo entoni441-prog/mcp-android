@@ -183,16 +183,11 @@ test('Calculator: UWP frame without unique title is not falsely marked owned', a
   void wins;
 });
 
-test('Edge cleanup: CDP close → tree kill if still alive → sweep of OUR profile only', async () => {
-  const killed = [];
-  let listed = 0;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nx051-br-'));
-  const b = createBrowser({caps: validateCapabilities({browser: true}), home, platform: 'win32',
-    listPids: () => (listed++ === 0 ? [901, 902] : []), kill: (pids, o) => { killed.push([pids, !!o?.tree]); return pids.length; }});
-  const r = await b.cleanupSession('finish_task');
-  assert.equal(r.wasOpen, false); assert.deepEqual(killed, [[[901, 902], false]]); assert.equal(r.remaining, 0);
-  const r2 = await b.cleanupSession('again');
-  assert.deepEqual([r2.swept, killed.length], [0, 1], 'nothing to do when our browser never ran again');
+test('Edge cleanup: legacy profile matches are reported only, never killed',async()=>{
+ const home=fs.mkdtempSync(path.join(os.tmpdir(),'nx051-br-'));
+ const b=createBrowser({caps:validateCapabilities({browser:true}),home,platform:'win32',listPids:()=>[901,902]});
+ const r=await b.cleanupSession('finish_task');
+ assert.equal(r.wasOpen,false);assert.equal(r.swept,0);assert.equal(r.remaining,2);assert.equal(r.cleanupUnconfirmed,true);
 });
 
 test('profilePids matches exactly our --user-data-dir (not a sibling dir, not the owner Edge)', () => {
@@ -206,20 +201,13 @@ test('profilePids matches exactly our --user-data-dir (not a sibling dir, not th
   ];
   const run = () => ({status: 0, stdout: JSON.stringify(rows)});
   assert.deepEqual(profilePids(prof, {platform: 'win32', systemRoot: 'C:\\Windows', run}), [1, 2, 5]);
-  assert.deepEqual(profilePids(prof, {platform: 'win32', systemRoot: 'C:\\Windows', run: () => ({status: 1, stdout: ''})}), []);
+  assert.throws(()=>profilePids(prof,{platform:'win32',systemRoot:'C:\\Windows',run:()=>({status:1,stdout:''})}),/profile_query_failed/);
 });
 
-test('Edge cleanup on Linux finds real processes by profile (/proc) and kills them', {skip: process.platform !== 'linux' && 'linux /proc only'}, async () => {
-  const {spawn} = await import('node:child_process');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nx051-proc-'));
-  const prof = path.join(home, 'edge-profile');
-  const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)', '--', '--user-data-dir=' + prof], {stdio: 'ignore'});
-  await new Promise(r => setTimeout(r, 200));
-  assert.deepEqual(profilePids(prof, {platform: 'linux'}), [child.pid]);
-  const b = createBrowser({caps: validateCapabilities({browser: true}), home, platform: 'linux'});
-  const r = await b.cleanupSession('finish_task');
-  assert.equal(r.swept, 1); assert.equal(r.remaining, 0);
-  await new Promise(res => (child.exitCode !== null || child.signalCode ? res() : child.once('exit', res)));
+test('Linux profile leftovers are observational only (synthetic)',async()=>{
+ const home=fs.mkdtempSync(path.join(os.tmpdir(),'nx051-proc-'));
+ const b=createBrowser({caps:validateCapabilities({browser:true}),home,platform:'linux',listPids:()=>[42]});
+ const r=await b.cleanupSession();assert.equal(r.swept,0);assert.equal(r.remaining,1);assert.equal(r.cleanupUnconfirmed,true);
 });
 
 test('procs.cancelSession cancels only tasks started during the session (real child process)', {skip: process.platform === 'win32' && 'uses /bin/sleep'}, async () => {
