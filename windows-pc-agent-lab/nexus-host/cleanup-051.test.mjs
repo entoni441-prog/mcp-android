@@ -322,3 +322,32 @@ test('cleanup refuses whole window if an owner tab appears after initial snapsho
   assert.equal(result.left[0].why, 'ownership_changed');
   assert.equal(calls.some(a => a.mode === 'close'), false);
 });
+
+
+test('cleanup native refusal is not retried and stale ownership is forgotten', async () => {
+  const win=fixtureIdentity({hwnd:74,pid:9,process:'Notepad',name:'NEXUS-native-test',tabs:[]});
+  const events=[], calls=[];
+  const consent=createConsent({audit:e=>events.push(e)});
+  consent.recordCreated([], [win], 'test',{token:'NEXUS-native-test'});
+  const gui=createGui({caps:validateCapabilities({gui_input:true}),home:os.tmpdir(),workspace:os.tmpdir(),platform:'win32',
+    consent,sleep:async()=>{},runUia:async a=>{
+      calls.push(a);
+      if(a.mode==='apps') return {root:ROOT,apps:[win]};
+      if(a.mode==='close') {
+        assert.equal(a.identity.nativePid,9);
+        assert.equal(a.identity.nativeStart,win.nativeStart);
+        assert.equal(a.identity.windowRid,win.windowRid);
+        assert.equal(a.expectedTitle,win.name);
+        assert.deepEqual(a.expectedTabs,[]);
+        return {found:true,invoked:false,method:'native_identity_changed'};
+      }
+      throw Error('unexpected mode');
+    }});
+  const out=await gui.cleanupOwned('finish_task');
+  assert.equal(out.closed.length,0);
+  assert.equal(out.left[0].method,'native_identity_changed');
+  assert.equal(consent.owned.windows.size,0);
+  assert.ok(events.some(e=>e.event==='ownership_changed'));
+  await gui.cleanupOwned('finish_task');
+  assert.equal(calls.filter(a=>a.mode==='close').length,1);
+});
