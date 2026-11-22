@@ -6,6 +6,7 @@
  * and existing native popup/hit-test modes compile fixed P/Invoke types on demand; failure refuses input.
  *
  * Modes:
+ *  identity_check {hwnd,identity} → read-only proof using the same native identity guard as close/dialog
  *  focused                     → foreground info (focused element process) + calibration rect
  *  at        {x,y}             → process under the point (UIA coordinate space) + focused
  *  minimize  {pid,hwnd}        → ONLY validated WindowsTerminal WindowPattern visual state; no mouse/key/commands
@@ -48,7 +49,7 @@ function NxSnapshotIdentity($w) {
     return @{ nativePid = [int]$p.Id; nativeStart = $p.StartTime.ToUniversalTime().Ticks.ToString() }
   } catch { return $null }
 }
-# Actual Win32 ownership proof, used only in guarded close/dialog, never by NxWin.
+# Actual Win32 ownership proof: guarded close/dialog or explicit read-only identity_check, never NxWin.
 function NxNativeIdentity($hwnd) {
   try {
     if (-not ('NxIdentity.Native' -as [type])) {
@@ -80,19 +81,30 @@ function NxSameLogicalApp($w, $expected) {
   } catch { }
   return $false
 }
-function NxSameNative($w, $expected, $hwnd) {
+# Shared read-only validation; result distinguishes inability to verify from mismatch.
+function NxCheckIdentity($w, $expected, $hwnd) {
   try {
-    if ($null -eq $w -or $null -eq $expected -or
-        [int64]$w.Current.NativeWindowHandle -ne [int64]$hwnd) { return $false }
+    if ($null -eq $w -or $null -eq $expected) { return @{ available = $false; same = $false; reason = 'window_or_identity_unavailable' } }
+    if ([int64]$w.Current.NativeWindowHandle -ne [int64]$hwnd) { return @{ available = $true; same = $false; reason = 'hwnd_mismatch' } }
     $id = NxNativeIdentity $hwnd
-    return ($null -ne $id -and [int]$id.nativePid -eq [int]$expected.nativePid -and
+    if ($null -eq $id) { return @{ available = $false; same = $false; reason = 'native_identity_unavailable' } }
+    $logicalStart = NxStart ([int]$expected.pid)
+    $logicalProcess = NxPName ([int]$expected.pid)
+    $rid = NxRid $w
+    if (-not $logicalStart -or -not $logicalProcess -or -not $rid) { return @{ available = $false; same = $false; reason = 'logical_identity_unavailable' } }
+    $same = ([int]$id.nativePid -eq [int]$expected.nativePid -and
       [string]$id.nativeStart -ceq [string]$expected.nativeStart -and
-      (NxStart ([int]$expected.pid)) -ceq [string]$expected.startTime -and
-      (NxPName ([int]$expected.pid)) -ieq [string]$expected.process -and
+      $logicalStart -ceq [string]$expected.startTime -and
+      $logicalProcess -ieq [string]$expected.process -and
       [int]$w.Current.ProcessId -eq [int]$expected.nativePid -and
       (NxSameLogicalApp $w $expected) -and
-      (NxRid $w) -ceq [string]$expected.windowRid)
-  } catch { return $false }
+      $rid -ceq [string]$expected.windowRid)
+    return @{ available = $true; same = [bool]$same; reason = $(if ($same) { 'verified' } else { 'identity_mismatch' }) }
+  } catch { return @{ available = $false; same = $false; reason = 'identity_check_failed' } }
+}
+function NxSameNative($w, $expected, $hwnd) {
+  $check = NxCheckIdentity $w $expected $hwnd
+  return ($check.available -and $check.same)
 }
 function NxSameCloseTabs($w, $expected) {
   try {
@@ -436,6 +448,11 @@ switch ($a.mode) {
       try { $p = $TW.GetParent($f); if ($null -ne $p) { $res.parentType = (NxType $p) } } catch { }
       try { $res.dialog = NxDlg $top } catch { }
     } catch { }
+  }
+  'identity_check' {
+    $w = $null
+    try { $w = $AE::FromHandle([IntPtr]([int64]$a.hwnd)) } catch { $w = $null }
+    $res.identityCheck = NxCheckIdentity $w $a.identity $a.hwnd
   }
   'apps' {
     $want = ([string]$a.name).ToLowerInvariant()
