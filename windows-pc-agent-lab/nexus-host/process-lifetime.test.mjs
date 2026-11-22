@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {spawnSync} from 'node:child_process';
+import path from 'node:path';
 import {createProcs,processIdentity,sameProcessIdentity,lifetimeScript} from './procs.mjs';
 import {createConsent} from './consent.mjs';
 import {validateCapabilities} from './capabilities.mjs';
@@ -103,7 +104,7 @@ test('lifetime: cancel and STOP use original synthetic child handle, not a new P
   const c=child(80+children.length);c.kill=function(){calls.push(this);this.killed=true;this.exitCode=0;this.emit('exit',0);return true;};
   children.push(c);setImmediate(()=>c.emit('spawn'));return c;
  };
- const p=createProcs({caps:validateCapabilities({run_task:true,tasks:{probe:{exe:process.execPath,args:[],timeoutSec:90}}}),
+ const p=createProcs({caps:validateCapabilities({run_task:true,tasks:{probe:{exe:process.platform==='win32'?path.join(process.env.SystemRoot,'System32','whoami.exe'):'/bin/echo',args:[],timeoutSec:90}}}),
   cfg:{workspace:'.',auditFile:'unused'},platform:'win32',systemRoot:'C:\\Windows',spawnFn,
   readIdentity:async pid=>({pid,process:'node',startTime:A}),exec:async()=>{throw Error('unexpected external process action');}});
  const a=await p.run_task({task:'probe'});assert.equal((await p.task_cancel({id:a.id})).state,'cancelled');
