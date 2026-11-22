@@ -63,7 +63,16 @@ function NxSameNative($w, $expected) {
     return ($null -ne $id -and [int]$id.nativePid -eq [int]$expected.nativePid -and
       [string]$id.nativeStart -ceq [string]$expected.nativeStart -and
       (NxStart ([int]$expected.pid)) -ceq [string]$expected.startTime -and
+      (NxPName ([int]$expected.pid)) -ieq [string]$expected.process -and
       (NxRid $w) -ceq [string]$expected.windowRid)
+  } catch { return $false }
+}
+function NxSameCloseTabs($w, $expected) {
+  try {
+    $list = NxTabs $w
+    $actual = @($list | ForEach-Object { [string]$_.rid } | Sort-Object)
+    $wanted = @($expected | ForEach-Object { [string]$_ } | Sort-Object)
+    return (($actual -join '|') -ceq ($wanted -join '|') -and $actual.Count -eq $wanted.Count)
   } catch { return $false }
 }
 function NxFocused() {
@@ -438,7 +447,7 @@ switch ($a.mode) {
     $w = $null
     try { $w = $AE::FromHandle([IntPtr]([int64]$a.hwnd)) } catch { $w = $null }
     $res.found = $false; $res.invoked = $false
-    if ($null -ne $w -and -not (NxSameNative $w $a.identity)) {
+    if ($null -ne $w -and ((-not (NxSameNative $w $a.identity)) -or (NxStr $w.Current.Name 200) -cne [string]$a.expectedTitle -or (-not (NxSameCloseTabs $w $a.expectedTabs)))) {
       $res.found = $true; $res.method = 'native_identity_changed'; break
     }
     if ($null -ne $w -and [int64]$w.Current.NativeWindowHandle -eq [int64]$a.hwnd) {
@@ -475,7 +484,7 @@ switch ($a.mode) {
         }
       } else {
         $res.found = $true
-        if (-not (NxSameNative $w $a.identity)) { $res.method = 'native_identity_changed'; break }
+        if ((-not (NxSameNative $w $a.identity)) -or (NxStr $w.Current.Name 200) -cne [string]$a.expectedTitle -or (-not (NxSameCloseTabs $w $a.expectedTabs))) { $res.method = 'native_identity_changed'; break }
         try { $w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close(); $res.invoked = $true; $res.method = 'WindowPattern.Close' } catch { $res.method = 'window_pattern_failed' }
       }
     }
@@ -483,13 +492,12 @@ switch ($a.mode) {
   'dialog' {
     $w = $null
     try { $w = $AE::FromHandle([IntPtr]([int64]$a.hwnd)) } catch { $w = $null }
-    $roots = New-Object System.Collections.ArrayList
-    if ($null -ne $w) {
-      [void]$roots.Add($w)
-      $wp = $w.Current.ProcessId
-      $c = $TW.GetFirstChild($AE::RootElement); $n = 0
-      while ($null -ne $c -and $n -lt 400) { $n++; if ($c.Current.ProcessId -eq $wp -and [int64]$c.Current.NativeWindowHandle -ne [int64]$a.hwnd) { [void]$roots.Add($c) }; $c = $TW.GetNextSibling($c) }
-    }
+    $res.dialog = $null
+    if ($null -eq $w) { break }
+    if (-not (NxSameNative $w $a.identity)) { $res.method = 'native_identity_changed'; break }
+    # Same-process sibling dialogs are not proof of ownership. Only inspect this window.
+    # Separate modal windows are deliberately left for the owner until their native owner chain is proven.
+    $roots = @($w)
     $found = @{}
     foreach ($r in $roots) {
       $stack = New-Object System.Collections.Stack; $stack.Push(@($r, 0)); $seen = 0
@@ -513,11 +521,12 @@ switch ($a.mode) {
     }
     # A real save prompt always has «Don't save»; Save / Cancel alone can be ordinary toolbar buttons.
     $res.dialog = $null
-    if ($found.ContainsKey('discard')) {
+    if ($found.ContainsKey('discard') -and $found.ContainsKey('save') -and $found.ContainsKey('cancel')) {
       $res.dialog = @{ buttons = @($found.Keys | ForEach-Object { @{ role = $_; name = (NxStr $found[$_].Current.Name 30); rect = (NxRect $found[$_]) } }) }
       if ($a.choice -and $found.ContainsKey([string]$a.choice)) {
         $b = $found[[string]$a.choice]
         $res.choice = [string]$a.choice
+        if (-not (NxSameNative $w $a.identity)) { $res.method = 'native_identity_changed'; break }
         try { $b.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); $res.invoked = $true } catch { $res.invoked = $false; $res.rect = (NxRect $b) }
       }
     }
