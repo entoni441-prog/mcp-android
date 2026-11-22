@@ -27,7 +27,7 @@ function desk({tabs = [TAB('u1', 'Текстовый документ.txt', true
       case 'context': return {...base, focused, elem: st.focusEl, window: win()};
       case 'at': return {...base, at: {pid: 50, process: 'Notepad', controlType: 'ControlType.' + st.el.controlType, elem: st.el, window: win(), ...(st.tabAt ? {tab: st.tabAt} : {})}, focused};
       case 'apps': return {...base, apps: [win()]};
-      case 'windows': return {...base, target: {pid: a.pid, process: 'Notepad'}, windows: [{name: 'Блокнот', hwnd: 900, rect: {x: 100, y: 100, w: 800, h: 600}}], focused};
+      case 'windows': return {...base, target: {pid: a.pid, process: 'Notepad'}, windows: [{...win(), rect: {x: 100, y: 100, w: 800, h: 600}}], focused};
       default: throw Error('mode ' + a.mode);
     }
   };
