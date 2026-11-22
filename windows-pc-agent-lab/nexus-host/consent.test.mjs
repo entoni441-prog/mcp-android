@@ -94,9 +94,9 @@ test('consent target must match exactly; wrong decision rejected; cancel does no
 
 test('PowerShell artefact: tabs [[]] / [{}] for a window without tabs is treated as no tabs', () => {
   const c = createConsent();
-  c.recordCreated([], [{hwnd: 7, pid: 1, name: 'w', tabs: [[]]}], 't');
-  assert.equal(c.gate({kind: 'window', via: 'x'}, {hwnd: 7, process: 'Notepad', name: 'w', tabs: [[]]}, null, {}), null);
-  assert.equal(c.gate({kind: 'window', via: 'x'}, {hwnd: 7, process: 'Notepad', name: 'w', tabs: [{}]}, null, {}), null);
+  c.recordCreated([], [{hwnd: 7, pid: 1, process: 'Notepad', name: 'w', tabs: [[]]}], 't');
+  assert.equal(c.gate({kind: 'window', via: 'x'}, {hwnd: 7, pid: 1, process: 'Notepad', name: 'w', tabs: [[]]}, null, {}), null);
+  assert.equal(c.gate({kind: 'window', via: 'x'}, {hwnd: 7, pid: 1, process: 'Notepad', name: 'w', tabs: [{}]}, null, {}), null);
 });
 
 test('consent expires after 120 s', () => {
