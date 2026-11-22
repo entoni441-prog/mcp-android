@@ -1,7 +1,7 @@
 /**
  * NEXUS Host 0.4.0 — processes, owner-defined tasks, audit log.
  *  list_processes   read-only (tasklist.exe from System32)
- *  process_action   close (WM_CLOSE via taskkill /pid) allowlisted apps or NEXUS-started processes; kill only NEXUS-started
+ *  process_action   close exact process main window; kill only the verified NEXUS-started process (never an unverified tree)
  *  run_task etc.    ONLY tasks the owner wrote into capabilities.json (exe + fixed args); no shell, no args from chat
  *  read_audit_log   tail of .nexus-host/audit.log
  */
@@ -39,12 +39,51 @@ function runCapture(exe, args, timeoutMs = 15_000) {
   });
 }
 
-export function createProcs({caps, cfg, platform = process.platform, systemRoot = process.env.SystemRoot, exec = runCapture, spawnFn = spawn, consent = null}) {
+// Identity timestamps are exact .NET UTC ticks (strings, never JS numbers).
+const validTicks = s => typeof s === 'string' && /^[1-9][0-9]{15,19}$/.test(s);
+const normalizeName = s => typeof s === 'string' ? s.trim().replace(/\.exe$/i,'').toLowerCase() : '';
+export function processIdentity(v) {
+  if (!v || !int(v.pid,1,2147483647) || !validTicks(v.startTime) || !normalizeName(v.process)) return null;
+  return {pid:v.pid,startTime:v.startTime,process:normalizeName(v.process)};
+}
+export function sameProcessIdentity(a,b) {
+  const x=processIdentity(a), y=processIdentity(b);
+  return !!x && !!y && x.pid===y.pid && x.startTime===y.startTime && x.process===y.process;
+}
+// Only internally spawned child objects qualify. Retained child handles are
+// used for task cancellation, not a newly looked-up PID. A PID alone is never ownership.
+const liveChild = c => !!c && typeof c.once==='function' && typeof c.kill==='function' &&
+  int(c.pid,1,2147483647) && c.exitCode===null && c.signalCode===null && !c.killed;
+
+// Fixed PowerShell script. No request-controlled commands or paths. Mutation
+// opens and holds the process handle, checks StartTime on that same Process
+// object, then calls the object method; no subsequent taskkill /pid or /t.
+// CloseMainWindow is only a polite main-window request, not a guarantee of exit.
+export function lifetimeScript(pid, action='read', expected=null) {
+  if (!int(pid,1,2147483647) || !['read','close','kill'].includes(action) ||
+      (action!=='read' && (!processIdentity(expected) || expected.pid!==pid))) bad();
+  const body = action==='read' ? "$result=@{pid=$p.Id;startTime=$ticks;process=$p.ProcessName}" :
+    `if ($p.HasExited -or $ticks -ne '${expected.startTime}') { $result=@{status='identity_changed';requested=$false} }
+    else { ${action==='kill' ? "$p.Kill(); $result=@{status='requested';requested=$true}" :
+        "$sent=$p.CloseMainWindow(); $result=@{status='requested';requested=[bool]$sent}"} }`;
+  return `$ErrorActionPreference='Stop'
+$p=$null
+try {
+  $p=[System.Diagnostics.Process]::GetProcessById(${pid})
+  ${action==='read'?'':'$handle=$p.Handle; if ($handle -eq [IntPtr]::Zero) { throw "handle_unavailable" }'}
+  $ticks=$p.StartTime.ToUniversalTime().Ticks.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+  ${body}
+} catch { $result=@{status='identity_unavailable';requested=$false} }
+finally { if ($null -ne $p) { $p.Dispose() } }
+$result | ConvertTo-Json -Compress`;
+}
+
+export function createProcs({caps, cfg, platform = process.platform, systemRoot = process.env.SystemRoot, exec = runCapture, spawnFn = spawn, consent = null, audit = () => {}, readIdentity = null, actIdentity = null}) {
   const sys32 = exe => {
     if (typeof systemRoot !== 'string' || !/^[a-zA-Z]:\\/.test(systemRoot)) throw Error('invalid_windows_system_root');
     return path.win32.join(systemRoot, 'System32', exe);
   };
-  const owned = new Map();   // pid → label (tasks; browser registers too)
+  const owned = new Map();   // pid → {identity, child, label}; never a bare PID
   const tasks = new Map();   // id → task record
 
   async function listAll() {
@@ -54,8 +93,39 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
     return parseTasklistCsv(r.out);
   }
 
+  async function callLifetime(pid, action='read', expected=null) {
+    const r=await exec(sys32('WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile','-NonInteractive','-Command',lifetimeScript(pid,action,expected)]);
+    if(r.code!==0) return null;
+    try { return JSON.parse(String(r.out).trim()); } catch { return null; }
+  }
+  async function read(pid) {
+    try { const id=processIdentity(await (readIdentity ? readIdentity(pid) : callLifetime(pid)));return id?.pid===pid?id:null; } catch {return null;}
+  }
+  function forget(pid, record, reason) {
+    if (owned.get(pid)!==record) return;
+    owned.delete(pid); audit({event:'process_ownership_forgotten',pid,reason});
+  }
+  function verifyOwned(pid, id) {
+    const record=owned.get(pid);
+    if (!record) return {owned:false,stale:false};
+    const same=liveChild(record.child)&&sameProcessIdentity(record.identity,id);
+    if(!same) forget(pid,record,id?'identity_changed':'identity_unavailable');
+    return {owned:same,stale:!same,record};
+  }
   const api = {
-    registerOwned(pid, label) { if (Number.isInteger(pid)) owned.set(pid, label); },
+    async registerOwned(child, label) {
+      if(platform!=='win32'||!liveChild(child)) return false;
+      const pid=child.pid;
+      let ended=false;
+      const record={child,label,identity:null};
+      const endedFn=()=>{ended=true;forget(pid,record,'child_exited');};
+      child.once('exit',endedFn); child.once('close',endedFn);
+      const id=await read(pid);
+      if(ended||!liveChild(child)||!id||owned.has(pid)) {
+        audit({event:'process_ownership_refused',pid,reason:'launch_identity_unavailable_or_conflicting'});return false;
+      }
+      record.identity=id;owned.set(pid,record);return true;
+    },
 
     async list_processes(args) {
       if (!onlyKeys(args, ['nameFilter', 'limit'])) bad();
@@ -64,29 +134,49 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
       let all = await listAll();
       if (args.nameFilter) all = all.filter(p => p.process.toLowerCase().includes(args.nameFilter.toLowerCase()));
       all.sort((a, b) => (b.memKB || 0) - (a.memKB || 0));
-      return {count: all.length, truncated: all.length > limit, processes: all.slice(0, limit).map(p => ({...p, ownedByNexus: owned.has(p.pid)}))};
+      const processes=[];
+      const present=new Set(all.map(p=>p.pid));
+      for(const [pid,rec] of [...owned]) if(!present.has(pid)&&!args.nameFilter) forget(pid,rec,'process_not_found');
+      for(const p of all.slice(0,limit)) {
+        const id=owned.has(p.pid)?await read(p.pid):null;
+        const claimed=verifyOwned(p.pid,id && id.process===normalizeName(p.process)?id:null);
+        processes.push({...p,ownedByNexus:claimed.owned});
+      }
+      return {count:all.length,truncated:all.length>limit,processes};
     },
 
     async process_action(args, {consented = null} = {}) {
       requireCap(caps, 'process_control');
       if (!onlyKeys(args, ['pid', 'action']) || !int(args.pid, 1, 2 ** 31) || !['close', 'kill'].includes(args.action)) bad();
-      const p = (await listAll()).find(x => x.pid === args.pid);
-      if (!p) throw Error('process_not_found');
-      const isOwned = owned.has(p.pid);
-      // 0.5.2: any app allowed by policy (a protected app is closable too — closing a non-owned app always asks the owner).
-      const pg = appGate(caps, p.process, {mode: 'close'});
-      const isAllowedApp = pg.allow || !!pg.consent;
-      if (args.action === 'kill' ? !isOwned : !(isOwned || isAllowedApp)) throw Error('process_not_allowed');
-      // 0.4.2: closing an allowlisted app NEXUS did not start (it may hold the owner's documents) needs owner consent.
-      if (args.action === 'close' && !isOwned && consent) {
-        if (consented) { if (String(consented.pid) !== String(p.pid)) throw Error('consent_target_changed'); }
-        else {
-          const g = consent.gate({kind: 'process', via: 'process_action'}, {process: p.process, pid: p.pid, hwnd: 'pid:' + p.pid, name: ''}, null, {tool: 'process_action', args});
-          if (g) return g;
-        }
+      const p=(await listAll()).find(x=>x.pid===args.pid);
+      if(!p) { const rec=owned.get(args.pid); if(rec)forget(args.pid,rec,'process_not_found');throw Error('process_not_found'); }
+      const id=await read(p.pid);
+      const checked=verifyOwned(p.pid,id && id.process===normalizeName(p.process)?id:null);
+      if(checked.stale) throw Error('process_identity_changed');
+      if(!id||id.process!==normalizeName(p.process))throw Error('process_identity_unavailable');
+      const pg=appGate(caps,p.process,{mode:'close'});
+      if(pg.error==='blocked_by_owner'||(args.action==='kill'?!checked.owned:!(checked.owned||pg.allow||pg.consent)))throw Error('process_not_allowed');
+      if(consented && (args.action!=='close'||!sameProcessIdentity(consented.processIdentity,id)))throw Error('consent_target_changed');
+      if(args.action==='close'&&!checked.owned&&!consented) {
+        if(!consent) throw Error('process_not_allowed');
+        const grant=consent.gate({kind:'process',via:'process_action'},{...id,hwnd:'pid:'+p.pid,name:'',process:p.process},null,{tool:'process_action',args});
+        if(grant)return grant;
+        throw Error('process_consent_unavailable');
       }
-      const r = await exec(sys32('taskkill.exe'), args.action === 'kill' ? ['/pid', String(p.pid), '/t', '/f'] : ['/pid', String(p.pid)]);
-      return {pid: p.pid, process: p.process, action: args.action, requested: r.code === 0, note: args.action === 'close' ? 'Close request sent; the app may ask to save.' : undefined};
+      // Re-check ownership immediately before invoking the native guard; a
+      // failed or changed identity never falls through to another action.
+      if(checked.owned && (owned.get(p.pid)!==checked.record||!liveChild(checked.record.child))) {
+        forget(p.pid,checked.record,'child_exited');throw Error('process_identity_changed');
+      }
+      let result=null;
+      try { result=await (actIdentity?actIdentity(id,args.action):callLifetime(p.pid,args.action,id)); } catch {}
+      if(!result||result.status!=='requested'||typeof result.requested!=='boolean') {
+        if(checked.owned)forget(p.pid,checked.record,result?.status==='identity_changed'?'identity_changed':'identity_unavailable');
+        audit({event:'process_action_refused',pid:p.pid,reason:result?.status==='identity_changed'?'identity_changed':'identity_unavailable'});
+        throw Error(result?.status==='identity_changed'?'process_identity_changed':'process_identity_unavailable');
+      }
+      return {pid:p.pid,process:p.process,action:args.action,requested:result.requested,
+        note:args.action==='close'?'Main-window close requested; the app may ask to save.':'Only the verified process, not its unverified descendants.'};
     },
 
     async run_task(args) {
@@ -105,12 +195,12 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
       child.stdout?.setEncoding?.('utf8'); child.stderr?.setEncoding?.('utf8');
       child.stdout?.on('data', add); child.stderr?.on('data', add);
       const timer = setTimeout(() => { rec.state = 'timeout'; child.kill(); }, def.timeoutSec * 1000);
+      child.once('exit', code => {clearTimeout(timer);if(rec.state==='running')rec.state='exited';rec.exitCode=code;rec.endedAt=new Date().toISOString();});
       await new Promise((resolve, reject) => {
         child.once('spawn', resolve);
         child.once('error', () => { clearTimeout(timer); rec.state = 'failed_to_start'; reject(Error('task_launch_failed')); });
       });
-      if (child.pid) owned.set(child.pid, 'task:' + args.task);
-      child.once('exit', code => { clearTimeout(timer); if (rec.state === 'running') rec.state = 'exited'; rec.exitCode = code; rec.endedAt = new Date().toISOString(); owned.delete(child.pid); });
+      if(rec.state==='running') await api.registerOwned(child,'task:'+args.task);
       tasks.set(id, rec);
       if (tasks.size > 20) tasks.delete(tasks.keys().next().value);
       return {id, task: args.task, state: rec.state, pid: child.pid};
@@ -131,8 +221,8 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
       const t = tasks.get(args.id); if (!t) throw Error('unknown_task_id');
       if (t.state !== 'running') return {id: t.id, state: t.state};
       t.state = 'cancelled';
-      if (platform === 'win32' && t.child.pid) await exec(sys32('taskkill.exe'), ['/pid', String(t.child.pid), '/t', '/f']).catch(() => {});
-      else t.child.kill();
+      // Use the retained ChildProcess, not a recycled PID or unverified process tree.
+      try { t.child.kill(); } catch { /* already gone */ }
       return {id: t.id, state: t.state};
     },
 
@@ -157,8 +247,7 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
       for (const t of tasks.values()) {
         if (t.state !== 'running' || Date.parse(t.startedAt) < since - 1000) continue;
         t.state = 'cancelled'; t.cancelReason = reason;
-        if (platform === 'win32' && t.child.pid) await exec(sys32('taskkill.exe'), ['/pid', String(t.child.pid), '/t', '/f']).catch(() => {});
-        else { try { t.child.kill(); } catch { /* gone */ } }
+        try { t.child.kill(); } catch { /* already gone */ }
         cancelled.push({id: t.id, task: t.task});
       }
       return {cancelled};
