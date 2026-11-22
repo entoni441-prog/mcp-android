@@ -88,8 +88,8 @@ final class ReverseRunnerUITests: XCTestCase {
         return (xx, yy)
     }
 
-    private func screenPoint(_ x: Double, _ y: Double) -> XCUICoordinate {
-        XCUIScreen.main.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+    private func screenPoint(_ app: XCUIApplication, _ x: Double, _ y: Double) -> XCUICoordinate {
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
             .withOffset(CGVector(dx: x, dy: y))
     }
 
@@ -143,13 +143,13 @@ final class ReverseRunnerUITests: XCTestCase {
                   !expected.isEmpty, expected.count <= 150 else { return fail("effect_required") }
             if op == "tap" {
                 guard let (x,y) = point(payload, x: "x", y: "y") else { return fail("invalid_point") }
-                screenPoint(x,y).tap()
+                screenPoint(app,x,y).tap()
             } else {
                 guard let (x,y) = point(payload, x: "x", y: "y"),
                       let (toX,toY) = point(payload, x: "to_x", y: "to_y") else {
                     return fail("invalid_swipe")
                 }
-                screenPoint(x,y).press(forDuration: 0.1, thenDragTo: screenPoint(toX,toY))
+                screenPoint(app,x,y).press(forDuration: 0.1, thenDragTo: screenPoint(app,toX,toY))
             }
             guard queryLabel(app, expected) else { return fail("effect_not_verified") }
             return pass(["expected_label": expected, "verified": true])
