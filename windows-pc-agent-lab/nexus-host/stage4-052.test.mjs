@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {createGui, notepadMasks, testPng} from './gui.mjs';
 import {createConsent} from './consent.mjs';
+import {fixtureIdentity} from './window-identity-fixture.mjs';
 import {validateCapabilities} from './capabilities.mjs';
 import {classifyBrowserRisk} from './browser.mjs';
 import {createSession} from './session.mjs';
@@ -14,9 +15,15 @@ import * as appsMod from './apps.mjs';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-s4-'));
 const id = r => r;
-const own = (tabs = [], wins = []) => ({tabs: new Set(tabs), windows: new Set(wins.map(String)), pids: new Set(), apps: new Set(), scratch: new Set()});
-const W = (hwnd, tabs, sel = 0, rect = {x: 10, y: 20, w: 300, h: 200}) => ({hwnd, pid: 7, process: 'Notepad', name: 'n', rect,
+const W = (hwnd, tabs, sel = 0, rect = {x: 10, y: 20, w: 300, h: 200}) => fixtureIdentity({hwnd, pid: 7, process: 'Notepad', name: 'NEXUS-test-token', rect,
   tabs: tabs.map((rid, i) => ({rid, name: rid, selected: i === sel}))});
+const registerTab = c => c.recordCreated([W(1,['pass'])],[W(1,['pass','nx'])],'test');
+const own = (tabs = [], wins = []) => {
+  const c=createConsent();
+  for (const rid of tabs) c.recordCreated([W(1,['pass'])],[W(1,['pass',rid])],'test');
+  for (const hwnd of wins) c.recordCreated([], [W(hwnd,[])], 'test', {token:'NEXUS-test-token'});
+  return c;
+};
 
 // ── A-02 pure rule ───────────────────────────────────────────────────────────────────────────────────────────────
 test('A-02 masks: restored owner tabs hidden; NEXUS scratch tab visible only when selected (capture) / alone (live)', () => {
@@ -34,6 +41,8 @@ test('A-02 masks: restored owner tabs hidden; NEXUS scratch tab visible only whe
   assert.equal(notepadMasks([{...W(1, ['pass']), rect: null}], o, id), null);
   assert.equal(notepadMasks([W(1, ['pass'])], o, null), null);
   assert.deepEqual(notepadMasks([], o, null), {masks: [], hidden: 0}, 'no Notepad → nothing to hide, mapping not needed');
+  assert.equal(notepadMasks([W(2,['nx'])],o,id,'capture').hidden,1,'RID reuse in another HWND must be hidden');
+  assert.equal(notepadMasks([{...W(1,['nx']),startTime:'638010000000000001'}],o,id,'capture').hidden,1,'PID reuse must be hidden');
 });
 
 test('A-02: the stage-2 temporary flag is gone; cold start is a permanent Owner Handoff', () => {
@@ -64,13 +73,13 @@ const mk = (f, consent = createConsent()) => ({consent, g: createGui({caps: vali
 test('A-02 capture_screen: owner Notepad window painted over BEFORE the image leaves the Host; snapshot failure → no image', async () => {
   const f = fake({apps: [W(1, ['pass', 'nx'], 0, {x: 100, y: 50, w: 400, h: 300})]});
   const {consent, g} = mk(f);
-  consent.owned.tabs.add('nx');
+  registerTab(consent);
   const r = await g.capture_screen({});
   const cap = f.robotCmds.find(c => c.startsWith('capture'));
   assert.equal(cap.split(' ')[3], '100,50,400,300');
   assert.equal(r.structured.hiddenWindows, 1);
   // NEXUS scratch selected → shown
-  const f2 = fake({apps: [W(1, ['pass', 'nx'], 1)]}); const m2 = mk(f2); m2.consent.owned.tabs.add('nx');
+  const f2 = fake({apps: [W(1, ['pass', 'nx'], 1)]}); const m2 = mk(f2); registerTab(m2.consent);
   await m2.g.capture_screen({});
   assert.equal(f2.robotCmds.find(c => c.startsWith('capture')).split(' ')[3], '-');
   // fail-closed
@@ -81,19 +90,19 @@ test('A-02 capture_screen: owner Notepad window painted over BEFORE the image le
 
 test('A-02 Live View frame: any window holding an owner tab is hidden even if the NEXUS tab is selected', async () => {
   const f = fake({apps: [W(1, ['pass', 'nx'], 1, {x: 0, y: 0, w: 50, h: 60})]});
-  const {consent, g} = mk(f); consent.owned.tabs.add('nx');
+  const {consent, g} = mk(f); registerTab(consent);
   await g.frameJpeg(960, 60);
   assert.equal(f.robotCmds.find(c => c.startsWith('frame')).split(' ')[4], '0,0,50,60');
 });
 
 test('A-02 inspect_ui includeText: owner Notepad document text is never returned; NEXUS scratch text is', async () => {
   const f = fake({apps: [W(1, ['pass', 'nx'], 0)]});
-  const {consent, g} = mk(f); consent.owned.tabs.add('nx');
+  const {consent, g} = mk(f); registerTab(consent);
   const r = await g.inspect_ui({pid: 7, includeText: true});
   assert.equal(r.textWithheld, 'notepad_owner_document');
   assert.doesNotMatch(JSON.stringify(r), /SECRET-PASSPHRASE/);
   const f2 = fake({apps: [W(1, ['pass', 'nx'], 1)], treeText: 'nexus scratch text'});
-  const m2 = mk(f2); m2.consent.owned.tabs.add('nx');
+  const m2 = mk(f2); registerTab(m2.consent);
   const r2 = await m2.g.inspect_ui({pid: 7, includeText: true});
   assert.equal(r2.textWithheld, undefined); assert.match(JSON.stringify(r2), /nexus scratch text/);
   const f3 = fake({appsFail: true});
