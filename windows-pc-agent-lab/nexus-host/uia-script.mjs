@@ -413,7 +413,11 @@ switch ($a.mode) {
   }
   'windows' {
     $ws = NxTopWindows ([int]$a.pid)
-    $res.windows = @($ws | ForEach-Object { @{ name = $_.Current.Name; className = $_.Current.ClassName; rect = (NxRect $_); pid = $_.Current.ProcessId; hwnd = [int64]$_.Current.NativeWindowHandle } })
+    $res.windows = @($ws | ForEach-Object {
+      $visual = 'Unknown'
+      try { $visual = [string]$_.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Current.WindowVisualState } catch { }
+      @{ name = $_.Current.Name; className = $_.Current.ClassName; rect = (NxRect $_); pid = $_.Current.ProcessId; hwnd = [int64]$_.Current.NativeWindowHandle; visualState = $visual }
+    })
     $res.focused = NxFocused
   }
   'tree' {
