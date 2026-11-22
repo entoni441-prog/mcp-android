@@ -68,7 +68,7 @@ test('job task cancel, session STOP and host stop wait for entire simulated tree
 test('job browser rejects legacy profile processes, never launches or kills them',async()=>{
  const b=createBrowser({caps:validateCapabilities({browser:true}),home:os.tmpdir(),platform:'win32',browserPath:'C:\\Program Files\\Edge\\msedge.exe',
  listPids:()=>[123,456],launch:()=>assert.fail('launch with unowned profile')});
- await assert.rejects(b.browser_action({action:'navigate',url:'https://example.com'}),/browser_profile_busy_unowned/);
+ await assert.rejects(b.browser_open({url:'https://example.com'}),/browser_profile_busy_unowned/);
  assert.equal((await b.cleanupSession()).remaining,2);
 });
 test('job browser STOP pending startup closes retained job and never connects CDP',async()=>{
@@ -76,8 +76,8 @@ test('job browser STOP pending startup closes retained job and never connects CD
  const f=fakeJob();let launchCalled;const launched=new Promise(r=>launchCalled=r);
  const b=createBrowser({caps:validateCapabilities({browser:true}),home,platform:'win32',browserPath:'C:\\Program Files\\Edge\\msedge.exe',
  listPids:()=>[],launch:()=>{const h=f.launch();launchCalled();return h;}});
- const nav=b.browser_action({action:'navigate',url:'https://example.com'});nav.catch(()=>{});
- await launched;const stop=b.cleanupSession();f.frame('PREPARED 80 '+A);f.frame('EMPTY 1');f.end();
+ const nav=b.browser_open({url:'https://example.com'});nav.catch(()=>{});
+ await Promise.race([launched,nav.then(()=>{throw Error('unexpected browser navigation');})]);const stop=b.cleanupSession();f.frame('PREPARED 80 '+A);f.frame('EMPTY 1');f.end();
  await assert.rejects(nav,/job_cancelled|browser_start_cancelled/);
  assert.equal(f.writes,'');const r=await stop;assert.equal(r.remaining,0);assert.equal(r.cleanupUnconfirmed,false);
 });
