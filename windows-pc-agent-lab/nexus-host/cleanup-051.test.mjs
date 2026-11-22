@@ -275,3 +275,42 @@ test('Win11 Notepad: if our tab is not the selected one, or another window is in
     assert.equal(wins[0].tabs.length, 3, 'nothing closed');
   }
 });
+
+
+test('cleanup refuses reused HWND before dispatch when PID changes after initial snapshot', async () => {
+  const original = {hwnd: 72, pid: 9, process: 'CalculatorApp', name: 'NEXUS window', tabs: []};
+  const replacement = {...original, pid: 94, name: 'owner window'};
+  const consent = createConsent();
+  consent.recordCreated([], [original], 'test');
+  let reads = 0; const calls = [];
+  const gui = createGui({caps: validateCapabilities({gui_input: true}),
+    home: os.tmpdir(), workspace: os.tmpdir(), platform: 'win32', consent, sleep: async () => {},
+    runUia: async a => {
+      calls.push(a);
+      if (a.mode === 'apps') return {root: ROOT, apps: [++reads === 1 ? original : replacement]};
+      throw Error('Unexpected UI action on a replaced window');
+    }});
+  const result = await gui.cleanupOwned('finish_task');
+  assert.equal(result.closed.length, 0);
+  assert.equal(result.left[0].why, 'ownership_changed');
+  assert.equal(calls.some(a => a.mode === 'close'), false);
+});
+
+test('cleanup refuses whole window if an owner tab appears after initial snapshot', async () => {
+  const original = {hwnd: 73, pid: 9, process: 'CalculatorApp', name: 'NEXUS window', tabs: []};
+  const changed = {...original, tabs: [tab('owner-doc', 'owner document', true)]};
+  const consent = createConsent();
+  consent.recordCreated([], [original], 'test');
+  let reads = 0; const calls = [];
+  const gui = createGui({caps: validateCapabilities({gui_input: true}),
+    home: os.tmpdir(), workspace: os.tmpdir(), platform: 'win32', consent, sleep: async () => {},
+    runUia: async a => {
+      calls.push(a);
+      if (a.mode === 'apps') return {root: ROOT, apps: [++reads === 1 ? original : changed]};
+      throw Error('Unexpected UI action on the owner document');
+    }});
+  const result = await gui.cleanupOwned('finish_task');
+  assert.equal(result.closed.length, 0);
+  assert.equal(result.left[0].why, 'ownership_changed');
+  assert.equal(calls.some(a => a.mode === 'close'), false);
+});
