@@ -3,6 +3,8 @@
 import Foundation
 import CryptoKit
 
+private typealias CryptoMAC = HMAC<SHA256>
+
 struct RunnerConfig {
     let url: URL
     let key: Data
@@ -23,7 +25,7 @@ struct RunnerConfig {
 
     func hmac(role: String, server: String, client: String) -> String {
         let raw = Data("\(role)|primary_iphone|\(server)|\(client)".utf8)
-        let auth = «redacted» raw, using: SymmetricKey(data: key))
+        let auth = CryptoMAC.authenticationCode(for: raw, using: SymmetricKey(data: key))
         return Data(auth).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
