@@ -20,6 +20,7 @@ import net from 'node:net';
 import {spawn, spawnSync} from 'node:child_process';
 import os from 'node:os';
 import {requireCap} from './capabilities.mjs';
+import {launchForPlatform} from './job-containment.mjs';
 import {createEgressProxy, isPublicIp} from './egress-proxy.mjs';
 
 const isObj = x => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -195,23 +196,18 @@ export function profilePids(profile, {platform = process.platform, systemRoot = 
   return [];
 }
 
-function killPids(pids, {platform = process.platform, systemRoot = process.env.SystemRoot, run = spawnSync, tree = false} = {}) {
-  let n = 0;
-  for (const pid of pids) {
-    if (platform === 'win32') {
-      if (typeof systemRoot !== 'string') continue;
-      const r = run(path.win32.join(systemRoot, 'System32', 'taskkill.exe'), ['/pid', String(pid), ...(tree ? ['/t'] : []), '/f'], {windowsHide: true, timeout: 15_000});
-      if (r.status === 0) n++;
-    } else { try { process.kill(pid, 'SIGKILL'); n++; } catch { /* gone */ } }
-  }
-  return n;
-}
-
-export function createBrowser({caps, home, consent = null, platform = process.platform, browserPath, headless = false, allowPrivate = false, proxyOptions = {}, spawnFn = spawn, onOwnedPid = () => {}, listPids = null, kill = null, downloads = null}) {
+export function createBrowser({caps, home, consent = null, platform = process.platform, browserPath, headless = false, allowPrivate = false, proxyOptions = {}, spawnFn = spawn, onOwnedPid = () => {}, listPids = null, downloads = null, launch = launchForPlatform, audit = () => {}}) {
   const profile = path.join(home, 'edge-profile');
   const findPids = listPids || (() => profilePids(profile, {platform}));
-  const killFn = kill || ((pids, o) => killPids(pids, {platform, ...o}));
-  let proc = null, page = null, browserWs = null, proxy = null, port = null, currentTarget = null;
+  let contained = null, page = null, browserWs = null, proxy = null, port = null, currentTarget = null;
+  let starting = null, cleaning = null, generation=0, lastTermination=null;
+  function verifyGeneration(g) { if(g!==generation) throw Error('browser_start_cancelled'); }
+  function releaseConnections() { gone(); proxy?.close(); proxy=null; pendingDialog=null; }
+  function observeTermination(handle,result) {
+    audit({event:'browser_termination',containment:result.containment,confirmedEmpty:result.confirmedEmpty===true,
+      descendantsMayRemain:result.containment!=='job'||!result.confirmedEmpty});
+    if(contained===handle){lastTermination=result;contained=null;releaseConnections();}
+  }
   // 0.5.1: JavaScript dialogs block the page (every CDP call on it hangs → cdp_timeout). alert/beforeunload on the NEXUS
   // browser are accepted automatically and reported; confirm/prompt wait for a decision (action 'dialog').
   let pendingDialog = null, dialogWaiters = [], seenDialogs = [];
@@ -240,12 +236,25 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
     if (r === DIALOG) throw Object.assign(Error('dialog_open'), {dialog: true});
     return r;
   }
-  let sweptOnce = false;
-
   async function ensure() {
-    if (page && !page.closed) return page;
+    if(cleaning) throw Error('browser_cleanup_in_progress');
+    if(page&&!page.closed)return page;
+    if(starting)return starting;
+    if(contained)throw Error('browser_previous_job_active');
+    if(lastTermination?.containment==='job'&&!lastTermination.confirmedEmpty)throw Error('browser_cleanup_unconfirmed');
+    const g=generation;
+    starting=startBrowser(g).catch(async e=>{const h=contained;if(h){h.requestStop();await h.done;}releaseConnections();throw e;}).finally(()=>{starting=null;});
+    return starting;
+  }
+
+  async function startBrowser(g) {
     const exe = browserPath || (platform === 'win32' ? findEdge(caps) : null);
     if (!exe) throw Error('edge_not_found');
+    // Legacy leftovers are observational only. Never bind CDP to an existing, unowned instance.
+    let existing;try{existing=findPids();}catch{throw Error('browser_profile_identity_unavailable');}
+    if(!Array.isArray(existing))throw Error('browser_profile_identity_unavailable');
+    if(existing.length)throw Error('browser_profile_busy_unowned');
+    verifyGeneration(g);
     fs.mkdirSync(profile, {recursive: true});
     const portFile = path.join(profile, 'DevToolsActivePort');
     fs.rmSync(portFile, {force: true});
@@ -254,14 +263,23 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
       '--disable-quic', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--dns-prefetch-disable', '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', '--no-first-run',
       '--no-default-browser-check', '--disable-sync', '--disable-features=msEdgeSyncFeature', 'about:blank'];
     if (headless) args.unshift('--headless=new', '--no-sandbox');
-    proc = spawnFn(exe, args, {stdio: 'ignore', windowsHide: false, detached: false});
-    proc.once('exit', () => { proc = null; page?.close(); page = null; });
-    if (proc.pid) await onOwnedPid(proc);
+    verifyGeneration(g);
+    const handle=launch('browser',exe,args,{stdio:'ignore',windowsHide:false,detached:false},{platform,spawnFn});
+    contained=handle;
+    handle.child.stdout?.resume?.(); // drain browser output, not the supervisor control stream
+    handle.done.then(result=>observeTermination(handle,result));
+    await handle.ready;
+    verifyGeneration(g);
+    if(contained!==handle)throw Error('browser_job_ended');
+    await onOwnedPid(handle.child,handle.containment==='job'?handle:null);
+    verifyGeneration(g);
     let lines = null;
-    for (let i = 0; i < 100 && !lines; i++) { await sleep(150); try { const t = fs.readFileSync(portFile, 'utf8').trim().split(/\r?\n/); if (t.length >= 2) lines = t; } catch { /* not yet */ } }
+    for (let i = 0; i < 100 && !lines; i++) { await sleep(150); verifyGeneration(g); if(contained!==handle)throw Error('browser_job_ended'); try { const t = fs.readFileSync(portFile, 'utf8').trim().split(/\r?\n/); if (t.length >= 2) lines = t; } catch { /* not yet */ } }
     if (!lines) throw Error('browser_start_timeout');
     port = Number(lines[0]);
-    browserWs = await Cdp.connect(`ws://127.0.0.1:${port}${lines[1]}`);
+    const ws=await Cdp.connect(`ws://127.0.0.1:${port}${lines[1]}`);
+    if(g!==generation||contained!==handle){ws.close();throw Error('browser_start_cancelled');}
+    browserWs=ws;
     if (downloads) {
       const inc = path.join(downloads.dir, '.incoming'); fs.mkdirSync(inc, {recursive: true});
       await browserWs.send('Browser.setDownloadBehavior', {behavior: 'allowAndName', downloadPath: inc, eventsEnabled: true}).catch(() => {});
@@ -280,7 +298,8 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
     } else await browserWs.send('Browser.setDownloadBehavior', {behavior: 'deny'}).catch(() => {});
     const target = (await pages()).find(Boolean);
     if (!target) throw Error('no_page_target');
-    return attach(target);
+    verifyGeneration(g);
+    return attach(target,g);
   }
   async function pages() {
     if (!port) return [];
@@ -291,11 +310,13 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
     return Array.isArray(list) ? list.filter(t => t.type === 'page') : [];
   }
   function gone() { try { page?.close(); } catch {} try { browserWs?.close(); } catch {} page = null; browserWs = null; port = null; currentTarget = null; }
-  async function attach(target) {
+  async function attach(target,g=generation) {
     const next = await Cdp.connect(target.webSocketDebuggerUrl);
+    if(g!==generation||!contained){next.close();throw Error('browser_start_cancelled');}
     next.on('Page.javascriptDialogOpening', d => onDialog(next, d));
     next.on('Page.javascriptDialogClosed', () => { if (pendingDialog?.cdp === next) pendingDialog = null; });
     await next.send('Page.enable'); await next.send('Runtime.enable');
+    if(g!==generation||!contained){next.close();throw Error('browser_start_cancelled');}
     if (page && page !== next) page.close();
     page = next; currentTarget = target.id;
     return page;
@@ -511,38 +532,27 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
       return {tabs, open: true};
     },
     egressStats: () => proxy?.stats ?? null,
-    /**
-     * 0.5.1: end of a work session (finish_task / Stop / idle / error) — close NEXUS's own Edge completely:
-     * 1) CDP Browser.close (graceful, whole instance); 2) if still alive, kill its process tree by PID;
-     * 3) sweep any process still running with OUR profile dir (children, leftovers of a crashed Host).
-     * The owner's Edge is never touched: it has neither our PID nor our --user-data-dir.
-     */
+    // STOP closes only the retained private job. A profile match alone never
+    // authorizes a kill. Report legacy/unverified leftovers, never sweep PIDs.
     async cleanupSession() {
-      const wasOpen = !!(proc || browserWs);
-      const steps = [];
-      const p = proc, pid = proc?.pid;
-      if (browserWs && !browserWs.closed) { try { await browserWs.send('Browser.close', {}, 3000); steps.push('cdp_browser_close'); } catch { steps.push('cdp_close_failed'); } }
-      if (p) {
-        const exited = await new Promise(res => { if (p.exitCode !== null || p.signalCode) return res(true); const t = setTimeout(() => res(false), 4000); p.once('exit', () => { clearTimeout(t); res(true); }); });
-        if (!exited && pid) { killFn([pid], {tree: true}); steps.push('kill_tree'); }
-      }
-      page?.close(); browserWs?.close(); proxy?.close();
-      proc = null; page = null; browserWs = null; proxy = null; port = null; currentTarget = null;
-      // Sweep our profile: always after our browser ran; otherwise once per Host (leftovers of a crashed Host).
-      if (!wasOpen && sweptOnce) return {wasOpen, steps, swept: 0, remaining: 0};
-      sweptOnce = true;
-      if (wasOpen) await sleep(300);
-      let left = []; try { left = findPids(); } catch { /* listing failed: report unknown */ left = null; }
-      let swept = 0;
-      if (left?.length) { swept = killFn(left, {tree: false}); steps.push('sweep_profile'); await sleep(300); try { left = findPids(); } catch { left = null; } }
-      return {wasOpen, steps, swept, remaining: left === null ? 'unknown' : left.length};
+      if(cleaning)return cleaning;
+      generation++;
+      const h=contained, wasOpen=!!(h||browserWs||starting), pending=starting;
+      if(h)h.requestStop();
+      releaseConnections();
+      cleaning=(async()=>{
+        if(pending)await pending.catch(()=>{});
+        const result=h?await h.done:lastTermination;
+        let left=null;try{left=findPids();}catch{}
+        const observed=Array.isArray(left)?left.length:'unknown';
+        const confirmedEmpty=result?.containment==='job'&&result.confirmedEmpty===true;
+        const remaining=result?confirmedEmpty&&observed===0?0:'unknown':observed;
+        return {wasOpen,steps:h?['stop_retained_job']:[],swept:0,remaining,legacyProfileMatches:observed,
+          ...(result?{termination:result}:{}),cleanupUnconfirmed:remaining!==0||!!(result&&!confirmedEmpty)};
+      })().finally(()=>{cleaning=null;});
+      return cleaning;
     },
-    stop() {
-      const pid = proc?.pid;
-      page?.close(); browserWs?.close(); try { proc?.kill(); } catch { /* gone */ }
-      if (pid && platform === 'win32') killFn([pid], {tree: true}); // children otherwise survive the main process
-      proxy?.close(); proc = null; page = null; browserWs = null; proxy = null;
-    },
+    stop() { return api.cleanupSession(); },
   };
   // 0.6.1: a click/press that starts a download reports it (wait a moment for the event; the file itself is verified
   // on completion — check with browser_tabs {action:"downloads", id}).
