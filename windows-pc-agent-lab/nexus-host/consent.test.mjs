@@ -184,6 +184,7 @@ test('focus fallback: clicks only an empty spot of the target window title bar; 
     if (a.mode === 'windows') return {...(await uia0(a)), focused: fg};
     if (a.mode === 'activate') return {root: ROOT, appActivateByPid: true, focused: fg};
     if (a.mode === 'focused') return {root: ROOT, focused: fg};
+    if (a.mode === 'at' && a.nativeHitTest) { const r=await uia0(a); return {...r,at:{...r.at,nativeHit:{ok:true,hwnd:900,pid:50}}}; }
     return uia0(a);
   };
   st.el = {controlType: 'TitleBar', name: '', id: ''};
