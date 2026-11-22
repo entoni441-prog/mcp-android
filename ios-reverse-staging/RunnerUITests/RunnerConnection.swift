@@ -25,7 +25,9 @@ struct RunnerConfig {
 
     func hmac(role: String, server: String, client: String) -> String {
         let raw = Data("\(role)|primary_iphone|\(server)|\(client)".utf8)
-        let auth = CryptoMAC.authenticationCode(for: raw, using: SymmetricKey(data: key))
+        var calculator = CryptoMAC(key: SymmetricKey(data: key))
+        calculator.update(data: raw)
+        let auth = calculator.finalize()
         return Data(auth).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
