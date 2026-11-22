@@ -172,15 +172,14 @@ test('NX-052-21: Steam ancestry alone does not authorize closing unmarked window
       launcher: () => ({pid: 111, once(ev, fn) {if (ev === 'spawn') setImmediate(fn); return this;}, unref() {}})});
     const out = await a.open_app({app: 'steam'});
     const owned = false; // no unique scratch title and no full native identity
-    assert.equal(consent.owned.pids.has(111), false);
-    assert.equal(consent.owned.pids.has(222), false);
+    assert.equal('pids' in consent.owned,false);
     assert.equal(consent.isOwned({kind: 'window'}, helper), false);
     assert.equal(consent.isOwned({kind: 'window'}, {...helper, hwnd: 999}), false);
     assert.equal(out.createdByNexus.windows.length, owned ? 1 : 0);
     assert.deepEqual(out.createdByNexus.tabs, []);
     if (root !== 111) assert.equal(out.createdByNexus.reason, 'foreign_launch_root');
     const close = consent.gate({kind: 'window'}, helper, null, {tool: 'close_window', args: {}});
-    assert.equal(close?.status ?? null, owned ? null : 'consent_required');
+    assert.equal(close?.status, 'identity_unavailable');
     const {createProcs} = await import('./procs.mjs');
     const procs = createProcs({caps: validateCapabilities({}), cfg: {}, consent, platform: 'win32', systemRoot: 'C:\\Windows',
       exec: async () => ({code: 0, out: '"steamwebhelper.exe","222","Console","1","100 K"'})});
