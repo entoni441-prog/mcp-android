@@ -47,14 +47,20 @@ jobs:
           test -f "$products/RunnerHost.app/Info.plist"
           test -f "$products/RunnerUITests-Runner.app/Info.plist"
           test -d "$products/RunnerUITests-Runner.app/PlugIns"
+          test -f "$products/RunnerUITests-Runner.app/PlugIns/RunnerUITests.xctest/RunnerUITests"
+          test -f "$products/RunnerUITests-Runner.app/RunnerUITests-Runner"
           test "$(find "$products/RunnerUITests-Runner.app/PlugIns" -maxdepth 1 -name '*.xctest' -type d | wc -l | tr -d ' ')" -eq 1
           mkdir -p "$RUNNER_TEMP/iphone-unsigned/Payload" "$RUNNER_TEMP/iphone-staging-artifacts"
-          cp -R "$products/RunnerUITests-Runner.app" "$RUNNER_TEMP/iphone-unsigned/Payload/"
+          mkdir -p "$RUNNER_TEMP/iphone-unsigned/Payload/RunnerUITests-Runner.app"
+          rsync -a --exclude='*.dSYM' "$products/RunnerUITests-Runner.app/" "$RUNNER_TEMP/iphone-unsigned/Payload/RunnerUITests-Runner.app/"
           (cd "$RUNNER_TEMP/iphone-unsigned" && zip -qry "$RUNNER_TEMP/iphone-staging-artifacts/RunnerUITests-Runner-UNSIGNED.ipa" Payload)
           mkdir -p "$RUNNER_TEMP/iphone-host-unsigned/Payload"
           cp -R "$products/RunnerHost.app" "$RUNNER_TEMP/iphone-host-unsigned/Payload/"
           (cd "$RUNNER_TEMP/iphone-host-unsigned" && zip -qry "$RUNNER_TEMP/iphone-staging-artifacts/RunnerHost-UNSIGNED.ipa" Payload)
-          unzip -Z1 "$RUNNER_TEMP/iphone-staging-artifacts/RunnerUITests-Runner-UNSIGNED.ipa" | grep -q 'Payload/RunnerUITests-Runner.app/PlugIns/.*\.xctest/'
+          unzip -Z1 "$RUNNER_TEMP/iphone-staging-artifacts/RunnerUITests-Runner-UNSIGNED.ipa" | grep -q 'Payload/RunnerUITests-Runner.app/PlugIns/RunnerUITests.xctest/RunnerUITests'
+          if unzip -Z1 "$RUNNER_TEMP/iphone-staging-artifacts/RunnerUITests-Runner-UNSIGNED.ipa" | grep -q '\.dSYM'; then
+            echo '::error::Debug symbols must not be inside install staging IPA'; exit 1
+          fi
           (cd "$RUNNER_TEMP/iphone-staging-artifacts" && shasum -a 256 *.ipa > SHA256SUMS.txt)
           echo 'UNSIGNED ONLY: NOT INSTALLABLE. No Apple credentials or embedded provisioning profiles.'
       - name: Upload unsigned IPA staging inputs (not signed or installable)
