@@ -153,7 +153,7 @@ export function createRuntime(cfg, deps = {}) {
   let gui = null;
   const handoffs = createHandoffs({tasks, session, audit: e => audit(cfg, e), probe: {apps: n => gui.snapshotApp(n)}, ...(deps.handoffDeps || {})});
   const handoff = spec => handoffs.request(spec);
-  const procs = createProcs({caps, cfg, consent, ...(deps.procsDeps || {})});
+  const procs = createProcs({caps, cfg, consent, audit: e => audit(cfg,e), ...(deps.procsDeps || {})});
   // NEXT: command runner + diagnostics (FR-03). Commands are killed by STOP/owner pause/finish/cancel, not by a lease end.
   const runner = createRunner({caps, cfg, consent, tasks, audit: e => audit(cfg, e), ...(deps.runnerDeps || {})});
   const diag = createDiag({caps, ...(deps.diagDeps || {})});
@@ -167,7 +167,7 @@ export function createRuntime(cfg, deps = {}) {
       return {autostartVerified, logonChannelVerified: caps.logonChannelVerified === true, wakeDevice: caps.wakeDevice || null, sleepStates, unsavedOwnerDocs};
     }, ...(deps.powerDeps || {})});
   gui = createGui({caps, home: cfg.home, workspace: cfg.workspace, consent, handoff, onOwnerActive: why => { session.pauseForOwner(why); runner.cancelAll('owner_paused').catch(() => {}); }, ...(deps.guiDeps || {})});
-  const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: pid => procs.registerOwned(pid, 'browser'),
+  const browser = createBrowser({caps, home: cfg.home, consent, onOwnedPid: child => procs.registerOwned(child, 'browser'),
     downloads: {dir: path.join(cfg.workspace, 'downloads'), ingest: (tmp, meta) => scoped.ingestBrowserDownload(tmp, meta)}, ...(deps.browserDeps || {})});
   const live = createLive({caps, store, session, onResume: () => gui.ownerResumed?.(), onStopResume: () => tasks.allowResume(), capture: (w, q) => gui.frameJpeg(w, q, session.caption()), audit: e => audit(cfg, e), ...(deps.liveDeps || {})});
   // End of every session: stream off at the source first, then clean up what NEXUS itself opened.
