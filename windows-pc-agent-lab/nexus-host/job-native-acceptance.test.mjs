@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-test('native Job Object acceptance: STOP and helper death, own three-process fixtures only',{skip:process.platform!=='win32'||process.env.NEXUS_NATIVE_JOB_ACCEPTANCE!=='approved-one-shot'},()=>{
+test('native Job Object acceptance: STOP and helper death, own three-process fixtures only',{skip:process.platform!=='win32'||process.argv.length!==3||process.argv[2]!=='--approved-one-shot'},()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nxjob-native-'));
  const compiler=path.join(process.env.SystemRoot,'Microsoft.NET','Framework64','v4.0.30319','csc.exe');
  let passed=false;
