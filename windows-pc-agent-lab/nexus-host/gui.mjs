@@ -649,16 +649,17 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         ...(withheld ? {textWithheld: withheld, hint: 'Text is shown only for documents NEXUS created (its scratch tab must be the selected tab of every Notepad window).'} : {}), tree};
     },
 
-    async focus_window(args) {
+    async focus_window(args, opts = null) {
       requireCap(caps, 'ui_read'); winOnly();
       if (caps.gui_input === true) await ownerGuard();
-      const r = await api.focusWindowInner(args);
+      const r = await api.focusWindowInner(args, opts);
       if (r?.focused) await afterInput({ok: true, topHwnd: r.hwnd, pid: args.pid});
       return r;
     },
-    async focusWindowInner(args) {
+    async focusWindowInner(args, opts = null) {
       if (!onlyKeys(args, ['pid','hwnd']) || !int(args.pid, 1, 2 ** 31) || (args.hwnd!==undefined && !int(args.hwnd,1,Number.MAX_SAFE_INTEGER))) bad();
-      const w = await checkPid(args.pid, 'focus',null,args);
+      const w = await checkPid(args.pid, 'focus','focus_window',args,opts);
+      if (w.consentResult) return w.consentResult;
       if (!w.windows?.length) throw Error('window_not_found');
       const candidates=w.windows.filter(x=>Number.isSafeInteger(Number(x.hwnd))&&Number(x.hwnd)>0 && (args.hwnd===undefined || Number(x.hwnd)===args.hwnd));
       if (candidates.length!==1 || (args.hwnd===undefined&&w.windows.length!==1)) return {focused:false,method:'none',cause:'target_unknown',attempts:[],hint:'Read window_info and select an exact HWND belonging to this PID. No activation or input dispatched.'};
@@ -683,7 +684,8 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       // is checked with UIA first: it must belong to the target window and must not be a button/tab/menu — so the click
       // can never land in someone else's window and never presses Close.
       if (caps.gui_input === true) {
-        const fresh = await checkPid(args.pid,'focus',null,{hwnd:Number(main.hwnd)});
+        const fresh = await checkPid(args.pid,'focus','focus_window',{pid:args.pid,hwnd:Number(main.hwnd)},opts);
+        if (fresh.consentResult) return fresh.consentResult;
         const matches=(fresh.windows||[]).filter(x=>String(x.hwnd)===String(main.hwnd));
         const winNow=matches.length===1&&sameWindowIdentity(identity,matches[0])?matches[0]:null;
         const inf = await getRobot().cmd('info');
