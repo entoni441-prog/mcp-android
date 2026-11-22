@@ -176,6 +176,24 @@ export function psErrorText(raw) {
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&').replace(/\n{2,}/g, '\n').trim();
 }
 
+// Geometry diagnostics use the same screen-point space as Robot input.
+// A rectangle disjoint from all verified monitors is off-screen, not occluded.
+const validRect = r => !!r && [r.x,r.y,r.w,r.h].every(Number.isFinite) && r.w > 0 && r.h > 0;
+export function windowGeometry(rect, info, m) {
+  if (!validRect(rect) || !m || !validRect(info)) return {status:'unknown'};
+  const screen = m.rectToScreen(rect);
+  if (!validRect(screen)) return {status:'unknown'};
+  const primary = {x:info.x,y:info.y,w:info.w,h:info.h};
+  const monitors = info.screens === 1 ? [primary] : info.monitors;
+  if (!Array.isArray(monitors) || !Number.isInteger(info.screens) || monitors.length !== info.screens || !monitors.every(validRect)) return {status:'unknown',rect:screen};
+  const overlap = (a,b) => a.x < b.x+b.w && b.x < a.x+a.w && a.y < b.y+b.h && b.y < a.y+a.h;
+  const onPrimary = overlap(screen,primary), onAny = monitors.some(r=>overlap(screen,r));
+  return {status:!onAny?'out_of_screen':!onPrimary?'secondary_monitor':(screen.x>=primary.x && screen.y>=primary.y &&
+    screen.x+screen.w<=primary.x+primary.w && screen.y+screen.h<=primary.y+primary.h)?'on_primary':'partly_on_primary',rect:screen};
+}
+const pointInside = (x,y,r) => validRect(r) && Number.isFinite(x) && Number.isFinite(y) &&
+  x>=r.x && y>=r.y && x<r.x+r.w && y<r.y+r.h;
+
 // ───────────── coordinate mapping ─────────────
 export function mapping(info, root) {
   if (!info || !root) return null;
@@ -599,9 +617,9 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       if (!onlyKeys(args, ['pid']) || !int(args.pid, 1, 2 ** 31)) bad();
       const r = await checkPid(args.pid, 'read', 'window_info', args, opts);
       if (r.consentResult) return r.consentResult;
-      const m = mapping(await info(), r.root);
+      const inf = await info(), m = mapping(inf, r.root);
       return {pid: args.pid, process: r.target.process, foreground: r.focused?.pid === args.pid, coordinateMapping: !!m,
-        windows: (r.windows || []).slice(0, 20).map(w => ({name: String(w.name || '').slice(0, 200), className: w.className, rect: m ? m.rectToScreen(w.rect) : null}))};
+        windows: (r.windows || []).slice(0, 20).map(w => ({name: String(w.name || '').slice(0, 200), className: w.className, rect: m ? m.rectToScreen(w.rect) : null, geometry:windowGeometry(w.rect,inf,m).status}))};
     },
 
     async inspect_ui(args, opts = null) {
@@ -646,6 +664,9 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       const attempts = [];
       const titlebarProbes = [];
       const main = w.windows.find(x => x.hwnd) || w.windows[0];
+      const inf0=await info(), map0=mapping(inf0,w.root);
+      const geometry=windowGeometry(main.rect,inf0,map0);
+      if (geometry.status==='out_of_screen' || geometry.status==='secondary_monitor') return {focused:false,method:'none',cause:geometry.status,geometry,attempts:[],hint:'Target is outside the primary input/capture area; no activation or input dispatched.'};
       const r = await uia({mode: 'activate', pid: args.pid, ...(main.hwnd ? {hwnd: Number(main.hwnd)} : {}), title: String(main.name || '').slice(0, 200)});
       // 0.5.1 diagnostics: which step worked, and why not (minimised / off-screen / Windows foreground lock).
       const diag = {windowFound: r.windowFound ?? null, wasMinimized: !!r.wasMinimized, offscreen: r.offscreen ?? null, uiaSetFocus: !!r.setFocus,
@@ -662,6 +683,8 @@ export function createGui({caps, home, workspace, platform = process.platform, r
           const rc = win.rect; if (!rc || !m) continue;
           for (const [fx, fy] of [[0.62, 10], [0.5, 10], [0.75, 10]]) {
             const ux = Math.round(rc.x + rc.w * fx), uy = Math.round(rc.y + fy);
+            const candidate=m.rectToScreen({x:ux,y:uy,w:0,h:0});
+            if (!candidate || !pointInside(candidate.x,candidate.y,inf)) { attempts.push({method:'titlebar_probe',ok:false,reason:'out_of_screen'}); continue; }
             const at = await uia({mode: 'at', x: ux, y: uy, nativeHitTest: true});
             const el = at.at?.elem || {};
             const own = !!win.hwnd && String(at.at?.window?.hwnd) === String(win.hwnd);
@@ -682,7 +705,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
               nativeVerified: nativeAgrees, ...(blocker ? {blockedBy: blocker} : {})};
             titlebarProbes.push(probe);
             attempts.push(probe);
-            if (!own || !passive) continue;
+            if (!own || !passive || !visiblePoint) continue;
             const sp = m.rectToScreen({x: ux, y: uy, w: 0, h: 0});
             await getRobot().cmd(`click ${sp.x} ${sp.y} left 1`);
             await sleep(300);
@@ -722,6 +745,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       else if (args.x2 !== undefined || args.y2 !== undefined) bad();
       if (args.action === 'scroll') { if (!int(args.amount, -20, 20) || args.amount === 0) bad(); } else if (args.amount !== undefined) bad();
       const inf = await info();
+      if (inf.screens === 1 && validRect(inf) && pts.some(([x,y])=>!pointInside(x,y,inf))) throw Error('out_of_screen: point outside primary screen; no input dispatched');
       if (inf.screens !== 1 && !mapping(inf, rootCache || (await uia({mode: 'focused'})).root)) throw Error('multi_monitor_mixed_dpi_unsupported: monitors use different scaling; set one scale for all monitors or move the window to the primary monitor');
       if (inf.screens !== 1 && Array.isArray(inf.monitors)) {
         const p = inf.monitors.find(m => m.primary) || inf.monitors[0];
