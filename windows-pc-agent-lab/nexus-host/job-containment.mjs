@@ -52,7 +52,7 @@ export function launchContained(mode,exe,args,options={},deps={}) {
     }
     if((m=/^NXJOB READY (\d+) ([1-9]\d{15,19})$/.exec(line))&&state==='prepared'&&Number(m[1])===rootPid&&m[2]===startTime){
       state='ready';clearTimeout(startupTimer);
-      if(!settled){settled=true;resolveReady({rootPid,startTime});}
+      if(!settled&&!stopping){settled=true;resolveReady({rootPid,startTime});}
       return;
     }
     if((m=/^NXJOB EMPTY (\d+)$/.exec(line))&&rootPid!==null&&Number(m[1])<=0xffffffff&&['prepared','ready'].includes(state)&&!error){
