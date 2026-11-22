@@ -27,6 +27,7 @@ import {requireCap} from './capabilities.mjs';
 import {appGate, classifyApp, classifyIdeInput, classifyIdeClick, redactSecrets, handoffSpec, classifyDestructiveClick, classifyDestructiveKeys} from './policy.mjs';
 import {classifyKeys, classifyClick, createConsent} from './consent.mjs';
 import {createLifecycle} from './lifecycle.mjs';
+import {windowIdentity, sameWindowIdentity} from './window-identity.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROBOT_SRC = path.join(HERE, 'NexusRobot.java');
@@ -206,15 +207,15 @@ export function mapping(info, root) {
  *    a tab switch between two cached snapshots can therefore never reveal an owner's document.
  * Returns {masks:[{x,y,w,h}], hidden:n} or null (cannot redact reliably → no image).
  */
-export function notepadMasks(wins, owned, toScreen, mode = 'capture') {
+export function notepadMasks(wins, consent, toScreen, mode = 'capture') {
   if (!Array.isArray(wins)) return null;
   const tabs = w => (Array.isArray(w?.tabs) ? w.tabs : []).filter(t => t && typeof t.rid === 'string' && t.rid);
   const masks = [];
   for (const w of wins) {
     const ts = tabs(w);
-    const visibleOk = ts.length === 0 ? owned.windows.has(String(w.hwnd))
-      : mode === 'live' ? ts.every(t => owned.tabs.has(t.rid))
-        : (() => { const sel = ts.filter(t => t.selected); return sel.length === 1 && owned.tabs.has(sel[0].rid); })();
+    const visibleOk = ts.length === 0 ? consent.ownsWindow?.(w) === true
+      : mode === 'live' ? ts.every(t => consent.ownsTab?.(w, t) === true)
+        : (() => { const sel = ts.filter(t => t.selected); return sel.length === 1 && consent.ownsTab?.(w, sel[0]) === true; })();
     if (visibleOk) continue;
     const r = w.rect && toScreen ? toScreen(w.rect) : null;
     if (!r || !(r.w > 0 && r.h > 0)) return null;
@@ -309,7 +310,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     try {
       const r = await uia({mode: 'apps', name: 'notepad'});
       const m = mapping(await info(), r.root);
-      v = notepadMasks(r.apps || [], consent.owned, m ? m.rectToScreen : null, mode);
+      v = notepadMasks(r.apps || [], consent, m ? m.rectToScreen : null, mode);
     } catch { v = null; }
     if (mode === 'live') liveMaskCache = {t: Date.now(), v};
     if (!v) throw Error('capture_redaction_unavailable: NEXUS could not locate Notepad windows to hide the owner\'s documents, so no image is taken');
@@ -319,7 +320,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
   async function notepadTextAllowed(pid) {
     let wins; try { wins = await apps('notepad'); } catch { return false; }
     const mine = wins.filter(w => w.pid === pid);
-    const res = notepadMasks(mine.map(w => ({...w, rect: w.rect || {x: 0, y: 0, w: 1, h: 1}})), consent.owned, r => r, 'capture');
+    const res = notepadMasks(mine.map(w => ({...w, rect: w.rect || {x: 0, y: 0, w: 1, h: 1}})), consent, r => r, 'capture');
     return !!res && res.hidden === 0;
   }
 
@@ -344,11 +345,14 @@ export function createGui({caps, home, workspace, platform = process.platform, r
    * can be typed into another window. Then handle a save prompt by `onPrompt`: 'save' | 'discard' | 'cancel'.
    * Caller decides the policy; this only executes it and verifies the result by a fresh snapshot.
    */
-  async function closeTarget({process, hwnd, pid = null, rid = null, onPrompt}) {
-    const r = await uia({mode: 'close', hwnd: Number(hwnd), ...(rid ? {rid} : {})});
+  async function closeTarget({process, win, rid = null, onPrompt}) {
+    const identity = windowIdentity(win);
+    if (!identity) return {closed: false, method: 'identity_unavailable'};
+    const {hwnd, pid} = win;
+    const r = await uia({mode: 'close', hwnd: Number(hwnd), identity, expectedTabs: tabsOf(win).map(t => t.rid), ...(rid ? {rid} : {})});
     if (!r.found) return {closed: true, method: 'already_gone'};
     if (!r.invoked && rid && /^tab_close_button_(missing|not_invokable)$/.test(r.method || '')) {
-      const k = await closeTabByKey({process, hwnd, pid, rid});
+      const k = await closeTabByKey({process, hwnd, pid, rid, identity});
       if (!k.ok) return {closed: false, method: r.method, fallback: k.why};
       r.invoked = true; r.method = 'ctrl_w_verified';
     }
@@ -356,14 +360,16 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     let prompt = null;
     for (let i = 0; i < 4; i++) {
       await sleep(400);
-      const d = await uia({mode: 'dialog', hwnd: Number(hwnd)});
+      const d = await uia({mode: 'dialog', hwnd: Number(hwnd), identity});
+      if (d.method === 'native_identity_changed') return {closed: false, method: d.method};
       if (d.dialog) { prompt = d; break; }
       if (await gone(process, hwnd, rid)) return {closed: true, method: r.method, prompt: null};
     }
     let answered = null;
     if (prompt) {
-      const d = await uia({mode: 'dialog', hwnd: Number(hwnd), choice: onPrompt});
-      const pressed = d.invoked ? 'invoke' : (await clickPromptButton(d.rect, hwnd, pid, onPrompt)) ? 'click' : null;
+      const d = await uia({mode: 'dialog', hwnd: Number(hwnd), identity, choice: onPrompt});
+      // Do not use a coordinate fallback for a save/discard prompt: it may have moved.
+      const pressed = d.invoked ? 'invoke' : null;
       if (!pressed) return {closed: false, method: r.method, prompt: 'shown', answered: null, note: 'prompt button could not be pressed'};
       answered = onPrompt; r.pressed = pressed;
       await sleep(600);
@@ -375,15 +381,18 @@ export function createGui({caps, home, workspace, platform = process.platform, r
    * the target window is in the foreground AND the selected tab in it is exactly our tab (runtime id). Otherwise refuse:
    * a keystroke must never land in another window or on the owner's tab.
    */
-  async function closeTabByKey({process, hwnd, pid, rid}) {
+  async function closeTabByKey({process, hwnd, pid, rid, identity}) {
     if (caps.gui_input !== true) return {ok: false, why: 'gui_input_off'};
-    try { await uia({mode: 'activate', hwnd: Number(hwnd), pid}); } catch { /* verified below */ }
+    // No synthetic key fallback unless the original identity is still verified.
+    const before = (await apps(process)).find(x => String(x.hwnd) === String(hwnd));
+    if (!sameWindowIdentity(identity, before)) return {ok: false, why: 'ownership_changed'};
+    // No activation of potentially reused HWND; require the intended tab already in front.
     for (let i = 0; i < 3; i++) {
       const f = (await uia({mode: 'focused'})).focused;
       const w = (await apps(process)).find(x => String(x.hwnd) === String(hwnd));
-      if (!w) return {ok: false, why: 'window_gone'};
+      if (!sameWindowIdentity(identity, w)) return {ok: false, why: 'ownership_changed'};
       const sel = tabsOf(w).find(t => t.selected);
-      if (f?.ok && String(f.topHwnd) === String(hwnd) && sel?.rid === rid) {
+      if (f?.ok && String(f.topHwnd) === String(hwnd) && f.pid === pid && sel?.rid === rid) {
         await getRobot().cmd('key ctrl+w');
         return {ok: true};
       }
@@ -454,21 +463,22 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       if (allOk) consent.prune([...snaps.values()].flat());
       for (const [proc, wins] of snaps) {
         for (const w of wins) {
-          const ownedTabs = tabsOf(w).filter(t => o.tabs.has(t.rid));
-          const whole = consent.ownsWindow(w) && tabsOf(w).every(t => o.tabs.has(t.rid));
-          const items = whole ? [{rid: null, name: w.name, scratch: o.scratch.has(String(w.hwnd)) || (ownedTabs.length > 0 && ownedTabs.every(t => o.scratch.has(t.rid)))}]
-            : ownedTabs.map(t => ({rid: t.rid, name: t.name, scratch: o.scratch.has(t.rid)}));
+          const ownedTabs = tabsOf(w).filter(t => consent.ownsTab(w,t));
+          const whole = consent.isOwned({kind: 'window'}, w, null);
+          const items = whole ? [{rid: null, name: w.name, scratch: consent.isScratch(w,null) || (ownedTabs.length > 0 && ownedTabs.every(t => consent.isScratch(w,t)))}]
+            : ownedTabs.map(t => ({rid: t.rid, name: t.name, scratch: consent.isScratch(w,t)}));
           for (const it of items) {
             let r;
             try {
               // Re-read immediately before the close; a reused HWND or a changed tab set must not inherit ownership.
               const live = (await apps(proc)).find(x => String(x.hwnd) === String(w.hwnd));
               const tab = it.rid ? tabsOf(live).find(t => t.rid === it.rid) : null;
-              if (!live || live.pid !== w.pid || live.process !== w.process ||
+              if (!sameWindowIdentity(windowIdentity(w), live) ||
                   (it.rid ? !tab || !consent.isOwned({kind: 'tab'}, live, tab) : !consent.isOwned({kind: 'window'}, live, null))) {
-                report.left.push({app: proc, why: 'ownership_changed'}); continue;
+                consent.forgetStale(w, it.rid); report.left.push({app: proc, why: 'ownership_changed'}); continue;
               }
-              r = await closeTarget({process: proc, hwnd: live.hwnd, pid: live.pid, rid: it.rid, onPrompt: it.scratch ? 'save' : 'cancel'});
+              r = await closeTarget({process: proc, win: live, rid: it.rid, onPrompt: it.scratch ? 'save' : 'cancel'});
+              if (['native_identity_changed','identity_unavailable'].includes(r.method)) consent.forgetStale(w, it.rid);
             }
             catch (e) { r = {closed: false, error: String(e?.message || e).slice(0, 80)}; }
             const rec = {app: proc, name: String(it.name || '').slice(0, 120), kind: it.rid ? 'tab' : 'window', ...r};
@@ -550,20 +560,20 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         throw Error(`nexus_verify_before_close: NEXUS typed/clicked in this window and has not checked the result yet - check it first (inspect_ui / window_info pid ${win.pid ?? args.pid} / capture_screen), then close it: open -> act -> verify -> close`);
       }
       if (consented) {
-        if (String(win.hwnd) !== consented.hwnd || (consented.rid && tab?.rid !== consented.rid)) throw Error('consent_target_changed');
+        if (!consent.matchesConsent(consented, win) || (consented.rid && tab?.rid !== consented.rid)) throw Error('consent_target_changed');
       } else if (!own && !byOwner) {
         const g = consent.gate(c, win, tab, {tool: 'close_window', args});
         if (g) return g;
       }
       // What to answer if the app asks to save. Discarding the OWNER's text needs an explicit owner choice.
-      const scratch = tab ? consent.owned.scratch.has(tab.rid) : consent.owned.scratch.has(String(win.hwnd));
+      const scratch = consent.isScratch(win, tab);
       let onPrompt;
       if (scratch) onPrompt = 'save';
       else if (consented) onPrompt = decision === 'close_discard' ? 'discard' : 'save';
       else if (args.onUnsaved === 'discard' && (own || byOwner)) onPrompt = 'discard';
       else if (args.onUnsaved === 'save') onPrompt = 'save';
       else onPrompt = 'cancel';
-      const r = await closeTarget({process: proc, hwnd: win.hwnd, pid: win.pid, rid: tab?.rid || null, onPrompt});
+      const r = await closeTarget({process: proc, win, rid: tab?.rid || null, onPrompt});
       if (r.closed) { if (tab) consent.forgetTab(tab.rid); else { consent.forget(win); lifecycle.forget(win.hwnd); } }
       const out = {target: `${proc}: ${tab ? 'вкладка «' + tab.name + '»' : 'окно «' + win.name + '»'}`, kind, closed: r.closed,
         by: own ? 'nexus_owned' : consented ? 'confirm_action' : 'owner_request', prompt: r.prompt, answered: r.answered};
@@ -775,7 +785,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       }
       const c = classifyClick(args.action, lastAt);
       if (c && consented) {
-        if (String(lastAt.window?.hwnd) !== consented.hwnd || (consented.rid && lastAt.tab?.rid && lastAt.tab.rid !== consented.rid)) throw Error('consent_target_changed');
+        if (!consent.matchesConsent(consented, lastAt.window) || (consented.rid && lastAt.tab?.rid !== consented.rid)) throw Error('consent_target_changed');
       } else if (c) {
         const g = consent.gate(c, lastAt.window, lastAt.tab, {tool: 'mouse_action', args});
         if (g) return g;
@@ -789,7 +799,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
           lastAt.elem?.className === 'ImageButton' && /^(?:Закрыть|Close)$/i.test(lastAt.elem?.name || '')) {
         consent.noteNativeDismiss?.(lastAt.nativeBubble);
       }
-      if (c && consented && decision === 'close_discard') consent.armDiscard(lastAt.window?.hwnd);
+      if (c && consented && decision === 'close_discard') consent.armDiscard(lastAt.window);
       const after = await uia({mode: 'focused'});
       await afterInput(after.focused);
       return {done: true, action: args.action, target, foregroundAfter: after.focused?.process || null, ...(c ? {closeAction: c.kind, consented: !!consented} : {})};
@@ -823,7 +833,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       const c = hasKeys ? classifyKeys(args.keys, before) : null;
       if (c && consented) {
         const sel = (before.window?.tabs || []).find(t => t.selected);
-        if (String(before.window?.hwnd) !== consented.hwnd || (consented.rid && sel?.rid !== consented.rid)) throw Error('consent_target_changed');
+        if (!consent.matchesConsent(consented, before.window) || (consented.rid && sel?.rid !== consented.rid)) throw Error('consent_target_changed');
       } else if (c) {
         const g = consent.gate(c, before.window, null, {tool: 'keyboard_action', args});
         if (g) return g;
@@ -838,7 +848,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
         try { await typer(args.text); r = {clipboardRestored: true, clipboard: 'untouched', method: 'keys'}; }
         catch (e) { r = {...(await R.cmd('paste ' + Buffer.from(args.text, 'utf8').toString('base64'))), method: 'clipboard', keysError: String(e.message).slice(0, 60)}; }
       } else r = hasText ? {...(await R.cmd('paste ' + Buffer.from(args.text, 'utf8').toString('base64'))), method: 'clipboard'} : await R.cmd('key ' + args.keys);
-      if (c && consented && decision === 'close_discard') consent.armDiscard(before.window?.hwnd);
+      if (c && consented && decision === 'close_discard') consent.armDiscard(before.window);
       let created;
       if (creating) { await sleep(700); created = consent.recordCreated(snap, await apps(before.window.process).catch(() => null), 'keys:' + args.keys); }
       const after = await uia({mode: 'focused'});
