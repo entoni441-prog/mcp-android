@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {createGui} from './gui.mjs';
 import {createConsent} from './consent.mjs';
+import {fixtureIdentity} from './window-identity-fixture.mjs';
 import {validateCapabilities} from './capabilities.mjs';
 import {createSession} from './session.mjs';
 import {createLive} from './live.mjs';
@@ -22,7 +23,7 @@ function desk() {
   const st = {fg: 'nexus', ptr: {x: 10, y: 10}, t: 1_000_000, cmds: []};
   const W = {nexus: {pid: 50, process: 'Notepad', hwnd: 900}, owner: {pid: 70, process: 'WINWORD', hwnd: 700}};
   const focused = () => ({ok: true, pid: W[st.fg].pid, process: W[st.fg].process, topHwnd: W[st.fg].hwnd});
-  const win = () => ({hwnd: W[st.fg].hwnd, pid: W[st.fg].pid, process: W[st.fg].process, name: 'w', tabs: []});
+  const win = () => fixtureIdentity({hwnd: W[st.fg].hwnd, pid: W[st.fg].pid, process: W[st.fg].process, name: 'NEXUS-test-token', tabs: []});
   const el = {controlType: 'Document', name: '', id: ''};
   const uia = async a => {
     switch (a.mode) {
@@ -123,7 +124,7 @@ test('lifecycle: input → unverified; read after input → done; untouched wind
 
 test('close_window of a NEXUS window with unchecked input → nexus_verify_before_close (open → act → verify → close)', async () => {
   const {st, g} = desk();
-  g.consent.recordCreated([], [{hwnd: 900, pid: 50, process: 'Notepad', name: 'w', tabs: []}], 'test');
+  g.consent.recordCreated([], [fixtureIdentity({hwnd:900,pid:50,process:'Notepad',name:'NEXUS-test-token',tabs:[]})], 'test', {token:'NEXUS-test-token'});
   await g.keyboard_action({text: 'hello'});
   await assert.rejects(g.close_window({pid: 50}), /^Error: nexus_verify_before_close/);
   g.lifecycle.observed({pid: 50});
