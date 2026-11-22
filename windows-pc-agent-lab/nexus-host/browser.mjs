@@ -325,12 +325,17 @@ export function createBrowser({caps, home, consent = null, platform = process.pl
   const shortId = id => String(id).slice(0, 8).toLowerCase();
   const evaluate = async (expr) => {
     if (pendingDialog) throw Object.assign(Error('dialog_open'), {dialog: true});
-    const r = await untilDialog((await ensure()).send('Runtime.evaluate', {expression: expr, returnByValue: true, awaitPromise: true}));
+    const current=page;
+    if(!current||current.closed||cleaning)throw Error('browser_not_open');
+    const g=generation;
+    const r = await untilDialog(current.send('Runtime.evaluate', {expression: expr, returnByValue: true, awaitPromise: true}));
+    if(g!==generation||page!==current)throw Error('browser_start_cancelled');
     if (r.exceptionDetails) throw Error('page_script_failed');
     return r.result?.value;
   };
   async function waitLoad() {
-    for (let i = 0; i < 60 && !pendingDialog; i++) { try { if (await evaluate('document.readyState') === 'complete') return; } catch { /* navigating */ } await sleep(250); }
+    const g=generation;
+    for (let i = 0; i < 60 && !pendingDialog; i++) { verifyGeneration(g); if(!page||cleaning)throw Error('browser_not_open'); try { if (await evaluate('document.readyState') === 'complete') return; } catch { verifyGeneration(g); } await sleep(250); }
   }
   async function guardUrl() {
     const url = await evaluate('location.href');
