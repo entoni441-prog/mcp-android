@@ -64,6 +64,8 @@ internal static class NexusJobHost {
     static extern bool CreateProcessW(string app, StringBuilder command, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string cwd, ref StartupInfoEx si, out ProcessInformation pi);
     [DllImport("kernel32.dll", SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+    [StructLayout(LayoutKind.Sequential)] struct FileTime { public uint Low, High; }
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetProcessTimes(IntPtr process,out FileTime created,out FileTime exited,out FileTime kernel,out FileTime user);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandle(IntPtr h);
     [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr GetStdHandle(int which);
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
@@ -130,12 +132,16 @@ internal static class NexusJobHost {
             // Atomic assignment; no AssignProcessToJobObject AFTER an uncontained spawn.
             Require(CreateProcessW(args[1],cmd,IntPtr.Zero,IntPtr.Zero,true,flags,IntPtr.Zero,null,ref si,out pi),"create_contained");
             Close(ref input); Close(ref output);
-            Signal("PREPARED "+pi.dwProcessId);
+            FileTime created, exited, kernel, user;
+            Require(GetProcessTimes(pi.hProcess,out created,out exited,out kernel,out user),"process_times");
+            ulong ticks=(((ulong)created.High<<32)|created.Low)+504911232000000000UL;
+            string lifetime=pi.dwProcessId+" "+ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            Signal("PREPARED "+lifetime);
             if(Console.In.ReadLine()!="RUN") {
                 Require(TerminateJobObject(job,1),"cancel_prepared");
             } else {
                 Require(ResumeThread(pi.hThread)!=0xffffffff,"resume");
-                Signal("READY "+pi.dwProcessId);
+                Signal("READY "+lifetime);
                 // EOF (including Host crash) or any line requests STOP.
                 ManualResetEvent stop=new ManualResetEvent(false);
                 Thread watcher=new Thread(delegate() { try { Console.In.ReadLine(); } catch {} finally { stop.Set(); } });
