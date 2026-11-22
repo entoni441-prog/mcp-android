@@ -123,7 +123,7 @@ test('lifecycle: input → unverified; read after input → done; untouched wind
 
 test('close_window of a NEXUS window with unchecked input → nexus_verify_before_close (open → act → verify → close)', async () => {
   const {st, g} = desk();
-  g.consent.owned.windows.add('900'); g.consent.owned.apps.add('Notepad'); g.consent.owned.pids.add(50);
+  g.consent.recordCreated([], [{hwnd: 900, pid: 50, process: 'Notepad', name: 'w', tabs: []}], 'test');
   await g.keyboard_action({text: 'hello'});
   await assert.rejects(g.close_window({pid: 50}), /^Error: nexus_verify_before_close/);
   g.lifecycle.observed({pid: 50});
