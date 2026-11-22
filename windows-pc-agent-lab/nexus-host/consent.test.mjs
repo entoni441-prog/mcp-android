@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {createGui} from './gui.mjs';
 import {createConsent, classifyKeys, classifyClick} from './consent.mjs';
+import {fixtureIdentity} from './window-identity-fixture.mjs';
 import {createProcs} from './procs.mjs';
 import {validateCapabilities} from './capabilities.mjs';
 
@@ -17,7 +18,7 @@ const TAB = (rid, name, selected = false) => ({rid, name, selected});
 /** Fake desktop: one Notepad window (hwnd 900) with tabs; element under the point is configurable. */
 function desk({tabs = [TAB('u1', 'Текстовый документ.txt', true), TAB('u2', 'wrangler.jsonc')], el = {controlType: 'Document', name: '', id: ''}, tabAt = null, focusEl = {controlType: 'Document', name: '', id: ''}} = {}) {
   const st = {tabs, el, tabAt, focusEl, robot: [], hwnd: 900};
-  const win = () => ({hwnd: st.hwnd, pid: 50, process: 'Notepad', name: 'Блокнот', tabs: st.tabs});
+  const win = () => fixtureIdentity({hwnd: st.hwnd, pid: 50, process: 'Notepad', name: 'Блокнот', tabs: st.tabs});
   const focused = {ok: true, pid: 50, process: 'Notepad', topHwnd: 900};
   st.uia = async a => {
     const base = {root: ROOT};
@@ -94,9 +95,10 @@ test('consent target must match exactly; wrong decision rejected; cancel does no
 
 test('PowerShell artefact: tabs [[]] / [{}] for a window without tabs is treated as no tabs', () => {
   const c = createConsent();
-  c.recordCreated([], [{hwnd: 7, pid: 1, process: 'Notepad', name: 'w', tabs: [[]]}], 't');
-  assert.equal(c.gate({kind: 'window', via: 'x'}, {hwnd: 7, pid: 1, process: 'Notepad', name: 'w', tabs: [[]]}, null, {}), null);
-  assert.equal(c.gate({kind: 'window', via: 'x'}, {hwnd: 7, pid: 1, process: 'Notepad', name: 'w', tabs: [{}]}, null, {}), null);
+  const w = fixtureIdentity({hwnd: 7, pid: 1, process: 'Notepad', name: 'NEXUS-test-token', tabs: [[]]});
+  c.recordCreated([], [w], 't', {token:'NEXUS-test-token'});
+  assert.equal(c.gate({kind: 'window', via: 'x'}, w, null, {}), null);
+  assert.equal(c.gate({kind: 'window', via: 'x'}, {...w,tabs:[{}]}, null, {}), null);
 });
 
 test('consent expires after 120 s', () => {
@@ -169,7 +171,9 @@ test('process_action close: allowlisted app NEXUS did not start → consent; kil
   const t = consent.take(r.consentId, 'close_discard', r.target);
   assert.equal((await p.process_action(t.replay.args, {consented: t})).requested, true);
   consent.ownPid(51);
-  assert.equal((await p.process_action({pid: 51, action: 'close'})).requested, true); // NEXUS-started: autonomous
+  assert.equal((await p.process_action({pid: 51, action: 'close'})).status, 'consent_required'); // window PID alone no longer confers process ownership
+  p.registerOwned(51,'test-child');
+  assert.equal((await p.process_action({pid: 51, action: 'close'})).requested, true);
   await assert.rejects(p.process_action({pid: 50, action: 'kill'}), /process_not_allowed/);
 });
 
@@ -216,7 +220,7 @@ test('focus fallback is not used without gui_input', async () => {
 });
 
 // 0.4.3 — regression from owner's PC 01.11.2026: cold start of Win11 Notepad restored 3 owner tabs, all marked createdByNexus.
-const W = (hwnd, tabs) => ({hwnd, pid: 9, process: 'Notepad', name: 'n', tabs: tabs.map((r, i) => ({rid: r, name: r, selected: i === 0}))});
+const W = (hwnd, tabs) => fixtureIdentity({hwnd, pid: 9, process: 'Notepad', name: 'n', tabs: tabs.map((r, i) => ({rid: r, name: r, selected: i === 0}))});
 test('0.4.3: cold start with restored session tabs owns nothing', () => {
   const c = createConsent();
   const r = c.recordCreated([], [W(1, ['wrangler', 'doc', 'pass'])], 'open_app:notepad');
@@ -247,11 +251,13 @@ test('0.4.3: several new tabs at once are ambiguous → nothing owned', () => {
   const c = createConsent();
   assert.equal(c.recordCreated([W(1, ['a'])], [W(1, ['a', 'b', 'c'])], 't').reason, 'multiple_new_tabs_ambiguous');
 });
-test('0.4.3: classic Notepad (no tabs) cold start still owns its window', () => {
-  const c = createConsent();
-  const r = c.recordCreated([], [W(5, [])], 't');
-  assert.deepEqual(r.windows, ['n']);
-  assert.equal(c.gate({kind: 'window', via: 'alt+f4'}, W(5, []), null, {}), null);
+test('0.4.3: classic Notepad (no tabs) requires unique scratch title before whole-window ownership',()=> {
+  const c=createConsent(); const w=W(77,[]);
+  assert.deepEqual(c.recordCreated([], [w], 't').windows, []);
+  assert.equal(c.isOwned({kind:'window'},w,null),false);
+  const marked={...w,name:'NEXUS-test-token'};
+  assert.deepEqual(c.recordCreated([], [marked], 't',{token:'NEXUS-test-token'}).windows,['NEXUS-test-token']);
+  assert.equal(c.isOwned({kind:'window'},marked,null),true);
 });
 test('0.4.3: warm ctrl+shift+n new window with one new tab is owned', () => {
   const c = createConsent();
