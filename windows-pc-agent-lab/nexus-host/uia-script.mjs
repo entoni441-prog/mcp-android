@@ -1,5 +1,5 @@
 /**
- * Fixed Windows PowerShell 5.1 script for UI Automation (read-only + AppActivate).
+ * Fixed Windows PowerShell 5.1 script for UI Automation (read-only + guarded exact-window actions).
  * Passed as -EncodedCommand; request data arrives ONLY through the env var NEXUS_UIA_ARGS (JSON),
  * result goes to the file named in NEXUS_UIA_OUT (UTF-8). Nothing from the request is interpolated into code.
  * Read-only snapshots load framework UIA assemblies without compiling C#. Native close/dialog guards
@@ -10,7 +10,7 @@
  *  focused                     → foreground info (focused element process) + calibration rect
  *  at        {x,y}             → process under the point (UIA coordinate space) + focused
  *  minimize  {pid,hwnd}        → ONLY validated WindowsTerminal WindowPattern visual state; no mouse/key/commands
- *  activate  {pid,title?}      → WScript.Shell.AppActivate(pid), fallback AppActivate(title); result re-read from UIA
+ *  activate  {pid,hwnd,identity} → exact native identity guard, restore / UIA SetFocus, reread exact foreground
  *  windows   {pid}             → top-level windows owned by pid (or ApplicationFrameHost frames hosting it)
  *  tree      {pid,depth,max}   → control tree of those windows (bounded)
  *  context                     → focused element (type/name/id) + its top-level window (hwnd, tabs)          [0.4.2]
@@ -18,8 +18,7 @@
  * 0.4.2: 'at' also returns element name/automationId, its top-level window hwnd and the TabItem it lies in;
  *        'activate' also reports the focused top-level window hwnd (focus confirmed by window, not only by pid).
  * 0.5.1: apps — also ApplicationFrameHost frames hosting {name} (UWP Calculator): process/pid of the hosted app, hwnd of
- *        the frame (the window the user sees); activate {pid,hwnd?} — restore if minimised, UIA SetFocus on the window,
- *        then AppActivate, with diagnostics; close {hwnd,rid?} — one tab (select + its close button, Invoke) or the window
+ *        the frame (the window the user sees); activate {pid,hwnd,identity} — restore if minimised, exact UIA SetFocus (no PID/title fallback); close {hwnd,rid?} — one tab (select + its close button, Invoke) or the window
  *        (WindowPattern.Close), with native identity validation; dialog {hwnd,identity,choice?} — only in-window
  *        save prompt; unrelated or separate top-level dialogs are not acted on.
  * Every mode returns `root` = UIA desktop rectangle, used by Node to map UIA coordinates to Java screen points.
