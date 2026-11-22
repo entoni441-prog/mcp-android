@@ -146,7 +146,7 @@ export function createConsent({audit = () => {}, now = () => Date.now(), journal
       if (!ownsWindow(win)) return false;
       return tabsOf(win).every(t => ownsTab(win, t));
     }
-    if (c.kind === 'discard') { const a = armed.get(String(win?.hwnd)); return !!a && a.expires > now() && sameWindowIdentity(a.identity, win); }
+    if (c.kind === 'discard') { const a = armed.get(String(win?.hwnd)); return !!a && a.expires > now() && sameWindowIdentity(a.identity, win) && a.title === win.name && a.selectedRid === (selectedTab(win)?.rid || null); }
     return false;
   }
 
@@ -219,7 +219,7 @@ export function createConsent({audit = () => {}, now = () => Date.now(), journal
     prune(wins) {
       const current = new Map(wins.map(w => [String(w.hwnd), w]));
       for (const h of [...owned.windows]) if (!ownsWindow(current.get(h))) forgetStale({hwnd: h});
-      for (const r of [...owned.tabs]) { const w = current.get(tabIdentities.get(r)?.identity.hwnd); if (!w || !tabsOf(w).some(t => t.rid === r && ownsTab(w,t))) forgetTab(r); }
+      for (const r of [...owned.tabs]) { const record = tabIdentities.get(r); const w = current.get(record?.identity.hwnd); if (!w || !tabsOf(w).some(t => t.rid === r && ownsTab(w,t))) { if (record) forgetStale({hwnd: record.identity.hwnd},r); else forgetTab(r); } }
     },
     isOwned,
     tabsOf,
@@ -231,7 +231,8 @@ export function createConsent({audit = () => {}, now = () => Date.now(), journal
     gate(c, win, tab, replay) {
       if (!c) return null;
       if (isOwned(c, win, tab)) {
-        // Closing does not itself authorize discarding an unsaved document.
+        // Closing does not itself authorize discarding an unsaved document. Discard permits are single-use.
+        if (c.kind === 'discard') armed.delete(String(win.hwnd));
         audit({event: 'close_autonomous', kind: c.kind, via: c.via, target: label(win, tab || selectedTab(win), c.kind)});
         return null;
       }
@@ -290,7 +291,7 @@ export function createConsent({audit = () => {}, now = () => Date.now(), journal
       audit({event: 'consent_decision', consentId, decision, target: p.target});
       return p;
     },
-    armDiscard(win) { const id = windowIdentity(win); if (id) armed.set(id.hwnd, {identity: id, expires: now() + DISCARD_ARM_MS}); },
+    armDiscard(win) { const id = windowIdentity(win); if (id) armed.set(id.hwnd, {identity: id, title: win.name, selectedRid: selectedTab(win)?.rid || null, expires: now() + DISCARD_ARM_MS}); },
     pendingCount: () => pending.size,
     /** 0.6.1 owner channel (Live View page only — not in the model's catalog): waiting owner-tier approvals. */
     ownerList() {
