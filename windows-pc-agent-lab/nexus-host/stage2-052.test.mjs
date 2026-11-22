@@ -161,7 +161,7 @@ test('server: protected file needs consent, then is returned redacted; search hi
 });
 
 
-test('NX-052-21: Steam helper GUI owns its exact window; launcher owned only after cold snapshot proof', async () => {
+test('NX-052-21: Steam ancestry alone does not authorize closing unmarked windows or processes', async () => {
   for (const {ambiguous, root} of [{ambiguous: false, root: 111}, {ambiguous: true, root: 111}, {ambiguous: false, root: 999}, {ambiguous: false, root: undefined}]) {
     const consent = createConsent(); let snaps = 0;
     const helper = {hwnd: 123, pid: 222, launchRootPid: root, process: 'steamwebhelper', name: 'Steam', tabs: ambiguous ? [{rid: 'restored'}] : []};
@@ -171,10 +171,10 @@ test('NX-052-21: Steam helper GUI owns its exact window; launcher owned only aft
       discovery: {find: async () => ({exe: 'C:\\Steam\\steam.exe'})},
       launcher: () => ({pid: 111, once(ev, fn) {if (ev === 'spawn') setImmediate(fn); return this;}, unref() {}})});
     const out = await a.open_app({app: 'steam'});
-    const owned = !ambiguous && root === 111;
-    assert.equal(consent.owned.pids.has(111), !ambiguous && root === 111);
-    assert.equal(consent.owned.pids.has(222), owned);
-    assert.equal(consent.isOwned({kind: 'window'}, helper), owned);
+    const owned = false; // no unique scratch title and no full native identity
+    assert.equal(consent.owned.pids.has(111), false);
+    assert.equal(consent.owned.pids.has(222), false);
+    assert.equal(consent.isOwned({kind: 'window'}, helper), false);
     assert.equal(consent.isOwned({kind: 'window'}, {...helper, hwnd: 999}), false);
     assert.equal(out.createdByNexus.windows.length, owned ? 1 : 0);
     assert.deepEqual(out.createdByNexus.tabs, []);
