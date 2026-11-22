@@ -52,8 +52,7 @@ final class ReverseRunnerUITests: XCTestCase {
 
     private func visibleElements(_ app: XCUIApplication) -> [[String: Any]] {
         var result = [[String: Any]]()
-        for item in app.descendants(matching: .any).allElementsBoundByIndex.prefix(150) {
-            guard item.exists else { continue }
+        for item in app.descendants(matching: .any).allElementsBoundByIndex.prefix(90) {
             let bounds = item.frame
             if bounds.isNull || bounds.isEmpty { continue }
             let secure = item.elementType == .secureTextField
@@ -100,6 +99,10 @@ final class ReverseRunnerUITests: XCTestCase {
             return pass(["runner": "active", "ui_verification": false])
         }
         if op == "screenshot" {
+            let listed = ["com.openai.chat", "com.anthropic.claude"]
+            guard listed.contains(where: { XCUIApplication(bundleIdentifier: $0).state == .runningForeground }) else {
+                return fail("screenshot_scope_denied")
+            }
             guard let jpeg = XCUIScreen.main.screenshot().image.jpegData(compressionQuality: 0.48),
                   jpeg.count < 3_500_000 else { return fail("screenshot_unavailable") }
             return pass(["format": "jpeg", "base64": jpeg.base64EncodedString()])
@@ -126,7 +129,8 @@ final class ReverseRunnerUITests: XCTestCase {
                 .filter { $0.exists && $0.isHittable && $0.isEnabled }
             guard editors.count == 1, let editor = editors.first,
                   !(editor.elementType == .secureTextField),
-                  let before = editor.value as? String, before.isEmpty else {
+                  let before = editor.value as? String,
+                  (before.isEmpty || (!editor.label.isEmpty && before == editor.label)) else {
                 return fail("editable_precondition_failed")
             }
             editor.tap()
@@ -141,6 +145,7 @@ final class ReverseRunnerUITests: XCTestCase {
             // owner-authorized broker and checked after the one-shot gesture.
             guard let expected = payload["expected_label"] as? String,
                   !expected.isEmpty, expected.count <= 150 else { return fail("effect_required") }
+            guard !queryLabel(app, expected) else { return fail("effect_already_present") }
             if op == "tap" {
                 guard let (x,y) = point(payload, x: "x", y: "y") else { return fail("invalid_point") }
                 screenPoint(app,x,y).tap()
