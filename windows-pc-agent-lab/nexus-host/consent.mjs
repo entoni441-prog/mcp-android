@@ -244,7 +244,7 @@ export function createConsent({audit = () => {}, now = () => Date.now(), journal
       const target = c.kind === 'discard' ? `${win?.process || 'app'}: «Не сохранять» в окне «${win?.name || '?'}»` : label(win, t, c.kind);
       const options = c.kind === 'discard' ? ['close_discard', 'cancel'] : ['close_discard', 'close_save', 'cancel'];
       const ttl = autonomy ? OWNER_TTL_MS : TTL_MS;
-      pending.set(id, {id, c, replay, hwnd: String(win?.hwnd ?? ''), rid: t?.rid || null, pid: win?.pid, identity: windowIdentity(win), target, options, owner: autonomy, expires: now() + ttl});
+      pending.set(id, {id, c, replay, hwnd: String(win?.hwnd ?? ''), rid: t?.rid || null, pid: win?.pid, identity: windowIdentity(win), processIdentity: c.kind==='process'?{pid:win.pid,startTime:win.startTime,process:win.process}:null, target, options, owner: autonomy, expires: now() + ttl});
       for (const [k, v] of pending) if (v.expires < now()) pending.delete(k);
       audit({event: 'consent_required', consentId: id, kind: c.kind, via: c.via, target, owner: autonomy});
       return {status: 'consent_required', consentId: id, kind: c.kind, target, uncertain: !!c.uncertain, options, expiresInSec: ttl / 1000,
