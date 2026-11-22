@@ -55,6 +55,18 @@ function NxNativeIdentity($hwnd) {
 function NxStart($pidValue) {
   try { return (Get-Process -Id $pidValue -ErrorAction Stop).StartTime.ToUniversalTime().Ticks.ToString() } catch { return '' }
 }
+function NxSameLogicalApp($w, $expected) {
+  if ([int]$expected.pid -eq [int]$expected.nativePid) { return $true }
+  # Frame-hosted app: the logical process must still be a child of this specific frame.
+  try {
+    $child = $TW.GetFirstChild($w); $n = 0
+    while ($null -ne $child -and $n -lt 50) {
+      if ([int]$child.Current.ProcessId -eq [int]$expected.pid) { return $true }
+      $child = $TW.GetNextSibling($child); $n++
+    }
+  } catch { }
+  return $false
+}
 function NxSameNative($w, $expected) {
   try {
     if ($null -eq $w -or $null -eq $expected -or
@@ -64,6 +76,8 @@ function NxSameNative($w, $expected) {
       [string]$id.nativeStart -ceq [string]$expected.nativeStart -and
       (NxStart ([int]$expected.pid)) -ceq [string]$expected.startTime -and
       (NxPName ([int]$expected.pid)) -ieq [string]$expected.process -and
+      [int]$w.Current.ProcessId -eq [int]$expected.nativePid -and
+      (NxSameLogicalApp $w $expected) -and
       (NxRid $w) -ceq [string]$expected.windowRid)
   } catch { return $false }
 }
