@@ -1,0 +1,51 @@
+name: iPhone Reverse XCTest STAGING - unsigned compilation
+on:
+  push:
+    branches:
+      - experiment/iphone-reverse-xctest-20261122
+    paths:
+      - ios-reverse-staging/**
+      - .github/workflows/ios-reverse-unsigned-build.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unsigned-ios-build:
+    name: Unsigned iOS XCTest compile (NO device installation)
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+      - name: Generate local Xcode project
+        working-directory: ios-reverse-staging
+        run: xcodegen generate
+      - name: Compile generic iOS XCTest (unsigned, no account)
+        working-directory: ios-reverse-staging
+        run: |
+          xcodebuild \
+            -project ReverseIPhoneRunnerStaging.xcodeproj \
+            -scheme ReverseIPhoneRunnerStaging \
+            -destination 'generic/platform=iOS' \
+            -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/ios-staging-dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build-for-testing
+      - name: Upload unsigned build inputs (not installable on phone)
+        uses: actions/upload-artifact@v4
+        with:
+          name: iphone-reverse-xctest-UNSIGNED
+          path: |
+            ${{ runner.temp }}/ios-staging-dd/Build/Products/*.xctestrun
+            ${{ runner.temp }}/ios-staging-dd/Build/Products/Debug-iphoneos/RunnerHost.app/**
+            ${{ runner.temp }}/ios-staging-dd/Build/Products/Debug-iphoneos/RunnerUITests-Runner.app/**
+          if-no-files-found: warn
+          retention-days: 7
