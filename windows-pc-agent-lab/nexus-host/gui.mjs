@@ -455,12 +455,21 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       for (const [proc, wins] of snaps) {
         for (const w of wins) {
           const ownedTabs = tabsOf(w).filter(t => o.tabs.has(t.rid));
-          const whole = o.windows.has(String(w.hwnd)) && tabsOf(w).every(t => o.tabs.has(t.rid));
+          const whole = consent.ownsWindow(w) && tabsOf(w).every(t => o.tabs.has(t.rid));
           const items = whole ? [{rid: null, name: w.name, scratch: o.scratch.has(String(w.hwnd)) || (ownedTabs.length > 0 && ownedTabs.every(t => o.scratch.has(t.rid)))}]
             : ownedTabs.map(t => ({rid: t.rid, name: t.name, scratch: o.scratch.has(t.rid)}));
           for (const it of items) {
             let r;
-            try { r = await closeTarget({process: proc, hwnd: w.hwnd, pid: w.pid, rid: it.rid, onPrompt: it.scratch ? 'save' : 'cancel'}); }
+            try {
+              // Re-read immediately before the close; a reused HWND or a changed tab set must not inherit ownership.
+              const live = (await apps(proc)).find(x => String(x.hwnd) === String(w.hwnd));
+              const tab = it.rid ? tabsOf(live).find(t => t.rid === it.rid) : null;
+              if (!live || live.pid !== w.pid || live.process !== w.process ||
+                  (it.rid ? !tab || !consent.isOwned({kind: 'tab'}, live, tab) : !consent.isOwned({kind: 'window'}, live, null))) {
+                report.left.push({app: proc, why: 'ownership_changed'}); continue;
+              }
+              r = await closeTarget({process: proc, hwnd: live.hwnd, pid: live.pid, rid: it.rid, onPrompt: it.scratch ? 'save' : 'cancel'});
+            }
             catch (e) { r = {closed: false, error: String(e?.message || e).slice(0, 80)}; }
             const rec = {app: proc, name: String(it.name || '').slice(0, 120), kind: it.rid ? 'tab' : 'window', ...r};
             if (r.closed) { report.closed.push(rec); if (it.rid) consent.forgetTab(it.rid); else { consent.forget(w); lifecycle.forget(w.hwnd); } }
