@@ -64,7 +64,7 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
       let all = await listAll();
       if (args.nameFilter) all = all.filter(p => p.process.toLowerCase().includes(args.nameFilter.toLowerCase()));
       all.sort((a, b) => (b.memKB || 0) - (a.memKB || 0));
-      return {count: all.length, truncated: all.length > limit, processes: all.slice(0, limit).map(p => ({...p, ownedByNexus: owned.has(p.pid) || !!consent?.owned.pids.has(p.pid)}))};
+      return {count: all.length, truncated: all.length > limit, processes: all.slice(0, limit).map(p => ({...p, ownedByNexus: owned.has(p.pid)}))};
     },
 
     async process_action(args, {consented = null} = {}) {
@@ -72,7 +72,7 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
       if (!onlyKeys(args, ['pid', 'action']) || !int(args.pid, 1, 2 ** 31) || !['close', 'kill'].includes(args.action)) bad();
       const p = (await listAll()).find(x => x.pid === args.pid);
       if (!p) throw Error('process_not_found');
-      const isOwned = owned.has(p.pid) || !!consent?.owned.pids.has(p.pid);
+      const isOwned = owned.has(p.pid);
       // 0.5.2: any app allowed by policy (a protected app is closable too — closing a non-owned app always asks the owner).
       const pg = appGate(caps, p.process, {mode: 'close'});
       const isAllowedApp = pg.allow || !!pg.consent;
