@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {launchContained} from './job-containment.mjs';
 import {createProcs} from './procs.mjs';
 import {createBrowser} from './browser.mjs';
@@ -89,4 +91,15 @@ test('job native source has atomic creation and handle allow-list, no PID attach
  assert.ok(s.indexOf('Require(CreateProcessW(args[1]')<s.indexOf('Require(ResumeThread(pi.hThread)'));
  assert.match(s,/TerminateJobObject\(job,1\)/);assert.match(s,/while\(Active\(job\)!=0\)/);
  // Compiler/native runtime acceptance is a separate gated stage.
+});
+
+const compiler=process.platform==='win32'&&process.env.SystemRoot?path.join(process.env.SystemRoot,'Microsoft.NET','Framework64','v4.0.30319','csc.exe'):null;
+test('job helper C# compiles to a disposable experiment artifact (never executed)',{skip:!compiler||!fs.existsSync(compiler)},()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nxjob-compile-'));
+ try {
+  const source=new URL('./NexusJobHost.cs',import.meta.url);
+  const target=path.join(dir,'NexusJobHost.exe');
+  const result=spawnSync(compiler,['/nologo','/target:exe','/platform:x64','/out:'+target,fileURLToPath(source)],{encoding:'utf8',windowsHide:true,timeout:20000});
+  assert.equal(result.error,undefined);assert.equal(result.status,0,String(result.stdout)+' '+String(result.stderr));assert.ok(fs.statSync(target).size>0);
+ } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
