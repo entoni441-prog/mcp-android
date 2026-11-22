@@ -2,8 +2,8 @@
  * Fixed Windows PowerShell 5.1 script for UI Automation (read-only + AppActivate).
  * Passed as -EncodedCommand; request data arrives ONLY through the env var NEXUS_UIA_ARGS (JSON),
  * result goes to the file named in NEXUS_UIA_OUT (UTF-8). Nothing from the request is interpolated into code.
- * Uses Add-Type -AssemblyName (loads signed framework assemblies, no compilation) — needs FullLanguage,
- * confirmed on the owner's PC by preflight 01.11.2026.
+ * Read-only snapshots load framework UIA assemblies without compiling C#. Native close/dialog guards
+ * and existing native popup/hit-test modes compile fixed P/Invoke types on demand; failure refuses input.
  *
  * Modes:
  *  focused                     → foreground info (focused element process) + calibration rect
@@ -19,8 +19,8 @@
  * 0.5.1: apps — also ApplicationFrameHost frames hosting {name} (UWP Calculator): process/pid of the hosted app, hwnd of
  *        the frame (the window the user sees); activate {pid,hwnd?} — restore if minimised, UIA SetFocus on the window,
  *        then AppActivate, with diagnostics; close {hwnd,rid?} — one tab (select + its close button, Invoke) or the window
- *        (WindowPattern.Close); dialog {hwnd,choice?} — Save / Don't save / Cancel prompt of that window (in-window or
- *        a top-level dialog of the same process); with choice, Invoke that button (rect returned if not invokable).
+ *        (WindowPattern.Close), with native identity validation; dialog {hwnd,identity,choice?} — only in-window
+ *        save prompt; unrelated or separate top-level dialogs are not acted on.
  * Every mode returns `root` = UIA desktop rectangle, used by Node to map UIA coordinates to Java screen points.
  */
 export const UIA_SCRIPT = String.raw`
@@ -35,7 +35,20 @@ $AE = [System.Windows.Automation.AutomationElement]
 $TW = [System.Windows.Automation.TreeWalker]::ControlViewWalker
 function NxRect($e) { $r = $e.Current.BoundingRectangle; if ($r.IsEmpty) { return $null }; return @{ x = [int]$r.X; y = [int]$r.Y; w = [int]$r.Width; h = [int]$r.Height } }
 function NxPName($procId) { try { return (Get-Process -Id $procId -ErrorAction Stop).ProcessName } catch { return '' } }
-# Native ownership of the actual HWND (distinct from the hosted logical app PID).
+# Read-only UIA snapshot candidate. No Add-Type compilation in this hot path.
+# The actual native HWND owner MUST agree before any close/dialog mutation.
+function NxSnapshotIdentity($w) {
+  try {
+    $h = [int64]$w.Current.NativeWindowHandle
+    if ($h -le 0) { return $null }
+    $fresh = $AE::FromHandle([IntPtr]$h)
+    if ($null -eq $fresh -or [int64]$fresh.Current.NativeWindowHandle -ne $h -or
+        [int]$fresh.Current.ProcessId -ne [int]$w.Current.ProcessId) { return $null }
+    $p = Get-Process -Id ([int]$fresh.Current.ProcessId) -ErrorAction Stop
+    return @{ nativePid = [int]$p.Id; nativeStart = $p.StartTime.ToUniversalTime().Ticks.ToString() }
+  } catch { return $null }
+}
+# Actual Win32 ownership proof, used only in guarded close/dialog, never by NxWin.
 function NxNativeIdentity($hwnd) {
   try {
     if (-not ('NxIdentity.Native' -as [type])) {
@@ -67,11 +80,11 @@ function NxSameLogicalApp($w, $expected) {
   } catch { }
   return $false
 }
-function NxSameNative($w, $expected) {
+function NxSameNative($w, $expected, $hwnd) {
   try {
     if ($null -eq $w -or $null -eq $expected -or
-        [int64]$w.Current.NativeWindowHandle -ne [int64]$a.hwnd) { return $false }
-    $id = NxNativeIdentity $a.hwnd
+        [int64]$w.Current.NativeWindowHandle -ne [int64]$hwnd) { return $false }
+    $id = NxNativeIdentity $hwnd
     return ($null -ne $id -and [int]$id.nativePid -eq [int]$expected.nativePid -and
       [string]$id.nativeStart -ceq [string]$expected.nativeStart -and
       (NxStart ([int]$expected.pid)) -ceq [string]$expected.startTime -and
@@ -201,7 +214,7 @@ function NxWin($w) {
   if ($null -eq $w) { return $null }
   $wpid = $w.Current.ProcessId
   $tb = NxTabs $w   # ArrayList (returned with unary comma); @($tb) enumerates it — @(NxTabs $w) would wrap an empty list as [[]]
-  $id = NxNativeIdentity ([int64]$w.Current.NativeWindowHandle)
+  $id = NxSnapshotIdentity $w
   return @{ hwnd = [int64]$w.Current.NativeWindowHandle; pid = $wpid; process = (NxPName $wpid); startTime = (NxStart $wpid); nativePid = $id.nativePid; nativeStart = $id.nativeStart; windowRid = (NxRid $w); name = (NxStr $w.Current.Name 200); className = $w.Current.ClassName; rect = (NxRect $w); tabs = @($tb) }
 }
 # 0.5.2 R-01: is the top-level window a dialog, and what does it say? Text is used ONLY inside the Host to recognise
@@ -461,7 +474,7 @@ switch ($a.mode) {
     $w = $null
     try { $w = $AE::FromHandle([IntPtr]([int64]$a.hwnd)) } catch { $w = $null }
     $res.found = $false; $res.invoked = $false
-    if ($null -ne $w -and ((-not (NxSameNative $w $a.identity)) -or (NxStr $w.Current.Name 200) -cne [string]$a.expectedTitle -or (-not (NxSameCloseTabs $w $a.expectedTabs)))) {
+    if ($null -ne $w -and -not (NxSameNative $w $a.identity $a.hwnd)) {
       $res.found = $true; $res.method = 'native_identity_changed'; break
     }
     if ($null -ne $w -and [int64]$w.Current.NativeWindowHandle -eq [int64]$a.hwnd) {
@@ -469,7 +482,7 @@ switch ($a.mode) {
         $tab = NxFindTab $w ([string]$a.rid)
         if ($null -ne $tab) {
           $res.found = $true
-          if (-not (NxSameNative $w $a.identity)) { $res.method = 'native_identity_changed'; break }
+          if (-not (NxSameNative $w $a.identity $a.hwnd)) { $res.method = 'native_identity_changed'; break }
           try { $tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() } catch { }
           # 0.5.1 live fix: Win11 Notepad (WinUI TabView) shows the close button only on the selected/hovered tab and it
           # can sit deeper than a direct child. Search all descendants (raw view) a few times after selecting.
@@ -492,13 +505,15 @@ switch ($a.mode) {
           $res.tabButtons = @($diag)
           try { $res.tabSelected = [bool]$tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected } catch { }
           if ($null -ne $btn) {
-            if (-not (NxSameNative $w $a.identity) -or $null -eq (NxFindTab $w ([string]$a.rid))) { $res.method = 'native_identity_changed'; break }
+            if (-not (NxSameNative $w $a.identity $a.hwnd)) { $res.method = 'native_identity_changed'; break }
+            if ($null -eq (NxFindTab $w ([string]$a.rid))) { $res.method = 'target_state_changed'; break }
             try { $btn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); $res.invoked = $true; $res.method = 'tab_close_button' } catch { $res.method = 'tab_close_button_not_invokable' }
           } else { $res.method = 'tab_close_button_missing' }
         }
       } else {
         $res.found = $true
-        if ((-not (NxSameNative $w $a.identity)) -or (NxStr $w.Current.Name 200) -cne [string]$a.expectedTitle -or (-not (NxSameCloseTabs $w $a.expectedTabs))) { $res.method = 'native_identity_changed'; break }
+        if (-not (NxSameNative $w $a.identity $a.hwnd)) { $res.method = 'native_identity_changed'; break }
+        if ((NxStr $w.Current.Name 200) -cne [string]$a.expectedTitle -or (-not (NxSameCloseTabs $w $a.expectedTabs))) { $res.method = 'target_state_changed'; break }
         try { $w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close(); $res.invoked = $true; $res.method = 'WindowPattern.Close' } catch { $res.method = 'window_pattern_failed' }
       }
     }
@@ -508,7 +523,7 @@ switch ($a.mode) {
     try { $w = $AE::FromHandle([IntPtr]([int64]$a.hwnd)) } catch { $w = $null }
     $res.dialog = $null
     if ($null -eq $w) { break }
-    if (-not (NxSameNative $w $a.identity)) { $res.method = 'native_identity_changed'; break }
+    if (-not (NxSameNative $w $a.identity $a.hwnd)) { $res.method = 'native_identity_changed'; break }
     # Same-process sibling dialogs are not proof of ownership. Only inspect this window.
     # Separate modal windows are deliberately left for the owner until their native owner chain is proven.
     $roots = @($w)
@@ -540,7 +555,7 @@ switch ($a.mode) {
       if ($a.choice -and $found.ContainsKey([string]$a.choice)) {
         $b = $found[[string]$a.choice]
         $res.choice = [string]$a.choice
-        if (-not (NxSameNative $w $a.identity)) { $res.method = 'native_identity_changed'; break }
+        if (-not (NxSameNative $w $a.identity $a.hwnd)) { $res.method = 'native_identity_changed'; break }
         try { $b.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); $res.invoked = $true } catch { $res.invoked = $false; $res.rect = (NxRect $b) }
       }
     }
