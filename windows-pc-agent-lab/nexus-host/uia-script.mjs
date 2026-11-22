@@ -35,6 +35,37 @@ $AE = [System.Windows.Automation.AutomationElement]
 $TW = [System.Windows.Automation.TreeWalker]::ControlViewWalker
 function NxRect($e) { $r = $e.Current.BoundingRectangle; if ($r.IsEmpty) { return $null }; return @{ x = [int]$r.X; y = [int]$r.Y; w = [int]$r.Width; h = [int]$r.Height } }
 function NxPName($procId) { try { return (Get-Process -Id $procId -ErrorAction Stop).ProcessName } catch { return '' } }
+# Native ownership of the actual HWND (distinct from the hosted logical app PID).
+function NxNativeIdentity($hwnd) {
+  try {
+    if (-not ('NxIdentity.Native' -as [type])) {
+      Add-Type -Namespace NxIdentity -Name Native -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr hwnd, out uint pid);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool IsWindow(System.IntPtr hwnd);
+'@
+    }
+    $h = [IntPtr]([int64]$hwnd)
+    if (-not [NxIdentity.Native]::IsWindow($h)) { return $null }
+    [uint32]$nativePid = 0
+    if ([NxIdentity.Native]::GetWindowThreadProcessId($h, [ref]$nativePid) -eq 0 -or $nativePid -eq 0) { return $null }
+    $p = Get-Process -Id ([int]$nativePid) -ErrorAction Stop
+    return @{ nativePid = [int]$nativePid; nativeStart = $p.StartTime.ToUniversalTime().Ticks.ToString() }
+  } catch { return $null }
+}
+function NxStart($pidValue) {
+  try { return (Get-Process -Id $pidValue -ErrorAction Stop).StartTime.ToUniversalTime().Ticks.ToString() } catch { return '' }
+}
+function NxSameNative($w, $expected) {
+  try {
+    if ($null -eq $w -or $null -eq $expected -or
+        [int64]$w.Current.NativeWindowHandle -ne [int64]$a.hwnd) { return $false }
+    $id = NxNativeIdentity $a.hwnd
+    return ($null -ne $id -and [int]$id.nativePid -eq [int]$expected.nativePid -and
+      [string]$id.nativeStart -ceq [string]$expected.nativeStart -and
+      (NxStart ([int]$expected.pid)) -ceq [string]$expected.startTime -and
+      (NxRid $w) -ceq [string]$expected.windowRid)
+  } catch { return $false }
+}
 function NxFocused() {
   try { $f = $AE::FocusedElement } catch { return @{ ok = $false } }
   if ($null -eq $f) { return @{ ok = $false } }
@@ -147,7 +178,8 @@ function NxWin($w) {
   if ($null -eq $w) { return $null }
   $wpid = $w.Current.ProcessId
   $tb = NxTabs $w   # ArrayList (returned with unary comma); @($tb) enumerates it — @(NxTabs $w) would wrap an empty list as [[]]
-  return @{ hwnd = [int64]$w.Current.NativeWindowHandle; pid = $wpid; process = (NxPName $wpid); name = (NxStr $w.Current.Name 200); className = $w.Current.ClassName; rect = (NxRect $w); tabs = @($tb) }
+  $id = NxNativeIdentity ([int64]$w.Current.NativeWindowHandle)
+  return @{ hwnd = [int64]$w.Current.NativeWindowHandle; pid = $wpid; process = (NxPName $wpid); startTime = (NxStart $wpid); nativePid = $id.nativePid; nativeStart = $id.nativeStart; windowRid = (NxRid $w); name = (NxStr $w.Current.Name 200); className = $w.Current.ClassName; rect = (NxRect $w); tabs = @($tb) }
 }
 # 0.5.2 R-01: is the top-level window a dialog, and what does it say? Text is used ONLY inside the Host to recognise
 # «Are you sure / permanently» confirmations — it is never returned to the model (gui strips it).
@@ -393,7 +425,7 @@ switch ($a.mode) {
           $m++
           $kp = $k.Current.ProcessId
           if ($kp -ne $c.Current.ProcessId -and (NxPName $kp).ToLowerInvariant() -eq $want) {
-            $w = NxWin $c; $w.pid = $kp; $w.process = (NxPName $kp); $w.frameHost = $true; [void]$out.Add($w); break
+            $w = NxWin $c; $w.pid = $kp; $w.process = (NxPName $kp); $w.startTime = (NxStart $kp); $w.frameHost = $true; [void]$out.Add($w); break
           }
           $k = $TW.GetNextSibling($k)
         }
@@ -406,11 +438,15 @@ switch ($a.mode) {
     $w = $null
     try { $w = $AE::FromHandle([IntPtr]([int64]$a.hwnd)) } catch { $w = $null }
     $res.found = $false; $res.invoked = $false
+    if ($null -ne $w -and -not (NxSameNative $w $a.identity)) {
+      $res.found = $true; $res.method = 'native_identity_changed'; break
+    }
     if ($null -ne $w -and [int64]$w.Current.NativeWindowHandle -eq [int64]$a.hwnd) {
       if ($a.rid) {
         $tab = NxFindTab $w ([string]$a.rid)
         if ($null -ne $tab) {
           $res.found = $true
+          if (-not (NxSameNative $w $a.identity)) { $res.method = 'native_identity_changed'; break }
           try { $tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() } catch { }
           # 0.5.1 live fix: Win11 Notepad (WinUI TabView) shows the close button only on the selected/hovered tab and it
           # can sit deeper than a direct child. Search all descendants (raw view) a few times after selecting.
@@ -433,11 +469,13 @@ switch ($a.mode) {
           $res.tabButtons = @($diag)
           try { $res.tabSelected = [bool]$tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected } catch { }
           if ($null -ne $btn) {
+            if (-not (NxSameNative $w $a.identity) -or $null -eq (NxFindTab $w ([string]$a.rid))) { $res.method = 'native_identity_changed'; break }
             try { $btn.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); $res.invoked = $true; $res.method = 'tab_close_button' } catch { $res.method = 'tab_close_button_not_invokable' }
           } else { $res.method = 'tab_close_button_missing' }
         }
       } else {
         $res.found = $true
+        if (-not (NxSameNative $w $a.identity)) { $res.method = 'native_identity_changed'; break }
         try { $w.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close(); $res.invoked = $true; $res.method = 'WindowPattern.Close' } catch { $res.method = 'window_pattern_failed' }
       }
     }
