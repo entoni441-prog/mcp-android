@@ -385,6 +385,8 @@ switch ($a.mode) {
     if ($a.hwnd) { try { $w = $AE::FromHandle([IntPtr]([int64]$a.hwnd)) } catch { $w = $null } }
     $res.windowFound = ($null -ne $w)
     $res.setFocus = $false; $res.wasMinimized = $false
+    $res.exactTarget = $true
+    if (-not (NxSameNative $w $a.identity $a.hwnd)) { $res.error = 'target_identity_changed'; $res.focused = NxFocused; break }
     if ($null -ne $w) {
       try { $res.offscreen = [bool]$w.Current.IsOffscreen } catch { }
       try {
@@ -393,30 +395,24 @@ switch ($a.mode) {
           $res.wasMinimized = $true; $wp.SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Normal); Start-Sleep -Milliseconds 300
         }
       } catch { }
+      if (-not (NxSameNative $w $a.identity $a.hwnd)) { $res.error = 'target_identity_changed'; $res.focused = NxFocused; break }
       try { $w.SetFocus(); $res.setFocus = $true } catch { $res.setFocusError = (NxStr $_.Exception.GetType().Name 60) }
       Start-Sleep -Milliseconds 300
     }
-    $f = NxFocused
-    $ws = New-Object -ComObject WScript.Shell
-    $r1 = $false; $r2 = $false
-    if (-not ($f.ok -and ($f.pid -eq [int]$a.pid -or ($a.hwnd -and $f.topHwnd -eq [int64]$a.hwnd)))) {
-      try { $r1 = $ws.AppActivate([int]$a.pid) } catch { }
-      Start-Sleep -Milliseconds 400
-      $f = NxFocused
-      if (-not ($f.ok -and $f.pid -eq [int]$a.pid) -and $a.title) {
-        try { $r2 = $ws.AppActivate([string]$a.title) } catch { }
-        Start-Sleep -Milliseconds 400
-        $f = NxFocused
-      }
-    }
-    $res.appActivateByPid = [bool]$r1; $res.appActivateByTitle = [bool]$r2; $res.focused = $f
+    $res.appActivateByPid = $false; $res.appActivateByTitle = $false; $res.focused = NxFocused
   }
   'windows' {
     $ws = NxTopWindows ([int]$a.pid)
     $res.windows = @($ws | ForEach-Object {
       $visual = 'Unknown'
       try { $visual = [string]$_.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Current.WindowVisualState } catch { }
-      @{ name = $_.Current.Name; className = $_.Current.ClassName; rect = (NxRect $_); pid = $_.Current.ProcessId; hwnd = [int64]$_.Current.NativeWindowHandle; visualState = $visual }
+      $win = NxWin $_
+      $win.visualState = $visual
+      if ($win.process -ieq 'ApplicationFrameHost' -and $win.pid -ne [int]$a.pid) {
+        $win.pid = [int]$a.pid; $win.process = NxPName $win.pid; $win.startTime = NxStart $win.pid
+      }
+      $win
+
     })
     $res.focused = NxFocused
   }
