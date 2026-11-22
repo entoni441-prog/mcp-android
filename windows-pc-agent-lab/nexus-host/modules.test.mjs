@@ -1,3 +1,5 @@
+import {createConsent} from './consent.mjs';
+import {EventEmitter} from 'node:events';
 // capabilities, catalog, files, processes/tasks, audit, server wiring (all platforms).
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -113,35 +115,41 @@ test('tasklist CSV parsing (localized memory formats)', () => {
 });
 
 function procsWith(capsRaw, list) {
-  const calls = [];
-  const exec = async (exe, args) => { calls.push([path.win32.basename(exe), ...args]); return {code: 0, out: list}; };
-  const cfg = {workspace: tmp, auditFile: path.join(tmp, 'audit.log')};
-  return {calls, p: createProcs({caps: validateCapabilities(capsRaw), cfg, platform: 'win32', systemRoot: 'C:\\Windows', exec})};
+  const calls=[];
+  const consent=createConsent();
+  const exec=async(exe,args)=>({code:0,out:list});
+  const readIdentity=async pid=>{const p=parseTasklistCsv(list).find(x=>x.pid===pid);return p?{...p,startTime:'638000000000000000'}:null;};
+  const actIdentity=async(id,action)=>{calls.push({id,action});return {status:'requested',requested:true};};
+  const cfg={workspace:tmp,auditFile:path.join(tmp,'audit.log')};
+  return {calls,consent,p:createProcs({caps:validateCapabilities(capsRaw),cfg,platform:'win32',systemRoot:'C:\\Windows',exec,consent,readIdentity,actIdentity})};
 }
-const LIST = '"Notepad.exe","50","Console","1","10 K"\r\n"powershell.exe","66","Console","1","10 K"\r\n"chrome.exe","70","Console","1","10 K"\r\n"helper.exe","80","Console","1","10 K"';
-
-test('process_action: capability, allowlist, kill only NEXUS-owned, never terminals', async () => {
-  await assert.rejects(procsWith({process_control: false}, LIST).p.process_action({pid: 50, action: 'close'}), /capability_disabled/);
-  const {p, calls} = procsWith({process_control: true}, LIST);
-  assert.equal((await p.process_action({pid: 50, action: 'close'})).requested, true);
-  assert.deepEqual(calls.at(-1), ['taskkill.exe', '/pid', '50']);
-  await assert.rejects(p.process_action({pid: 66, action: 'close'}), /process_not_allowed/);
-  await assert.rejects(procsWith({process_control: true, appAccess: 'allowlist'}, LIST).p.process_action({pid: 70, action: 'close'}), /process_not_allowed/);
-  assert.equal((await p.process_action({pid: 70, action: 'close'})).requested, true, '0.5.2 policy mode: any ordinary app (runtime asks the owner for non-owned)');
-  await assert.rejects(procsWith({process_control: true, blockedApps: ['chrome']}, LIST).p.process_action({pid: 70, action: 'close'}), /process_not_allowed/);
-  await assert.rejects(p.process_action({pid: 50, action: 'kill'}), /process_not_allowed/);
-  p.registerOwned(80, 'task:x');
-  await p.process_action({pid: 80, action: 'kill'});
-  assert.deepEqual(calls.at(-1), ['taskkill.exe', '/pid', '80', '/t', '/f']);
-  await assert.rejects(p.process_action({pid: 999, action: 'close'}), /process_not_found/);
-  await assert.rejects(p.process_action({pid: 50, action: 'suspend'}), /invalid_args/);
+const LIST='"Notepad.exe","50","Console","1","10 K"\r\n"powershell.exe","66","Console","1","10 K"\r\n"chrome.exe","70","Console","1","10 K"\r\n"helper.exe","80","Console","1","10 K"';
+function fixtureChild(pid){return Object.assign(new EventEmitter(),{pid,exitCode:null,signalCode:null,killed:false,kill(){this.killed=true;return true;}});}
+test('process_action: capability, allowlist, kill only NEXUS-owned, never terminals',async()=>{
+  await assert.rejects(procsWith({process_control:false},LIST).p.process_action({pid:50,action:'close'}),/capability_disabled/);
+  const {p,calls,consent}=procsWith({process_control:true},LIST);
+  for(const pid of [50,70]){
+    const grant=await p.process_action({pid,action:'close'});
+    assert.equal(grant.status,'consent_required');
+    const record=consent.take(grant.consentId,'close_save',grant.target);
+    assert.equal((await p.process_action({pid,action:'close'},{consented:record})).requested,true);
+    assert.equal(calls.at(-1).id.pid,pid);
+  }
+  await assert.rejects(p.process_action({pid:66,action:'close'}),/process_not_allowed/);
+  await assert.rejects(procsWith({process_control:true,appAccess:'allowlist'},LIST).p.process_action({pid:70,action:'close'}),/process_not_allowed/);
+  await assert.rejects(procsWith({process_control:true,blockedApps:['chrome']},LIST).p.process_action({pid:70,action:'close'}),/process_not_allowed/);
+  await assert.rejects(p.process_action({pid:50,action:'kill'}),/process_not_allowed/);
+  assert.equal(await p.registerOwned(fixtureChild(80),'task:x'),true);
+  await p.process_action({pid:80,action:'kill'});
+  assert.equal(calls.at(-1).id.pid,80);assert.equal(calls.at(-1).action,'kill');
+  await assert.rejects(p.process_action({pid:999,action:'close'}),/process_not_found/);
+  await assert.rejects(p.process_action({pid:50,action:'suspend'}),/invalid_args/);
 });
-
-test('list_processes filters and marks NEXUS-owned', async () => {
-  const {p} = procsWith({}, LIST);
-  p.registerOwned(80, 'x');
-  const r = await p.list_processes({nameFilter: 'HELP'});
-  assert.deepEqual(r.processes.map(x => [x.process, x.ownedByNexus]), [['helper', true]]);
+test('list_processes filters and marks NEXUS-owned',async()=>{
+  const {p}=procsWith({},LIST);
+  assert.equal(await p.registerOwned(fixtureChild(80),'x'),true);
+  const r=await p.list_processes({nameFilter:'HELP'});
+  assert.deepEqual(r.processes.map(x=>[x.process,x.ownedByNexus]),[['helper',true]]);
 });
 
 test('run_task: only owner-defined tasks, no args from chat, real process, status and cancel', async () => {
