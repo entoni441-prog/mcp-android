@@ -305,7 +305,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
   // 0.5.2 A-02: redaction of Notepad windows holding the owner's (possibly restored) documents.
   let liveMaskCache = null;
   async function captureMasks(mode) {
-    if (mode === 'live' && liveMaskCache && Date.now() - liveMaskCache.t < LIVE_MASK_TTL_MS) return liveMaskCache.v;
+    // Never reuse an ownership-derived visibility decision after a window change.
     let v = null;
     try {
       const r = await uia({mode: 'apps', name: 'notepad'});
@@ -349,13 +349,9 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     const identity = windowIdentity(win);
     if (!identity) return {closed: false, method: 'identity_unavailable'};
     const {hwnd, pid} = win;
-    const r = await uia({mode: 'close', hwnd: Number(hwnd), identity, expectedTabs: tabsOf(win).map(t => t.rid), ...(rid ? {rid} : {})});
+    const r = await uia({mode: 'close', hwnd: Number(hwnd), identity, expectedTitle: String(win.name || ''), expectedTabs: tabsOf(win).map(t => t.rid), ...(rid ? {rid} : {})});
     if (!r.found) return {closed: true, method: 'already_gone'};
-    if (!r.invoked && rid && /^tab_close_button_(missing|not_invokable)$/.test(r.method || '')) {
-      const k = await closeTabByKey({process, hwnd, pid, rid, identity});
-      if (!k.ok) return {closed: false, method: r.method, fallback: k.why};
-      r.invoked = true; r.method = 'ctrl_w_verified';
-    }
+    // A missing UIA close control must not degrade into an unguarded keyboard close.
     if (!r.invoked) return {closed: false, method: r.method || 'not_invokable'};
     let prompt = null;
     for (let i = 0; i < 4; i++) {
@@ -368,6 +364,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     let answered = null;
     if (prompt) {
       const d = await uia({mode: 'dialog', hwnd: Number(hwnd), identity, choice: onPrompt});
+      if (d.method === 'native_identity_changed') return {closed: false, method: d.method};
       // Do not use a coordinate fallback for a save/discard prompt: it may have moved.
       const pressed = d.invoked ? 'invoke' : null;
       if (!pressed) return {closed: false, method: r.method, prompt: 'shown', answered: null, note: 'prompt button could not be pressed'};
@@ -574,9 +571,10 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       else if (args.onUnsaved === 'save') onPrompt = 'save';
       else onPrompt = 'cancel';
       const r = await closeTarget({process: proc, win, rid: tab?.rid || null, onPrompt});
+      if (['native_identity_changed','identity_unavailable'].includes(r.method)) consent.forgetStale(win, tab?.rid || null);
       if (r.closed) { if (tab) consent.forgetTab(tab.rid); else { consent.forget(win); lifecycle.forget(win.hwnd); } }
       const out = {target: `${proc}: ${tab ? 'вкладка «' + tab.name + '»' : 'окно «' + win.name + '»'}`, kind, closed: r.closed,
-        by: own ? 'nexus_owned' : consented ? 'confirm_action' : 'owner_request', prompt: r.prompt, answered: r.answered};
+        by: own ? 'nexus_owned' : consented ? 'confirm_action' : 'owner_request', method: r.method, prompt: r.prompt, answered: r.answered};
       if (!r.closed && r.prompt && r.answered === 'cancel' && (args.onUnsaved ?? 'ask') !== 'cancel') {
         return {...out, status: 'unsaved_choice_required', options: ['save', 'discard', 'cancel'],
           instruction: 'The document has unsaved changes; nothing was lost. Ask the owner exactly: Save, Don\'t save, or Cancel. Then call close_window again with onUnsaved = save | discard (or stop on cancel).'};
