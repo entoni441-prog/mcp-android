@@ -303,7 +303,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
   const tabsOf = w => (Array.isArray(w?.tabs) ? w.tabs : []).filter(t => t && typeof t.rid === 'string' && t.rid);
 
   // 0.5.2 A-02: redaction of Notepad windows holding the owner's (possibly restored) documents.
-  let liveMaskCache = null;
+  
   async function captureMasks(mode) {
     // Never reuse an ownership-derived visibility decision after a window change.
     let v = null;
@@ -312,7 +312,6 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       const m = mapping(await info(), r.root);
       v = notepadMasks(r.apps || [], consent, m ? m.rectToScreen : null, mode);
     } catch { v = null; }
-    if (mode === 'live') liveMaskCache = {t: Date.now(), v};
     if (!v) throw Error('capture_redaction_unavailable: NEXUS could not locate Notepad windows to hide the owner\'s documents, so no image is taken');
     return v;
   }
@@ -320,6 +319,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
   async function notepadTextAllowed(pid) {
     let wins; try { wins = await apps('notepad'); } catch { return false; }
     const mine = wins.filter(w => w.pid === pid);
+    if (!mine.length) return false;
     const res = notepadMasks(mine.map(w => ({...w, rect: w.rect || {x: 0, y: 0, w: 1, h: 1}})), consent, r => r, 'capture');
     return !!res && res.hidden === 0;
   }
@@ -350,7 +350,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
     if (!identity) return {closed: false, method: 'identity_unavailable'};
     const {hwnd, pid} = win;
     const r = await uia({mode: 'close', hwnd: Number(hwnd), identity, expectedTitle: String(win.name || ''), expectedTabs: tabsOf(win).map(t => t.rid), ...(rid ? {rid} : {})});
-    if (!r.found) return {closed: true, method: 'already_gone'};
+    if (!r.found) return {closed: await gone(process, hwnd, rid), method: 'target_unavailable'};
     // A missing UIA close control must not degrade into an unguarded keyboard close.
     if (!r.invoked) return {closed: false, method: r.method || 'not_invokable'};
     let prompt = null;
