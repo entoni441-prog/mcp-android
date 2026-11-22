@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {createConsent, OWNER_WHATS} from './consent.mjs';
+import {fixtureIdentity} from './window-identity-fixture.mjs';
 import {classifyApp} from './policy.mjs';
 import {createGui} from './gui.mjs';
 import {validateCapabilities} from './capabilities.mjs';
@@ -65,7 +66,7 @@ test('owner tier: the model cannot approve; only ownerDecide (gateway /live) doe
 
 test('owner tier: closing a window/tab NEXUS did not open (owner unsaved data) waits for his tap with his chosen decision', () => {
   const c = createConsent({autonomy: true});
-  const g = c.gate({kind: 'window', via: 'alt+f4'}, {hwnd: 7, process: 'Notepad', name: 'Документ', tabs: []}, null, {tool: 'keyboard_action', args: {keys: 'alt+f4'}});
+  const g = c.gate({kind: 'window', via: 'alt+f4'}, fixtureIdentity({hwnd:7,pid:50,process:'Notepad',name:'Документ',tabs:[]}), null, {tool: 'keyboard_action', args: {keys: 'alt+f4'}});
   assert.equal(g.approval, 'owner_phone'); assert.deepEqual(g.options, ['close_discard', 'close_save', 'cancel']);
   assert.throws(() => c.take(g.consentId, 'close_discard', g.target), /owner_approval_pending/);
   c.ownerDecide(g.consentId, 'close_save');
