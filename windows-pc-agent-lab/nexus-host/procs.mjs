@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {requireCap} from './capabilities.mjs';
 import {appGate} from './policy.mjs';
+import {launchForPlatform} from './job-containment.mjs';
 
 const isObj = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const onlyKeys = (a, allowed) => isObj(a) && Object.keys(a).every(k => allowed.includes(k));
@@ -78,13 +79,25 @@ finally { if ($null -ne $p) { $p.Dispose() } }
 $result | ConvertTo-Json -Compress`;
 }
 
-export function createProcs({caps, cfg, platform = process.platform, systemRoot = process.env.SystemRoot, exec = runCapture, spawnFn = spawn, consent = null, audit = () => {}, readIdentity = null, actIdentity = null}) {
+export function createProcs({caps, cfg, platform = process.platform, systemRoot = process.env.SystemRoot, exec = runCapture, spawnFn = spawn, consent = null, audit = () => {}, readIdentity = null, actIdentity = null, launch = launchForPlatform}) {
   const sys32 = exe => {
     if (typeof systemRoot !== 'string' || !/^[a-zA-Z]:\\/.test(systemRoot)) throw Error('invalid_windows_system_root');
     return path.win32.join(systemRoot, 'System32', exe);
   };
   const owned = new Map();   // pid → {identity, child, label}; never a bare PID
   const tasks = new Map();   // id → task record
+  const active=t=>!t.finished;
+  function requestStop(t,reason){
+    if(t.finished)return;
+    t.stopReason=t.stopReason||reason;t.state='stopping';t.launch.requestStop();
+  }
+  function finalize(t,result){
+    if(t.finished)return;
+    t.finished=true;clearTimeout(t.timer);t.termination=result;t.exitCode=result.exitCode??null;t.endedAt=new Date().toISOString();
+    t.state=result.containment==='job'&&!result.confirmedEmpty?'cleanup_unconfirmed':result.error?'failed':t.stopReason==='timeout'?'timeout':t.stopReason?'cancelled':'exited';
+    audit({event:'task_termination',id:t.id,reason:t.stopReason||'exit',containment:result.containment,confirmedEmpty:result.confirmedEmpty===true,descendantsMayRemain:result.containment!=='job'||!result.confirmedEmpty});
+  }
+  function taskView(t){return {id:t.id,task:t.task,state:t.state,containment:t.launch.containment,exitCode:t.exitCode,...(t.termination?{termination:t.termination}:{})};}
 
   async function listAll() {
     if (platform !== 'win32') throw Error('windows_only');
@@ -113,15 +126,16 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
     return {owned:same,stale:!same,record};
   }
   const api = {
-    async registerOwned(child, label) {
+    async registerOwned(child, label, job=null) {
       if(platform!=='win32'||!liveChild(child)) return false;
-      const pid=child.pid;
+      if(job&&(job.containment!=='job'||job.child!==child||!int(job.rootPid,1,2147483647)||!validTicks(job.startTime)))return false;
+      const pid=job?job.rootPid:child.pid;
       let ended=false;
-      const record={child,label,identity:null};
+      const record={child,label,identity:null,job};
       const endedFn=()=>{ended=true;forget(pid,record,'child_exited');};
       child.once('exit',endedFn); child.once('close',endedFn);
       const id=await read(pid);
-      if(ended||!liveChild(child)||!id||owned.has(pid)) {
+      if(ended||!liveChild(child)||!id||owned.has(pid)||(job&&job.startTime!==id.startTime)) {
         audit({event:'process_ownership_refused',pid,reason:'launch_identity_unavailable_or_conflicting'});return false;
       }
       record.identity=id;owned.set(pid,record);return true;
@@ -168,6 +182,18 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
       if(checked.owned && (owned.get(p.pid)!==checked.record||!liveChild(checked.record.child))) {
         forget(p.pid,checked.record,'child_exited');throw Error('process_identity_changed');
       }
+      if(args.action==='kill'&&checked.owned&&!actIdentity){
+        const rec=checked.record;
+        if(rec.job){
+          const result=await rec.job.stop();forget(p.pid,rec,'job_stop_requested');
+          audit({event:'process_job_stop',pid:p.pid,confirmedEmpty:result.confirmedEmpty===true});
+          return {pid:p.pid,process:p.process,action:'kill',requested:true,termination:result};
+        }
+        let sent=false;try{sent=rec.child.kill()===true;}catch{}
+        audit({event:'process_root_stop',pid:p.pid,requested:sent,descendantsMayRemain:true});
+        if(!sent)throw Error('process_kill_failed');
+        return {pid:p.pid,process:p.process,action:'kill',requested:true,descendantsMayRemain:true};
+      }
       let result=null;
       try { result=await (actIdentity?actIdentity(id,args.action):callLifetime(p.pid,args.action,id)); } catch {}
       if(!result||result.status!=='requested'||typeof result.requested!=='boolean') {
@@ -184,46 +210,45 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
       if (!onlyKeys(args, ['task']) || typeof args.task !== 'string') bad();
       const def = caps.tasks[args.task];
       if (!def) throw Error('unknown_task');
-      if ([...tasks.values()].filter(t => t.state === 'running').length >= (caps.limits?.maxTasks ?? 3)) throw Error('too_many_tasks');
+      if ([...tasks.values()].filter(active).length >= (caps.limits?.maxTasks ?? 3)) throw Error('too_many_tasks');
       if (!fs.existsSync(def.exe)) throw Error('task_exe_missing');
       const id = crypto.randomBytes(6).toString('hex');
       const cwd = def.cwd || cfg.workspace;
-      const rec = {id, task: args.task, state: 'running', startedAt: new Date().toISOString(), exitCode: null, out: ''};
-      const child = spawnFn(def.exe, def.args, {cwd, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe']});
-      rec.child = child;
-      const add = c => { rec.out += c; if (rec.out.length > OUT_MAX) rec.out = rec.out.slice(-OUT_MAX); };
-      child.stdout?.setEncoding?.('utf8'); child.stderr?.setEncoding?.('utf8');
-      child.stdout?.on('data', add); child.stderr?.on('data', add);
-      const timer = setTimeout(() => { rec.state = 'timeout'; child.kill(); }, def.timeoutSec * 1000);
-      child.once('exit', code => {clearTimeout(timer);if(rec.state==='running')rec.state='exited';rec.exitCode=code;rec.endedAt=new Date().toISOString();});
-      await new Promise((resolve, reject) => {
-        child.once('spawn', resolve);
-        child.once('error', () => { clearTimeout(timer); rec.state = 'failed_to_start'; reject(Error('task_launch_failed')); });
-      });
-      if(rec.state==='running') await api.registerOwned(child,'task:'+args.task);
-      tasks.set(id, rec);
-      if (tasks.size > 20) tasks.delete(tasks.keys().next().value);
-      return {id, task: args.task, state: rec.state, pid: child.pid};
+      const handle=launch('task',def.exe,def.args,{cwd,shell:false,windowsHide:true,stdio:['ignore','pipe','pipe']},{platform,spawnFn});
+      const rec={id,task:args.task,state:'starting',startedAt:new Date().toISOString(),exitCode:null,out:'',child:handle.child,launch:handle,finished:false};
+      tasks.set(id,rec);
+      const add=c=>{rec.out+=c;if(rec.out.length>OUT_MAX)rec.out=rec.out.slice(-OUT_MAX);};
+      rec.child.stdout?.setEncoding?.('utf8');rec.child.stdout?.on('data',add);
+      // Job supervisor stderr is reserved for trusted control frames.
+      if(handle.containment!=='job'){rec.child.stderr?.setEncoding?.('utf8');rec.child.stderr?.on('data',add);}
+      rec.timer=setTimeout(()=>requestStop(rec,'timeout'),def.timeoutSec*1000);
+      handle.done.then(result=>finalize(rec,result));
+      try { await handle.ready; }
+      catch(e){requestStop(rec,rec.stopReason||'launch_failed');await handle.done;throw e;}
+      if(rec.stopReason||rec.finished){if(rec.stopReason)throw Error('task_start_cancelled');}
+      else {
+        rec.state='running';
+        await api.registerOwned(handle.child,'task:'+args.task,handle.containment==='job'?handle:null);
+      }
+      if(tasks.size>20){for(const [k,t] of tasks){if(tasks.size<=20)break;if(t.finished&&t!==rec)tasks.delete(k);}}
+      return {...taskView(rec),pid:handle.rootPid};
     },
 
     async task_status(args) {
       requireCap(caps, 'run_task');
       if (!onlyKeys(args, ['id'])) bad();
-      if (args.id === undefined) return {tasks: [...tasks.values()].map(t => ({id: t.id, task: t.task, state: t.state, exitCode: t.exitCode}))
+      if (args.id === undefined) return {tasks: [...tasks.values()].map(taskView)
         , available: Object.keys(caps.tasks)};
       const t = tasks.get(args.id); if (!t) throw Error('unknown_task_id');
-      return {id: t.id, task: t.task, state: t.state, exitCode: t.exitCode, startedAt: t.startedAt, endedAt: t.endedAt || null, outputTail: t.out.slice(-8192)};
+      return {...taskView(t),startedAt:t.startedAt,endedAt:t.endedAt||null,outputTail:t.out.slice(-8192)};
     },
 
     async task_cancel(args) {
       requireCap(caps, 'run_task');
       if (!onlyKeys(args, ['id']) || typeof args.id !== 'string') bad();
       const t = tasks.get(args.id); if (!t) throw Error('unknown_task_id');
-      if (t.state !== 'running') return {id: t.id, state: t.state};
-      t.state = 'cancelled';
-      // Use the retained ChildProcess, not a recycled PID or unverified process tree.
-      try { t.child.kill(); } catch { /* already gone */ }
-      return {id: t.id, state: t.state};
+      if(active(t)){requestStop(t,'cancelled');await t.launch.done;}
+      return taskView(t);
     },
 
     async read_audit_log(args) {
@@ -242,18 +267,14 @@ export function createProcs({caps, cfg, platform = process.platform, systemRoot 
 
     /** 0.5.1: session ended (finish_task / Stop / idle / revoke) → cancel tasks NEXUS started during that session. */
     async cancelSession(reason, sess) {
-      const since = sess?.startedAt ?? 0;
-      const cancelled = [];
-      for (const t of tasks.values()) {
-        if (t.state !== 'running' || Date.parse(t.startedAt) < since - 1000) continue;
-        t.state = 'cancelled'; t.cancelReason = reason;
-        try { t.child.kill(); } catch { /* already gone */ }
-        cancelled.push({id: t.id, task: t.task});
-      }
-      return {cancelled};
+      const since=sess?.startedAt??0;
+      const targets=[...tasks.values()].filter(t=>active(t)&&Date.parse(t.startedAt)>=since-1000);
+      for(const t of targets)requestStop(t,reason);
+      await Promise.all(targets.map(t=>t.launch.done));
+      return {cancelled:targets.map(taskView),cleanupUnconfirmed:targets.some(t=>t.termination?.containment!=='job'||!t.termination?.confirmedEmpty)};
     },
 
-    stopAll() { for (const t of tasks.values()) if (t.state === 'running') { try { t.child.kill(); } catch { /* gone */ } } },
+    stopAll(){const targets=[...tasks.values()].filter(active);for(const t of targets)requestStop(t,'host_stop');return Promise.all(targets.map(t=>t.launch.done));},
   };
   return api;
 }
