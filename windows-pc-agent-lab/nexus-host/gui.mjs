@@ -311,7 +311,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
 
   async function checkPid(pid, mode = 'read', tool = null, args = null, opts = null) {
     const r = await uia({mode: 'windows', pid});
-    const w0 = (r.windows || [])[0] || {};
+    const w0 = (args?.hwnd !== undefined ? (r.windows || []).find(x=>String(x.hwnd)===String(args.hwnd)) : (r.windows || [])[0]) || {};
     const g = policy({proc: r.target?.process, title: w0.name, mode, hwnd: w0.hwnd ?? 'pid:' + pid, tool, args, opts, legacy: 'app_not_allowed'});
     return g ? {consentResult: g} : r;
   }
@@ -621,7 +621,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       const inf = await getRobot().cmd('info'), m = mapping(inf, r.root);
       return {pid: args.pid, process: r.target.process, foreground: r.focused?.pid === args.pid, coordinateMapping: !!m,
         screen:{x:inf.x,y:inf.y,w:inf.w,h:inf.h,monitors:inf.monitors || null},
-        windows: (r.windows || []).slice(0, 20).map(w => ({name: String(w.name || '').slice(0, 200), className: w.className, rect: m ? m.rectToScreen(w.rect) : null, geometry:w.visualState==='Minimized'?'minimized':windowGeometry(w.rect,inf,m).status}))};
+        windows: (r.windows || []).slice(0, 20).map(w => ({hwnd:Number.isSafeInteger(Number(w.hwnd))&&Number(w.hwnd)>0?Number(w.hwnd):null,name: String(w.name || '').slice(0, 200), className: w.className, rect: m ? m.rectToScreen(w.rect) : null, geometry:w.visualState==='Minimized'?'minimized':windowGeometry(w.rect,inf,m).status}))};
     },
 
     async inspect_ui(args, opts = null) {
@@ -657,31 +657,35 @@ export function createGui({caps, home, workspace, platform = process.platform, r
       return r;
     },
     async focusWindowInner(args) {
-      if (!onlyKeys(args, ['pid']) || !int(args.pid, 1, 2 ** 31)) bad();
-      const w = await checkPid(args.pid, 'focus');
+      if (!onlyKeys(args, ['pid','hwnd']) || !int(args.pid, 1, 2 ** 31) || (args.hwnd!==undefined && !int(args.hwnd,1,Number.MAX_SAFE_INTEGER))) bad();
+      const w = await checkPid(args.pid, 'focus',null,args);
       if (!w.windows?.length) throw Error('window_not_found');
-      const hwnds = new Set(w.windows.filter(x => Number.isSafeInteger(Number(x.hwnd)) && Number(x.hwnd)>0).map(x => String(x.hwnd)));
-      if (hwnds.size!==1 || w.windows.length!==1) return {focused:false,method:'none',cause:'target_unknown',attempts:[],hint:'A PID does not identify one exact window. Read window_info; no activation or input dispatched.'};
-      const main = w.windows[0];
+      const candidates=w.windows.filter(x=>Number.isSafeInteger(Number(x.hwnd))&&Number(x.hwnd)>0 && (args.hwnd===undefined || Number(x.hwnd)===args.hwnd));
+      if (candidates.length!==1 || (args.hwnd===undefined&&w.windows.length!==1)) return {focused:false,method:'none',cause:'target_unknown',attempts:[],hint:'Read window_info and select an exact HWND belonging to this PID. No activation or input dispatched.'};
+      const main = candidates[0], identity=windowIdentity(main);
+      if (!identity) return {focused:false,method:'none',cause:'identity_unavailable',attempts:[]};
+      const hwnds=new Set([String(main.hwnd)]);
       const inf0=await getRobot().cmd('info'), map0=mapping(inf0,w.root);
       const geometry=main.visualState==='Minimized'?{status:'minimized'}:windowGeometry(main.rect,inf0,map0);
       if (geometry.status==='out_of_screen' || geometry.status==='secondary_monitor') return {focused:false,method:'none',cause:geometry.status,geometry,attempts:[],hint:'Target is outside the primary input/capture area; no activation or input dispatched.'};
-      const isOn = f => f?.ok === true && (f.topHwnd ? hwnds.has(String(f.topHwnd)) : f.pid === args.pid);
+      const isOn = f => f?.ok === true && hwnds.has(String(f.topHwnd));
       if (isOn(w.focused)) return {focused: true, already: true, method: 'none', hwnd: w.focused.topHwnd ?? null,geometry};
       const attempts = [];
       const titlebarProbes = [];
-      const r = await uia({mode: 'activate', pid: args.pid, ...(main.hwnd ? {hwnd: Number(main.hwnd)} : {}), title: String(main.name || '').slice(0, 200)});
+      const r = await uia({mode:'activate',pid:args.pid,hwnd:Number(main.hwnd),identity});
+      if(r.error==='target_identity_changed')return {focused:false,method:'none',cause:r.error,attempts};
       // 0.5.1 diagnostics: which step worked, and why not (minimised / off-screen / Windows foreground lock).
       const diag = {windowFound: r.windowFound ?? null, wasMinimized: !!r.wasMinimized, offscreen: r.offscreen ?? null, uiaSetFocus: !!r.setFocus,
         ...(r.setFocusError ? {setFocusError: r.setFocusError} : {}), foregroundBefore: r.foregroundBefore?.process || null};
-      attempts.push({method: 'UIA.SetFocus+AppActivate', ...diag, byPid: !!r.appActivateByPid, byTitle: !!r.appActivateByTitle, foreground: r.focused?.process || null});
+      attempts.push({method: 'UIA.SetFocus', ...diag, byPid: !!r.appActivateByPid, byTitle: !!r.appActivateByTitle, foreground: r.focused?.process || null});
       if (isOn(r.focused)) return {focused: true, method: r.appActivateByPid ? 'AppActivate(pid)' : r.appActivateByTitle ? 'AppActivate(title)' : 'UIA.SetFocus', hwnd: r.focused.topHwnd ?? null, attempts};
       // Fallback (only with gui_input): click an EMPTY spot of the target window's own title bar. Each candidate point
       // is checked with UIA first: it must belong to the target window and must not be a button/tab/menu — so the click
       // can never land in someone else's window and never presses Close.
       if (caps.gui_input === true) {
-        const fresh = await checkPid(args.pid,'focus');
-        const winNow=fresh.windows?.length===1 && String(fresh.windows[0].hwnd)===String(main.hwnd) ? fresh.windows[0] : null;
+        const fresh = await checkPid(args.pid,'focus',null,{hwnd:Number(main.hwnd)});
+        const matches=(fresh.windows||[]).filter(x=>String(x.hwnd)===String(main.hwnd));
+        const winNow=matches.length===1&&sameWindowIdentity(identity,matches[0])?matches[0]:null;
         const inf = await getRobot().cmd('info');
         const m = mapping(inf, fresh.root);
         if (!winNow || !m) return {focused:false,method:'none',cause:'target_unknown',attempts,hint:'Window or mapping changed; no fallback input dispatched.'};
@@ -713,6 +717,7 @@ export function createGui({caps, home, workspace, platform = process.platform, r
             titlebarProbes.push(probe);
             attempts.push(probe);
             if (!own || !passive || !visiblePoint || !nativeAgrees) continue;
+            if(!sameWindowIdentity(identity,top))return {focused:false,method:'none',cause:'target_identity_changed',attempts};
             const sp = m.rectToScreen({x: ux, y: uy, w: 0, h: 0});
             await getRobot().cmd(`click ${sp.x} ${sp.y} left 1`);
             await sleep(300);
