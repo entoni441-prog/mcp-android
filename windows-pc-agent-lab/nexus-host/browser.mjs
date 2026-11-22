@@ -180,8 +180,9 @@ export function profilePids(profile, {platform = process.platform, systemRoot = 
     const ps = "$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | ForEach-Object { [pscustomobject]@{ pid = $_.ProcessId; cmd = $_.CommandLine } } | ConvertTo-Json -Compress";
     const r = run(path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
       ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')], {encoding: 'utf8', windowsHide: true, timeout: 20_000});
-    if (r.status !== 0 || !r.stdout?.trim()) return [];
-    let rows; try { rows = JSON.parse(r.stdout); } catch { return []; }
+    if(r.status!==0)throw Error('profile_query_failed');
+    if(!r.stdout?.trim())return [];
+    let rows; try { rows = JSON.parse(r.stdout); } catch { throw Error('profile_query_invalid'); }
     return (Array.isArray(rows) ? rows : [rows]).filter(x => x && x.cmd && matches(x.cmd)).map(x => Number(x.pid)).filter(Number.isInteger);
   }
   if (platform === 'linux') {
