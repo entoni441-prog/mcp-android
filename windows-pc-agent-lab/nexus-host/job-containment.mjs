@@ -18,14 +18,16 @@ export function launchContained(mode,exe,args,options={},deps={}) {
   if(!exists(helper))throw Error('job_helper_unavailable');
   const child=spawnFn(helper,[mode,exe,...args],{cwd:options.cwd,shell:false,windowsHide:true,
     detached:false,stdio:['pipe','pipe','pipe']});
-  let state='starting',rootPid=null,exitCode=null,confirmedEmpty=false,stopping=false,error=null,buf='',settled=false;
+  let state='starting',rootPid=null,startTime=null,exitCode=null,confirmedEmpty=false,stopping=false,error=null,buf='',settled=false;
   let resolveReady,rejectReady,resolveDone;
   const ready=new Promise((resolve,reject)=>{resolveReady=resolve;rejectReady=reject;});
   // A caller may cancel before awaiting ready.
   ready.catch(()=>{});
   const done=new Promise(resolve=>{resolveDone=resolve;});
-  let startupTimer=null,stopTimer=null;
-  const report=()=>({confirmedEmpty,exitCode,error,containment:'job',rootPid});
+  let startupTimer=null,stopTimer=null,deadlineTimer=null,doneSettled=false;
+  const report=()=>({confirmedEmpty,exitCode,error,containment:'job',rootPid,startTime});
+  function settleDone(){if(!doneSettled){doneSettled=true;resolveDone(report());}}
+  function boundedStop(){if(!stopTimer){stopTimer=setTimeout(forceClose,6000);stopTimer.unref?.();}if(!deadlineTimer){deadlineTimer=setTimeout(()=>{confirmedEmpty=false;error=error||'job_empty_unconfirmed';settleDone();},8500);deadlineTimer.unref?.();}}
   function rejectStart(code) {
     if(!settled){settled=true;rejectReady(Error(code));}
   }
@@ -38,22 +40,22 @@ export function launchContained(mode,exe,args,options={},deps={}) {
   function fail(code) {
     if(!error)error=code;
     rejectStart(code);state='failed';stopping=true;endControl();
-    if(!stopTimer){stopTimer=setTimeout(forceClose,6000);stopTimer.unref?.();}
+    boundedStop();
   }
   function frame(line){
     let m;
-    if((m=/^NXJOB PREPARED (\d+)$/.exec(line))&&state==='starting'&&pidOk(Number(m[1]))){
-      rootPid=Number(m[1]);state='prepared';
+    if((m=/^NXJOB PREPARED (\d+) ([1-9]\d{15,19})$/.exec(line))&&state==='starting'&&pidOk(Number(m[1]))){
+      rootPid=Number(m[1]);startTime=m[2];state='prepared';
       if(stopping){endControl();return;}
       try{child.stdin.write('RUN\n');}catch{fail('job_control_failed');}
       return;
     }
-    if((m=/^NXJOB READY (\d+)$/.exec(line))&&state==='prepared'&&Number(m[1])===rootPid){
+    if((m=/^NXJOB READY (\d+) ([1-9]\d{15,19})$/.exec(line))&&state==='prepared'&&Number(m[1])===rootPid&&m[2]===startTime){
       state='ready';clearTimeout(startupTimer);
-      if(!settled){settled=true;resolveReady({rootPid});}
+      if(!settled){settled=true;resolveReady({rootPid,startTime});}
       return;
     }
-    if((m=/^NXJOB EMPTY (\d+)$/.exec(line))&&rootPid!==null&&Number(m[1])<=0xffffffff&&state!=='empty'){
+    if((m=/^NXJOB EMPTY (\d+)$/.exec(line))&&rootPid!==null&&Number(m[1])<=0xffffffff&&['prepared','ready'].includes(state)&&!error){
       confirmedEmpty=true;exitCode=Number(m[1]);state='empty';clearTimeout(startupTimer);
       rejectStart('job_ended_before_ready');endControl();return;
     }
@@ -69,19 +71,20 @@ export function launchContained(mode,exe,args,options={},deps={}) {
   child.stdin?.on('error',()=>{if(!stopping&&!confirmedEmpty)fail('job_control_failed');});
   child.once('error',()=>fail('job_helper_launch_failed'));
   // Wait for close (stderr flushed), not merely exit.
-  child.once('close',()=>{
-    clearTimeout(startupTimer);clearTimeout(stopTimer);
+  child.once('close',(code)=>{
+    clearTimeout(startupTimer);clearTimeout(stopTimer);clearTimeout(deadlineTimer);
+    if(code!==0||error)confirmedEmpty=false;
     if(!confirmedEmpty&&!error)error='job_empty_unconfirmed';
-    rejectStart(error||'job_ended_before_ready');state='closed';resolveDone(report());
+    rejectStart(error||'job_ended_before_ready');state='closed';settleDone();
   });
   startupTimer=setTimeout(()=>fail('job_start_timeout'),10000);startupTimer.unref?.();
   return {
     child,ready,done,containment:'job',
-    get rootPid(){return rootPid;},
+    get rootPid(){return rootPid;},get startTime(){return startTime;},
     requestStop(){
       if(state==='closed'||state==='empty')return;
       stopping=true;rejectStart('job_cancelled');endControl();
-      if(!stopTimer){stopTimer=setTimeout(forceClose,6000);stopTimer.unref?.();}
+      boundedStop();
     },
     async stop(){this.requestStop();return done;}
   };
