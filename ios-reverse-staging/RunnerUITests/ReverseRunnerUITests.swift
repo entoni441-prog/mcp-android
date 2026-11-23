@@ -14,7 +14,9 @@ final class ReverseRunnerUITests: XCTestCase {
     }
 
     func testAuthorizedRemoteSession() {
+        NSLog("[IOS_NET_STAGING] testcase_entered")
         guard let config = RunnerConfig.fromEnvironment() else {
+            NSLog("[IOS_NET_STAGING] testcase_config_missing")
             XCTFail("No owner-provided Tailnet endpoint and per-device pairing key")
             return
         }
@@ -23,6 +25,7 @@ final class ReverseRunnerUITests: XCTestCase {
             return self.dispatch(command)
         }
         session = client
+        NSLog("[IOS_NET_STAGING] testcase_session_start")
         client.start()
         // XCTest's main run loop must remain alive for Accessibility requests.
         // This test needs an external Xcode/testmanagerd launch. A Home Screen
