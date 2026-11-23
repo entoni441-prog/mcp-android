@@ -9,6 +9,9 @@ struct RunnerConfig {
 
     static func fromEnvironment() -> RunnerConfig? {
         let env = ProcessInfo.processInfo.environment
+        NSLog("[IOS_NET_STAGING] cfg_env url_present=%d key_present=%d",
+              env["IOS_UI_WS_URL"] == nil ? 0 : 1,
+              env["IOS_UI_RUNNER_KEY"] == nil ? 0 : 1)
         guard let rawURL = env["IOS_UI_WS_URL"], let url = URL(string: rawURL),
               let scheme = url.scheme, scheme == "ws" || scheme == "wss",
               let host = url.host, let keyText = env["IOS_UI_RUNNER_KEY"],
@@ -17,6 +20,7 @@ struct RunnerConfig {
         let octets = host.split(separator: ".").compactMap { Int($0) }
         guard octets.count == 4, octets[0] == 100, (64...127).contains(octets[1]),
               octets.allSatisfy({ (0...255).contains($0) }) else { return nil }
+        NSLog("[IOS_NET_STAGING] cfg_accepted")
         return RunnerConfig(url: url, key: key)
     }
 
@@ -32,10 +36,10 @@ struct RunnerConfig {
     }
 }
 
-final class ReverseSession {
+final class ReverseSession: NSObject, URLSessionWebSocketDelegate {
     private let config: RunnerConfig
     private let perform: ([String: Any]) -> [String: Any]
-    private let session: URLSession
+    private lazy var session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
     private var socket: URLSessionWebSocketTask?
     private var serverNonce = ""
     private var clientNonce = ""
@@ -52,10 +56,29 @@ final class ReverseSession {
     init(config: RunnerConfig, perform: @escaping ([String: Any]) -> [String: Any]) {
         self.config = config
         self.perform = perform
-        self.session = URLSession(configuration: .ephemeral)
+        super.init()
     }
 
-    func start() { connect() }
+    // Only non-sensitive diagnostic stages: no URL, key, token, payload, or request body.
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            let ns = error as NSError
+            NSLog("[IOS_NET_STAGING] task_complete_error domain=%@ code=%ld", ns.domain, ns.code)
+        } else {
+            NSLog("[IOS_NET_STAGING] task_complete_success")
+        }
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        NSLog("[IOS_NET_STAGING] websocket_did_open")
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                    didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        NSLog("[IOS_NET_STAGING] websocket_did_close code=%ld", closeCode.rawValue)
+    }
+
+    func start() { NSLog("[IOS_NET_STAGING] session_start"); connect() }
 
     func stop() {
         terminated = true
@@ -72,9 +95,12 @@ final class ReverseSession {
         pendingCommands.removeAll()
         socketGeneration += 1
         let generation = socketGeneration
+        NSLog("[IOS_NET_STAGING] websocket_construct_begin attempt=%ld", retries + 1)
         let ws = session.webSocketTask(with: config.url)
         socket = ws
+        NSLog("[IOS_NET_STAGING] websocket_task_created")
         ws.resume()
+        NSLog("[IOS_NET_STAGING] websocket_resume_invoked state=%ld", ws.state.rawValue)
         listen(generation)
         heartbeat(generation)
     }
@@ -87,6 +113,7 @@ final class ReverseSession {
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         retries = min(6, retries + 1)
+        NSLog("[IOS_NET_STAGING] reconnect_scheduled attempt=%ld", retries)
         let seconds = min(30, 1 << retries)
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds)) { [weak self] in
             guard let self = self, next == self.socketGeneration else { return }
@@ -101,7 +128,11 @@ final class ReverseSession {
         ws.sendPing { [weak self] error in
             DispatchQueue.main.async {
                 guard let self = self, generation == self.socketGeneration else { return }
-                if error != nil { self.retry(generation) }
+                if let error = error {
+                    let ns = error as NSError
+                    NSLog("[IOS_NET_STAGING] ping_error domain=%@ code=%ld", ns.domain, ns.code)
+                    self.retry(generation)
+                }
                 else if self.pingTicket == ticket { self.pingTicket = 0 }
             }
         }
@@ -130,7 +161,9 @@ final class ReverseSession {
                     default: self.retry(generation); return
                     }
                     self.listen(generation)
-                case .failure:
+                case .failure(let error):
+                    let ns = error as NSError
+                    NSLog("[IOS_NET_STAGING] receive_error domain=%@ code=%ld", ns.domain, ns.code)
                     self.retry(generation)
                 }
             }
