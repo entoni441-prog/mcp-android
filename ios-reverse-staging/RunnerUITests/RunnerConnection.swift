@@ -46,6 +46,8 @@ final class ReverseSession {
     private var pingTicket = 0
     private var seen = [String: [String: Any]]()
     private var recent = [String]()
+    // Only touched on the main thread: network callbacks enqueue; XCTest loop executes.
+    private var pendingCommands = [[String: Any]]()
 
     init(config: RunnerConfig, perform: @escaping ([String: Any]) -> [String: Any]) {
         self.config = config
@@ -58,6 +60,7 @@ final class ReverseSession {
     func stop() {
         terminated = true
         authenticated = false
+        pendingCommands.removeAll()
         socketGeneration += 1
         socket?.cancel(with: .goingAway, reason: nil)
         session.invalidateAndCancel()
@@ -66,6 +69,7 @@ final class ReverseSession {
     private func connect() {
         guard !terminated else { return }
         authenticated = false
+        pendingCommands.removeAll()
         socketGeneration += 1
         let generation = socketGeneration
         let ws = session.webSocketTask(with: config.url)
@@ -167,17 +171,36 @@ final class ReverseSession {
         guard authenticated, kind == "command", let id = message["id"] as? String,
               id.count == 32 else { return }
         if let prior = seen[id] { send(prior); return }
+        // No XCUI operation in this DispatchQueue.main.async network callback.
+        pendingCommands.append(message)
+        let op = String((message["op"] as? String ?? "unknown").prefix(24))
+        NSLog("[IOS_AX_STAGING] cmd_received op=%@", op)
+    }
+
+    // Called from XCTest's own test loop, AFTER RunLoop.main.run has returned.
+    // It remains on the main actor but is not nested inside a GCD main block.
+    func processOneQueuedCommandOnTestThread() {
+        guard authenticated, !terminated, !pendingCommands.isEmpty else { return }
+        let message = pendingCommands.removeFirst()
+        guard let id = message["id"] as? String else { return }
+        if let prior = seen[id] { send(prior); return }
         let operations = ["status","read","screenshot","launch","tap","swipe","type"]
+        let op = String((message["op"] as? String ?? "unknown").prefix(24))
         var answer: [String: Any] = ["ok": false, "result": ["error":"unsupported_command"]]
-        if let op = message["op"] as? String, operations.contains(op),
-           let payload = message["payload"] as? [String: Any] {
+        NSLog("[IOS_AX_STAGING] xcui_begin op=%@", op)
+        let started = CFAbsoluteTimeGetCurrent()
+        if operations.contains(op), let payload = message["payload"] as? [String: Any] {
             answer = perform(["op":op,"payload":payload])
         }
+        let elapsed = Int((CFAbsoluteTimeGetCurrent() - started) * 1000)
+        NSLog("[IOS_AX_STAGING] xcui_done op=%@ elapsed_ms=%d", op, elapsed)
+        let success = answer["ok"] as? Bool ?? false
         let response: [String: Any] = ["v":1,"kind":"result","id":id,
-                "ok":answer["ok"] as? Bool ?? false,"result":answer["result"] ?? [:]]
+                "ok":success,"result":answer["result"] ?? [:]]
         seen[id] = response
         recent.append(id)
         if recent.count > 256 { seen.removeValue(forKey: recent.removeFirst()) }
+        NSLog("[IOS_AX_STAGING] result op=%@ ok=%d", op, success ? 1 : 0)
         send(response)
     }
 }
