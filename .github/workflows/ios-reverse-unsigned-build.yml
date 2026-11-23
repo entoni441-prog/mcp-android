@@ -4,6 +4,7 @@ on:
     branches:
       - experiment/iphone-reverse-xctest-20261122
       - experiment/iphone-xctest-ax-mainloop-20261123
+      - experiment/iphone-xctest-reverse-logs-20261123
     paths:
       - ios-reverse-staging/**
       - .github/workflows/ios-reverse-unsigned-build.yml
