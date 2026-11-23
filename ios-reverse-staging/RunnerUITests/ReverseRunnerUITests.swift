@@ -34,9 +34,12 @@ final class ReverseRunnerUITests: XCTestCase {
         }
     }
 
+    // Owner-authorized Shortcuts scheduling and Settings Wi-Fi UI are STAGING only.
+    // Preserve exact bundle allowlist; no wildcard or permissions escalation.
     private func allowBundle(_ value: Any?) -> String? {
         guard let bundle = value as? String,
-              ["com.openai.chat", "com.anthropic.claude"].contains(bundle) else { return nil }
+              ["com.openai.chat", "com.anthropic.claude",
+               "com.apple.shortcuts", "com.apple.Preferences"].contains(bundle) else { return nil }
         return bundle
     }
 
