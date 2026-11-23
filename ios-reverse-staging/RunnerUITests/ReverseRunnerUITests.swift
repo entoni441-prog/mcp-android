@@ -29,6 +29,8 @@ final class ReverseRunnerUITests: XCTestCase {
         // tap on an ordinary host app cannot guarantee a XCTest session.
         while !client.terminated {
             RunLoop.main.run(mode: .default, before: Date(timeIntervalSinceNow: 0.12))
+            // XCUI calls must occur in this XCTest-owned loop, not inside a GCD callback.
+            client.processOneQueuedCommandOnTestThread()
         }
     }
 
@@ -50,24 +52,33 @@ final class ReverseRunnerUITests: XCTestCase {
         return app.state == .runningForeground
     }
 
-    private func visibleElements(_ app: XCUIApplication) -> [[String: Any]] {
+    private func visibleElements(_ app: XCUIApplication) throws -> [[String: Any]] {
+        // One accessibility snapshot, then local traversal; no per-property AX round trips.
+        let root = try app.snapshot()
         var result = [[String: Any]]()
-        for item in app.descendants(matching: .any).allElementsBoundByIndex.prefix(90) {
+        func visit(_ item: any XCUIElementSnapshot) {
+            if result.count >= 90 { return }
             let bounds = item.frame
-            if bounds.isNull || bounds.isEmpty { continue }
-            let secure = item.elementType == .secureTextField
-            result.append([
-                "role": "\(item.elementType)",
-                "label": secure ? "[secure]" : String(item.label.prefix(200)),
-                "identifier": secure ? "" : String(item.identifier.prefix(120)),
-                "frame": [
-                    "x": Double(bounds.minX), "y": Double(bounds.minY),
-                    "w": Double(bounds.width), "h": Double(bounds.height)
-                ],
-                "enabled": item.isEnabled,
-                "value": secure ? "[redacted]" : String(describing: item.value ?? "").prefix(400).description
-            ])
+            if !bounds.isNull && !bounds.isEmpty {
+                let secure = item.elementType == .secureTextField
+                result.append([
+                    "role": "\(item.elementType)",
+                    "label": secure ? "[secure]" : String(item.label.prefix(200)),
+                    "identifier": secure ? "" : String(item.identifier.prefix(120)),
+                    "frame": [
+                        "x": Double(bounds.minX), "y": Double(bounds.minY),
+                        "w": Double(bounds.width), "h": Double(bounds.height)
+                    ],
+                    "enabled": item.isEnabled,
+                    "value": secure ? "[redacted]" : String(describing: item.value ?? "").prefix(400).description
+                ])
+            }
+            for child in item.children {
+                if result.count >= 90 { break }
+                visit(child)
+            }
         }
+        visit(root)
         return result
     }
 
@@ -116,10 +127,23 @@ final class ReverseRunnerUITests: XCTestCase {
             guard front(app) else { return fail("launch_not_verified") }
             return pass(["foreground": bundle, "verified": true])
         }
+        // The read/probe mode preserves the existing signed command allowlist:
+        // no new protocol operation and no UI mutation.
+        if op == "read", payload["probe_only"] as? Bool == true {
+            let foreground = front(app)
+            return pass(["probe": "xcui_probe", "bundle_id": bundle,
+                         "foreground": foreground, "verified": true])
+        }
         guard front(app) else { return fail("not_foreground") }
         if op == "read" {
-            return pass(["bundle_id": bundle, "foreground": true,
-                         "nodes": visibleElements(app), "verified": true])
+            do {
+                let nodes = try visibleElements(app)
+                guard !nodes.isEmpty else { return fail("ax_empty") }
+                return pass(["bundle_id": bundle, "foreground": true,
+                             "nodes": nodes, "verified": true])
+            } catch {
+                return fail("ax_snapshot_failed")
+            }
         }
         if op == "type" {
             guard let text = payload["text"] as? String, !text.isEmpty, text.count <= 700,
