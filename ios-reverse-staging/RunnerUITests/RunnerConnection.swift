@@ -85,7 +85,7 @@ final class ReverseSession {
         NSLog("[IOS_NET_STAGING] websocket_resume_generation=%d", generation)
         ws.resume()
         listen(generation)
-        heartbeat(generation)
+        // Do not issue WebSocket PING before HTTP Upgrade and HMAC acceptance.
     }
 
     private func retry(_ generation: Int) {
@@ -182,6 +182,8 @@ final class ReverseSession {
                   !serverNonce.isEmpty else { retry(socketGeneration); return }
             authenticated = true
             retries = 0
+            NSLog("[IOS_NET_STAGING] hmac_accepted_heartbeat_enabled")
+            heartbeat(socketGeneration)
             return
         }
         guard authenticated, kind == "command", let id = message["id"] as? String,
