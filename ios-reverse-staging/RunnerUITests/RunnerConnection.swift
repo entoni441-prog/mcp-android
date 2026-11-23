@@ -9,14 +9,22 @@ struct RunnerConfig {
 
     static func fromEnvironment() -> RunnerConfig? {
         let env = ProcessInfo.processInfo.environment
+        NSLog("[IOS_NET_STAGING] config_presence url=%d key=%d", env["IOS_UI_WS_URL"] != nil ? 1 : 0, env["IOS_UI_RUNNER_KEY"] != nil ? 1 : 0)
         guard let rawURL = env["IOS_UI_WS_URL"], let url = URL(string: rawURL),
               let scheme = url.scheme, scheme == "ws" || scheme == "wss",
               let host = url.host, let keyText = env["IOS_UI_RUNNER_KEY"],
               let key = Data(base64Encoded: keyText), key.count >= 32,
-              url.path == "/ios/runner" else { return nil }
+              url.path == "/ios/runner" else {
+            NSLog("[IOS_NET_STAGING] config_rejected_stage=syntax_or_key")
+            return nil
+        }
         let octets = host.split(separator: ".").compactMap { Int($0) }
         guard octets.count == 4, octets[0] == 100, (64...127).contains(octets[1]),
-              octets.allSatisfy({ (0...255).contains($0) }) else { return nil }
+              octets.allSatisfy({ (0...255).contains($0) }) else {
+            NSLog("[IOS_NET_STAGING] config_rejected_stage=host_allowlist")
+            return nil
+        }
+        NSLog("[IOS_NET_STAGING] config_accepted")
         return RunnerConfig(url: url, key: key)
     }
 
@@ -74,6 +82,7 @@ final class ReverseSession {
         let generation = socketGeneration
         let ws = session.webSocketTask(with: config.url)
         socket = ws
+        NSLog("[IOS_NET_STAGING] websocket_resume_generation=%d", generation)
         ws.resume()
         listen(generation)
         heartbeat(generation)
@@ -87,6 +96,7 @@ final class ReverseSession {
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         retries = min(6, retries + 1)
+        NSLog("[IOS_NET_STAGING] retry_generation=%d retries=%d", generation, retries)
         let seconds = min(30, 1 << retries)
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds)) { [weak self] in
             guard let self = self, next == self.socketGeneration else { return }
@@ -101,7 +111,11 @@ final class ReverseSession {
         ws.sendPing { [weak self] error in
             DispatchQueue.main.async {
                 guard let self = self, generation == self.socketGeneration else { return }
-                if error != nil { self.retry(generation) }
+                if let error = error {
+                    let ns = error as NSError
+                    NSLog("[IOS_NET_STAGING] ping_failure domain=%@ code=%ld", ns.domain, ns.code)
+                    self.retry(generation)
+                }
                 else if self.pingTicket == ticket { self.pingTicket = 0 }
             }
         }
@@ -130,7 +144,9 @@ final class ReverseSession {
                     default: self.retry(generation); return
                     }
                     self.listen(generation)
-                case .failure:
+                case .failure(let error):
+                    let ns = error as NSError
+                    NSLog("[IOS_NET_STAGING] receive_failure domain=%@ code=%ld", ns.domain, ns.code)
                     self.retry(generation)
                 }
             }
