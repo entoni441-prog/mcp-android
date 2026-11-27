@@ -9,14 +9,23 @@ final class ReverseRunnerUITests: XCTestCase {
     private var session: ReverseSession?
 
     override func setUp() {
+        NSLog("[IOS_NATIVE_STAGING] setup_entered")
         super.setUp()
         continueAfterFailure = false
+        NSLog("[IOS_NATIVE_STAGING] setup_completed")
+    }
+
+    override func tearDown() {
+        NSLog("[IOS_NATIVE_STAGING] teardown_entered")
+        session?.stop()
+        session = nil
+        super.tearDown()
     }
 
     func testAuthorizedRemoteSession() {
-        NSLog("[IOS_NET_STAGING] testcase_entered")
+        NSLog("[IOS_NATIVE_STAGING] testcase_entered")
         guard let config = RunnerConfig.fromEnvironment() else {
-            NSLog("[IOS_NET_STAGING] testcase_config_missing")
+            NSLog("[IOS_NATIVE_STAGING] testcase_config_missing")
             XCTFail("No owner-provided Tailnet endpoint and per-device pairing key")
             return
         }
@@ -25,11 +34,10 @@ final class ReverseRunnerUITests: XCTestCase {
             return self.dispatch(command)
         }
         session = client
-        NSLog("[IOS_NET_STAGING] testcase_session_start")
+        NSLog("[IOS_NATIVE_STAGING] testcase_session_start")
         client.start()
         // XCTest's main run loop must remain alive for Accessibility requests.
-        // This test needs an external Xcode/testmanagerd launch. A Home Screen
-        // tap on an ordinary host app cannot guarantee a XCTest session.
+        // Native launch is experimental. Do not retry XCTest bootstrap from inside this process.
         while !client.terminated {
             RunLoop.main.run(mode: .default, before: Date(timeIntervalSinceNow: 0.12))
             // XCUI calls must occur in this XCTest-owned loop, not inside a GCD callback.
