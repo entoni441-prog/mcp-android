@@ -1,8 +1,8 @@
-name: iPhone Native Bootstrap STAGING - unsigned Xcode 27
+name: NEXUS Semantic Navigation STAGING - unsigned Xcode 27
 on:
   push:
     branches:
-      - experiment/iphone-native-bootstrap-20261127
+      - experiment/nexus-semantic-navigation-20261127
     paths:
       - ios-reverse-staging/**
       - .github/workflows/ios-reverse-unsigned-build.yml
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: iphone-native-bootstrap-20261127
+  group: nexus-semantic-navigation-20261127
   cancel-in-progress: false
 
 jobs:
@@ -66,7 +66,7 @@ jobs:
       - name: Upload unsigned native STAGING only
         uses: actions/upload-artifact@v4
         with:
-          name: iphone-native-bootstrap-UNSIGNED
+          name: nexus-semantic-navigation-UNSIGNED
           path: ${{ runner.temp }}/iphone-native-artifacts/
           if-no-files-found: error
           retention-days: 7
