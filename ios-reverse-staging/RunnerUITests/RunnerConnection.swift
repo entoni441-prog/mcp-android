@@ -266,7 +266,7 @@ final class ReverseSession {
         let message = pendingCommands.removeFirst()
         guard let id = message["id"] as? String else { return }
         if let prior = seen[id] { send(prior); return }
-        let operations = ["status","read","screenshot","launch","tap","swipe","type"]
+        let operations = ["status","read","screenshot","launch","tap","swipe","type","nav_probe","nav_prepare","nav_execute","nav_state"]
         let op = String((message["op"] as? String ?? "unknown").prefix(24))
         var answer: [String: Any] = ["ok": false, "result": ["error":"unsupported_command"]]
         NSLog("[IOS_AX_STAGING] xcui_begin op=%@", op)
