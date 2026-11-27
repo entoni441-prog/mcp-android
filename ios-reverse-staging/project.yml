@@ -16,6 +16,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.entoni.iosstaging.runnerhost
+        ENABLE_DEBUG_DYLIB: "NO"
         GENERATE_INFOPLIST_FILE: "YES"
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: "YES"
   RunnerUITests:
