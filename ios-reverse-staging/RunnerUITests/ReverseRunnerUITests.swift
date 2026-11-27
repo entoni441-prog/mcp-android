@@ -7,6 +7,7 @@ import Foundation
 
 final class ReverseRunnerUITests: XCTestCase {
     private var session: ReverseSession?
+    private let semanticNavigation = SemanticNavigation()
 
     override func setUp() {
         NSLog("[IOS_NATIVE_STAGING] setup_entered")
@@ -117,6 +118,9 @@ final class ReverseRunnerUITests: XCTestCase {
     private func dispatch(_ request: [String: Any]) -> [String: Any] {
         guard let op = request["op"] as? String,
               let payload = request["payload"] as? [String: Any] else { return fail("bad_request") }
+        if ["nav_probe","nav_prepare","nav_execute","nav_state"].contains(op) {
+            return semanticNavigation.dispatch(op,payload)
+        }
         if op == "status" {
             return pass(["runner": "active", "ui_verification": false])
         }
