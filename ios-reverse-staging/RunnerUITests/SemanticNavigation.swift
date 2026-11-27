@@ -6,13 +6,19 @@ import UIKit
 import CryptoKit
 
 final class SemanticNavigation {
+    struct Selector {
+        let role: XCUIElement.ElementType
+        let identifier: String
+        let label: String
+    }
     struct Rule {
         let id: String
         let bundle: String
         let before: String
         let after: String
-        let buttonID: String
-        let buttonLabel: String
+        let beforeMarker: Selector
+        let afterMarker: Selector
+        let target: Selector
     }
     private let rules: [String: Rule] = [:]
     private struct Observation {
@@ -50,22 +56,73 @@ final class SemanticNavigation {
         let bytes = try JSONSerialization.data(withJSONObject:records,options:[.sortedKeys])
         return SHA256.hash(data:bytes).map { String(format:"%02x",$0) }.joined()
     }
-    private func bar(_ app: XCUIApplication, _ id: String) -> XCUIElement? {
-        guard !id.isEmpty else { return nil }
-        let q = app.navigationBars.matching(identifier:id)
-        guard q.count == 1 else { return nil }
-        let b = q.firstMatch
-        guard b.exists, b.isHittable, b.identifier == id else { return nil }
-        return b
+    // A selector belongs to a reviewed rule, never to the remote request.
+    // Custom navigation controls need not be descendants of UINavigationBar.
+    private func unique(_ app: XCUIApplication, _ selector: Selector, target: Bool = false) -> XCUIElement? {
+        guard app.state == .runningForeground,
+              !selector.identifier.isEmpty || !selector.label.isEmpty,
+              [.button,.cell,.link,.navigationBar,.staticText,.tabBar].contains(selector.role) else { return nil }
+        if target && ![.button,.cell,.link].contains(selector.role) { return nil }
+        let query = app.descendants(matching:selector.role)
+            .matching(NSPredicate(format:"identifier == %@ AND label == %@",selector.identifier,selector.label))
+        guard query.count == 1 else { return nil }
+        let e = query.firstMatch
+        guard e.exists, e.identifier == selector.identifier, e.label == selector.label,
+              !e.frame.isEmpty, e.frame.intersects(UIScreen.main.bounds) else { return nil }
+        if target && (!e.isHittable || !e.isEnabled) { return nil }
+        return e
+    }
+    private func source(_ app: XCUIApplication, _ r: Rule) -> Bool {
+        unique(app,r.beforeMarker) != nil && unique(app,r.afterMarker) == nil
+    }
+    private func destination(_ app: XCUIApplication, _ r: Rule) -> Bool {
+        unique(app,r.afterMarker) != nil && unique(app,r.beforeMarker) == nil
     }
     private func button(_ app: XCUIApplication, _ r: Rule) -> XCUIElement? {
-        guard let b = bar(app,r.before), !r.buttonID.isEmpty, !r.buttonLabel.isEmpty else { return nil }
-        let q = b.buttons.matching(identifier:r.buttonID)
-        guard q.count == 1 else { return nil }
-        let e = q.firstMatch
-        guard e.exists, e.isEnabled, e.isHittable,
-              e.identifier == r.buttonID, e.label == r.buttonLabel else { return nil }
-        return e
+        guard source(app,r) else { return nil }
+        return unique(app,r.target,target:true)
+    }
+    // Diagnostic candidates only: this vocabulary cannot authorize a touch.
+    private let probeLabels: Set<String> = [
+        "Back","Settings","General","About","Shortcuts","All Shortcuts","Automation","Gallery","Done","Cancel",
+        "Назад","Настройки","Основные","Об этом устройстве","Команды","Все команды","Автоматизация","Галерея","Готово","Отмена",
+        "Indietro","Impostazioni","Generali","Info","Comandi","Tutti i comandi","Automazione","Galleria","Fine","Annulla"
+    ]
+    private func structuralNodes(_ app: XCUIApplication) throws -> [[String:String]] {
+        let root = try app.snapshot()
+        var out = [[String:String]]()
+        var visited = 0
+        var blocked = false
+        func visit(_ n: any XCUIElementSnapshot) {
+            if blocked { return }
+            visited += 1
+            if visited > 1500 { blocked = true; return }
+            if n.elementType == .secureTextField { blocked = true; return }
+            let role: String
+            switch n.elementType {
+            case .button: role = "button"
+            case .cell: role = "cell"
+            case .link: role = "link"
+            case .navigationBar: role = "navigationBar"
+            case .staticText: role = "staticText"
+            case .tabBar: role = "tabBar"
+            default: role = ""
+            }
+            if !role.isEmpty && out.count < 50 && n.isEnabled &&
+                !n.frame.isEmpty && n.frame.intersects(UIScreen.main.bounds) &&
+                (probeLabels.contains(n.label) || probeLabels.contains(n.identifier)) &&
+                n.label.count <= 120 && n.identifier.count <= 120 {
+                // Return only exact known navigation labels, not user-entered values.
+                if (n.label.isEmpty || probeLabels.contains(n.label)) &&
+                   !n.identifier.lowercased().contains("password") {
+                    out.append(["role":role,"identifier":n.identifier,"label":n.label])
+                }
+            }
+            for child in n.children { visit(child) }
+        }
+        visit(root)
+        guard !blocked else { throw NSError(domain:"SemanticNavigation",code:1) }
+        return out
     }
     private func proof(_ r: Rule, _ marker: String, _ fingerprint: String) -> [String:Any] {
         ["verified":true,"protected":false,"foreground":true,"rule_id":r.id,
@@ -76,8 +133,11 @@ final class SemanticNavigation {
         // No launch, input, text values or password fields.
         if op == "nav_probe" {
             guard payload.isEmpty else { return fail("bad_probe") }
-            let app = XCUIApplication(bundleIdentifier:"com.apple.shortcuts")
-            guard let before = try? screen(app) else { return fail("probe_scope_unverified") }
+            let allowed = ["com.apple.shortcuts","com.apple.Preferences"]
+            let active = allowed.filter { XCUIApplication(bundleIdentifier:$0).state == .runningForeground }
+            guard active.count == 1, let bundle = active.first else { return fail("probe_scope_unverified") }
+            let app = XCUIApplication(bundleIdentifier:bundle)
+            guard let before = try? screen(app), let nodes = try? structuralNodes(app) else { return fail("probe_scope_unverified") }
             let bars = app.navigationBars.allElementsBoundByIndex.prefix(10)
             var found = [[String:Any]]()
             for b in bars where b.exists && b.isHittable {
@@ -88,7 +148,7 @@ final class SemanticNavigation {
                 found.append(["identifier":String(b.identifier.prefix(120)),"buttons":buttons])
             }
             guard let after = try? screen(app), after == before else { return fail("foreground_changed") }
-            return pass(["verified":true,"read_only":true,"bundle_id":"com.apple.shortcuts","bars":found])
+            return pass(["verified":true,"read_only":true,"bundle_id":bundle,"bars":found,"nodes":nodes])
         }
         guard !uncertain, let id = payload["rule_id"] as? String,
               let r = rules[id], r.id == id else { return fail("semantic_rule_unavailable") }
@@ -97,7 +157,7 @@ final class SemanticNavigation {
             if op == "nav_prepare" {
                 guard Set(payload.keys) == Set(["rule_id"]) else { return fail("bad_prepare") }
                 pending.removeAll()
-                guard r.before != r.after, bar(app,r.after) == nil,
+                guard r.before != r.after, source(app,r),
                       button(app,r) != nil, let fp = try screen(app) else { return fail("unverified_source") }
                 let observation = UUID().uuidString
                 pending[observation] = Observation(ruleID:id,fingerprint:fp,expires:clock()+15)
@@ -107,7 +167,7 @@ final class SemanticNavigation {
             }
             if op == "nav_state" {
                 guard Set(payload.keys) == Set(["rule_id"]),
-                      bar(app,r.before) == nil, bar(app,r.after) != nil,
+                      destination(app,r),
                       let fp = try screen(app) else { return fail("unverified_destination") }
                 return pass(proof(r,r.after,fp))
             }
@@ -120,16 +180,16 @@ final class SemanticNavigation {
                     return stopped(id,"stale_observation")
                 }
                 pending.removeAll()
-                guard bar(app,r.after) == nil, let e = button(app,r),
+                guard source(app,r), let e = button(app,r),
                       let fresh = try screen(app), fresh == fp,
                       app.state == .runningForeground,
                       e.exists, e.isHittable, e.isEnabled,
-                      e.identifier == r.buttonID, e.label == r.buttonLabel else {
+                      e.identifier == r.target.identifier, e.label == r.target.label else {
                     return stopped(id,"protected_or_changed")
                 }
                 uncertain = true
                 e.tap()
-                guard bar(app,r.after) != nil, bar(app,r.before) == nil,
+                guard destination(app,r),
                       let post = try screen(app), post != fp else { return fail("outcome_unknown") }
                 uncertain = false
                 var out = proof(r,r.after,post)
