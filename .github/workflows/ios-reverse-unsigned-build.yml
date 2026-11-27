@@ -1,35 +1,42 @@
-name: iPhone Reverse XCTest STAGING - unsigned compilation
+name: iPhone Native Bootstrap STAGING - unsigned Xcode 27
 on:
   push:
     branches:
-      - experiment/iphone-reverse-xctest-20261122
-      - experiment/iphone-xctest-ax-mainloop-20261123
-      - experiment/iphone-xctest-reverse-logs-20261123
+      - experiment/iphone-native-bootstrap-20261127
     paths:
       - ios-reverse-staging/**
       - .github/workflows/ios-reverse-unsigned-build.yml
-  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: iphone-native-bootstrap-20261127
+  cancel-in-progress: false
+
 jobs:
   unsigned-ios-build:
-    name: Unsigned iOS XCTest compile (NO device installation)
-    runs-on: macos-15
-    timeout-minutes: 25
+    name: Native bootstrap compile (unsigned, no install)
+    runs-on: xcode-27
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
-      - name: Set up XcodeGen
+      - name: Require Xcode 27 or later
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "iPhoneOS SDK $sdk"
+          test "${sdk%%.*}" -ge 27
+      - name: Generate project
+        working-directory: ios-reverse-staging
         run: |
           if ! command -v xcodegen >/dev/null 2>&1; then
             brew install xcodegen
           fi
-          xcodegen --version
-      - name: Generate local Xcode project
-        working-directory: ios-reverse-staging
-        run: xcodegen generate
-      - name: Compile generic iOS XCTest (unsigned, no account)
+          xcodegen generate
+      - name: Compile device XCTest without signing
         working-directory: ios-reverse-staging
         run: |
           xcodebuild \
@@ -41,45 +48,25 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build-for-testing
-      - name: Verify XCTest bundle and package unsigned IPA inputs
+      - name: Package native Runner and enforce nested bundle identity
         shell: bash
         run: |
           set -euo pipefail
           products="$RUNNER_TEMP/ios-staging-dd/Build/Products/Debug-iphoneos"
-          test -f "$products/RunnerHost.app/Info.plist"
-          test -f "$products/RunnerUITests-Runner.app/Info.plist"
-          test -d "$products/RunnerUITests-Runner.app/PlugIns"
+          work="$RUNNER_TEMP/iphone-native-package"
+          out="$RUNNER_TEMP/iphone-native-artifacts"
+          mkdir -p "$work/Payload/RunnerUITests-Runner.app" "$out"
           test -f "$products/RunnerUITests-Runner.app/PlugIns/RunnerUITests.xctest/RunnerUITests"
-          test -f "$products/RunnerUITests-Runner.app/RunnerUITests-Runner"
-          test "$(find "$products/RunnerUITests-Runner.app/PlugIns" -maxdepth 1 -name '*.xctest' -type d | wc -l | tr -d ' ')" -eq 1
-          mkdir -p "$RUNNER_TEMP/iphone-unsigned/Payload" "$RUNNER_TEMP/iphone-staging-artifacts"
-          mkdir -p "$RUNNER_TEMP/iphone-unsigned/Payload/RunnerUITests-Runner.app"
-          rsync -a --exclude='*.dSYM' "$products/RunnerUITests-Runner.app/" "$RUNNER_TEMP/iphone-unsigned/Payload/RunnerUITests-Runner.app/"
-          (cd "$RUNNER_TEMP/iphone-unsigned" && zip -qry "$RUNNER_TEMP/iphone-staging-artifacts/RunnerUITests-Runner-UNSIGNED.ipa" Payload)
-          mkdir -p "$RUNNER_TEMP/iphone-host-unsigned/Payload"
-          cp -R "$products/RunnerHost.app" "$RUNNER_TEMP/iphone-host-unsigned/Payload/"
-          (cd "$RUNNER_TEMP/iphone-host-unsigned" && zip -qry "$RUNNER_TEMP/iphone-staging-artifacts/RunnerHost-UNSIGNED.ipa" Payload)
-          unzip -Z1 "$RUNNER_TEMP/iphone-staging-artifacts/RunnerUITests-Runner-UNSIGNED.ipa" | grep -q 'Payload/RunnerUITests-Runner.app/PlugIns/RunnerUITests.xctest/RunnerUITests'
-          if unzip -Z1 "$RUNNER_TEMP/iphone-staging-artifacts/RunnerUITests-Runner-UNSIGNED.ipa" | grep -q '\.dSYM'; then
-            echo '::error::Debug symbols must not be inside install staging IPA'; exit 1
-          fi
-          (cd "$RUNNER_TEMP/iphone-staging-artifacts" && shasum -a 256 *.ipa > SHA256SUMS.txt)
-          echo 'UNSIGNED ONLY: NOT INSTALLABLE. No Apple credentials or embedded provisioning profiles.'
-      - name: Upload unsigned IPA staging inputs (not signed or installable)
+          rsync -a --exclude='*.dSYM' "$products/RunnerUITests-Runner.app/" "$work/Payload/RunnerUITests-Runner.app/"
+          (cd "$work" && zip -qry "$RUNNER_TEMP/RunnerUITests-raw.ipa" Payload)
+          python3 ios-reverse-staging/package_native_runner.py \
+            "$RUNNER_TEMP/RunnerUITests-raw.ipa" \
+            "$out/RunnerUITests-Runner-NATIVE-UNSIGNED.ipa" | tee "$out/package-report.json"
+          (cd "$out" && shasum -a 256 *.ipa > SHA256SUMS.txt)
+      - name: Upload unsigned native STAGING only
         uses: actions/upload-artifact@v4
         with:
-          name: iphone-reverse-xctest-UNSIGNED-IPA
-          path: ${{ runner.temp }}/iphone-staging-artifacts/
+          name: iphone-native-bootstrap-UNSIGNED
+          path: ${{ runner.temp }}/iphone-native-artifacts/
           if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload unsigned build inputs (not installable on phone)
-        uses: actions/upload-artifact@v4
-        with:
-          name: iphone-reverse-xctest-UNSIGNED
-          path: |
-            ${{ runner.temp }}/ios-staging-dd/Build/Products/*.xctestrun
-            ${{ runner.temp }}/ios-staging-dd/Build/Products/Debug-iphoneos/RunnerHost.app/**
-            ${{ runner.temp }}/ios-staging-dd/Build/Products/Debug-iphoneos/RunnerUITests-Runner.app/**
-          if-no-files-found: warn
           retention-days: 7
