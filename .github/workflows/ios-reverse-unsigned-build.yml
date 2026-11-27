@@ -15,7 +15,7 @@ permissions:
 jobs:
   unsigned-ios-build:
     name: Unsigned iOS XCTest compile (NO device installation)
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
