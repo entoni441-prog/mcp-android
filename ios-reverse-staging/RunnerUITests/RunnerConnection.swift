@@ -1,31 +1,90 @@
 import Foundation
 import CryptoKit
+import Security
 
 private typealias CryptoMAC = HMAC<SHA256>
 
 struct RunnerConfig {
     let url: URL
     let key: Data
+    let persistRequested: Bool
+
+    private struct Stored: Codable {
+        let url: String
+        let key: Data
+    }
+
+    private static let service = "org.entoni.iosstaging.native-bootstrap"
+    private static let account = "authorized-reverse-session-v1"
+
+    private static var item: [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecAttrAccount as String: account]
+    }
+
+    private static func validated(_ rawURL: String, _ key: Data, persist: Bool) -> RunnerConfig? {
+        guard let url = URL(string: rawURL),
+              let scheme = url.scheme, scheme == "ws" || scheme == "wss",
+              let host = url.host, key.count >= 32,
+              url.path == "/ios/runner", url.user == nil, url.password == nil,
+              url.query == nil, url.fragment == nil else { return nil }
+        let octets = host.split(separator: ".").compactMap { Int($0) }
+        guard octets.count == 4, octets[0] == 100, (64...127).contains(octets[1]),
+              octets.allSatisfy({ (0...255).contains($0) }) else { return nil }
+        return RunnerConfig(url: url, key: key, persistRequested: persist)
+    }
 
     static func fromEnvironment() -> RunnerConfig? {
         let env = ProcessInfo.processInfo.environment
-        NSLog("[IOS_NET_STAGING] config_presence url=%d key=%d", env["IOS_UI_WS_URL"] != nil ? 1 : 0, env["IOS_UI_RUNNER_KEY"] != nil ? 1 : 0)
-        guard let rawURL = env["IOS_UI_WS_URL"], let url = URL(string: rawURL),
-              let scheme = url.scheme, scheme == "ws" || scheme == "wss",
-              let host = url.host, let keyText = env["IOS_UI_RUNNER_KEY"],
-              let key = Data(base64Encoded: keyText), key.count >= 32,
-              url.path == "/ios/runner" else {
-            NSLog("[IOS_NET_STAGING] config_rejected_stage=syntax_or_key")
+        if env["IOS_UI_CLEAR_CONFIG"] == "1" {
+            let status = SecItemDelete(item as CFDictionary)
+            NSLog("[IOS_NATIVE_STAGING] config_clear_status=%d", status)
             return nil
         }
-        let octets = host.split(separator: ".").compactMap { Int($0) }
-        guard octets.count == 4, octets[0] == 100, (64...127).contains(octets[1]),
-              octets.allSatisfy({ (0...255).contains($0) }) else {
-            NSLog("[IOS_NET_STAGING] config_rejected_stage=host_allowlist")
+        let rawURL = env["IOS_UI_WS_URL"]
+        let keyText = env["IOS_UI_RUNNER_KEY"]
+        if rawURL != nil || keyText != nil {
+            guard let rawURL = rawURL, let keyText = keyText,
+                  let key = Data(base64Encoded: keyText),
+                  let config = validated(rawURL, key, persist: env["IOS_UI_PERSIST_CONFIG"] == "1") else {
+                NSLog("[IOS_NATIVE_STAGING] explicit_config_rejected")
+                return nil
+            }
+            NSLog("[IOS_NATIVE_STAGING] explicit_config_valid")
+            return config
+        }
+        var query = item
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var output: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &output)
+        guard status == errSecSuccess, let data = output as? Data,
+              let stored = try? JSONDecoder().decode(Stored.self, from: data),
+              let config = validated(stored.url, stored.key, persist: false) else {
+            NSLog("[IOS_NATIVE_STAGING] stored_config_unavailable_status=%d", status)
             return nil
         }
-        NSLog("[IOS_NET_STAGING] config_accepted")
-        return RunnerConfig(url: url, key: key)
+        NSLog("[IOS_NATIVE_STAGING] stored_config_valid")
+        return config
+    }
+
+    // Only called after mutual HMAC acceptance on an explicitly requested provisioning run.
+    // No pairing file, Apple password, URL or key is written to diagnostic logs.
+    func persistAfterAuthentication() {
+        guard persistRequested,
+              let data = try? JSONEncoder().encode(Stored(url: url.absoluteString, key: key)) else { return }
+        let attrs: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+        var status = SecItemUpdate(Self.item as CFDictionary, attrs as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = Self.item
+            for (k, v) in attrs { add[k] = v }
+            status = SecItemAdd(add as CFDictionary, nil)
+        }
+        NSLog("[IOS_NATIVE_STAGING] config_persist_status=%d", status)
     }
 
     func hmac(role: String, server: String, client: String) -> String {
@@ -50,6 +109,7 @@ final class ReverseSession {
     private(set) var authenticated = false
     private(set) var terminated = false
     private var retries = 0
+    private var persistAttempted = false
     private var socketGeneration = 0
     private var pingTicket = 0
     private var seen = [String: [String: Any]]()
@@ -181,6 +241,10 @@ final class ReverseSession {
                   proof == config.hmac(role: "server", server: serverNonce, client: clientNonce),
                   !serverNonce.isEmpty else { retry(socketGeneration); return }
             authenticated = true
+            if !persistAttempted {
+                persistAttempted = true
+                config.persistAfterAuthentication()
+            }
             retries = 0
             NSLog("[IOS_NET_STAGING] hmac_accepted_heartbeat_enabled")
             heartbeat(socketGeneration)
