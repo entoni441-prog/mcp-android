@@ -41,7 +41,7 @@ final class SemanticNavigation {
                 blocked = true; return
             }
             records.append(["role":"\(n.elementType)","id":n.identifier,
-                            "label":n.label,"rect":NSStringFromCGRect(n.frame),
+                            "label":n.label,"rect":NSCoder.string(for: n.frame),
                             "enabled":String(n.isEnabled)])
             for child in n.children { visit(child) }
         }
